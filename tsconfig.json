@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "commonjs",
+    "lib": ["ES2022"],
+    "declaration": true,
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true,
+    "resolveJsonModule": true,
+    "moduleResolution": "node",
+    "baseUrl": ".",
+    "paths": {
+      "@nova/shared": ["libs/shared/src"],
+      "@nova/policy": ["libs/policy/src"],
+      "@nova/eventing": ["libs/eventing/src"],
+      "@nova/telemetry": ["libs/telemetry/src"]
+    }
+  },
+  "exclude": ["node_modules", "dist", ".next"]
+}

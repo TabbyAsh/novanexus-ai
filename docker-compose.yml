@@ -1,0 +1,380 @@
+version: '3.8'
+
+services:
+  # ============================================
+  # Infrastructure Services
+  # ============================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: nova-postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-nova}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-nova_dev_password}
+      POSTGRES_DB: ${POSTGRES_DB:-nova}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./infra/migrations:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    container_name: nova-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio:
+    image: minio/minio:latest
+    container_name: nova-minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER:-nova_minio}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD:-nova_minio_secret}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - minio_data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # ============================================
+  # Core Platform Services
+  # ============================================
+  gateway:
+    build:
+      context: ./services/gateway
+      dockerfile: Dockerfile
+    container_name: nova-gateway
+    ports:
+      - "3000:3000"
+    environment:
+      - NODE_ENV=development
+      - AUTH_SERVICE_URL=http://auth:3001
+      - ORCHESTRATOR_URL=http://orchestrator:3002
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      - redis
+      - auth
+      - orchestrator
+
+  auth:
+    build:
+      context: ./services/auth
+      dockerfile: Dockerfile
+    container_name: nova-auth
+    ports:
+      - "3001:3001"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - JWT_SECRET=${JWT_SECRET:-dev_jwt_secret_change_in_production}
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  orchestrator:
+    build:
+      context: ./services/orchestrator
+      dockerfile: Dockerfile
+    container_name: nova-orchestrator
+    ports:
+      - "3002:3002"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  eventbus:
+    build:
+      context: ./services/eventbus
+      dockerfile: Dockerfile
+    container_name: nova-eventbus
+    ports:
+      - "3003:3003"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  audit:
+    build:
+      context: ./services/audit
+      dockerfile: Dockerfile
+    container_name: nova-audit
+    ports:
+      - "3004:3004"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  notifier:
+    build:
+      context: ./services/notifier
+      dockerfile: Dockerfile
+    container_name: nova-notifier
+    ports:
+      - "3005:3005"
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  billing:
+    build:
+      context: ./services/billing
+      dockerfile: Dockerfile
+    container_name: nova-billing
+    ports:
+      - "3006:3006"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  # ============================================
+  # Domain Bot Services
+  # ============================================
+  tradebot:
+    build:
+      context: ./services/tradebot
+      dockerfile: Dockerfile
+    container_name: nova-tradebot
+    ports:
+      - "3010:3010"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+      - MARKETDATA_URL=http://marketdata:3020
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+      marketdata:
+        condition: service_started
+
+  storebot:
+    build:
+      context: ./services/storebot
+      dockerfile: Dockerfile
+    container_name: nova-storebot
+    ports:
+      - "3011:3011"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  socialbot:
+    build:
+      context: ./services/socialbot
+      dockerfile: Dockerfile
+    container_name: nova-socialbot
+    ports:
+      - "3012:3012"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  researchbot:
+    build:
+      context: ./services/researchbot
+      dockerfile: Dockerfile
+    container_name: nova-researchbot
+    ports:
+      - "3013:3013"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  opsbot:
+    build:
+      context: ./services/opsbot
+      dockerfile: Dockerfile
+    container_name: nova-opsbot
+    ports:
+      - "3014:3014"
+    environment:
+      - NODE_ENV=development
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  forgebot:
+    build:
+      context: ./services/forgebot
+      dockerfile: Dockerfile
+    container_name: nova-forgebot
+    ports:
+      - "3015:3015"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - EVENTBUS_URL=http://eventbus:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      eventbus:
+        condition: service_started
+
+  # ============================================
+  # Data Services
+  # ============================================
+  marketdata:
+    build:
+      context: ./services/marketdata
+      dockerfile: Dockerfile
+    container_name: nova-marketdata
+    ports:
+      - "3020:3020"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  contentdata:
+    build:
+      context: ./services/contentdata
+      dockerfile: Dockerfile
+    container_name: nova-contentdata
+    ports:
+      - "3021:3021"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  commercedata:
+    build:
+      context: ./services/commercedata
+      dockerfile: Dockerfile
+    container_name: nova-commercedata
+    ports:
+      - "3022:3022"
+    environment:
+      - NODE_ENV=development
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  # ============================================
+  # Frontend
+  # ============================================
+  web:
+    build:
+      context: ./apps/web
+      dockerfile: Dockerfile
+    container_name: nova-web
+    ports:
+      - "8080:3000"
+    environment:
+      - NODE_ENV=development
+      - NEXT_PUBLIC_API_URL=http://localhost:3000
+    depends_on:
+      - gateway
+
+volumes:
+  postgres_data:
+  redis_data:
+  minio_data:
+
+networks:
+  default:
+    name: nova-network

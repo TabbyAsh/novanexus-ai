@@ -1,0 +1,19 @@
+{
+  "name": "@nova/telemetry",
+  "version": "0.1.0",
+  "description": "Tracing, logging, and metrics wrappers for Nova platform",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsc --watch",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@nova/shared": "workspace:*"
+  },
+  "devDependencies": {
+    "@types/node": "^20.10.0",
+    "typescript": "^5.3.0"
+  }
+}
