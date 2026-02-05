@@ -11,6 +11,7 @@ import {
 import { generateId, nowTimestamp } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { PricingEngine, Product as PricingProduct, PriceRecommendation } from './pricing-engine';
+import { searchProducts, appraiseProduct, batchAppraise, ScrapedProduct, ProductAppraisal } from './product-scraper';
 
 const PORT = parseInt(process.env.PORT || '3011', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
@@ -180,6 +181,79 @@ app.get('/api/products/catalog', async (_req: Request, res: Response) => {
   } catch (err) {
     logger.error('Failed to get catalog');
     res.status(500).json({ success: false, error: 'Failed to get catalog' });
+  }
+});
+
+// ============================================================================
+// Product Scraping & Appraisal API
+// ============================================================================
+
+// Search products across multiple e-commerce sources
+app.get('/api/products/search', async (req: Request, res: Response) => {
+  try {
+    const query = req.query.q as string;
+    if (!query) {
+      return res.status(400).json({ success: false, error: 'Query parameter "q" is required' });
+    }
+    const results = await searchProducts(query);
+    res.json({ success: true, data: results });
+  } catch (err) {
+    logger.error('Product search failed', err as Error);
+    res.status(500).json({ success: false, error: 'Search failed' });
+  }
+});
+
+// Appraise a single product (get pricing recommendations)
+app.post('/api/products/appraise', async (req: Request, res: Response) => {
+  try {
+    const { query, name } = req.body;
+    const searchQuery = query || name;
+    if (!searchQuery) {
+      return res.status(400).json({ success: false, error: 'Product query or name is required' });
+    }
+    const appraisal = await appraiseProduct(searchQuery);
+    res.json({ success: true, data: { appraisal } });
+  } catch (err) {
+    logger.error('Product appraisal failed', err as Error);
+    res.status(500).json({ success: false, error: 'Appraisal failed' });
+  }
+});
+
+// Batch appraise multiple products
+app.post('/api/products/appraise/batch', async (req: Request, res: Response) => {
+  try {
+    const { products } = req.body;
+    if (!Array.isArray(products) || products.length === 0) {
+      return res.status(400).json({ success: false, error: 'Products array is required' });
+    }
+    const queries = products.map(p => typeof p === 'string' ? p : p.name || p.title || p.query);
+    const appraisals = await batchAppraise(queries.filter(Boolean));
+    res.json({ success: true, data: { appraisals } });
+  } catch (err) {
+    logger.error('Batch appraisal failed', err as Error);
+    res.status(500).json({ success: false, error: 'Batch appraisal failed' });
+  }
+});
+
+// Quick price check for a product
+app.get('/api/products/price-check/:query', async (req: Request, res: Response) => {
+  try {
+    const { query } = req.params;
+    const appraisal = await appraiseProduct(decodeURIComponent(query));
+    res.json({ 
+      success: true, 
+      data: {
+        query: appraisal.query,
+        recommendedPrice: appraisal.recommendedPrice,
+        priceRange: appraisal.priceRange,
+        marketDemand: appraisal.marketDemand,
+        confidence: appraisal.confidence,
+        sourceCount: appraisal.sources.length,
+      }
+    });
+  } catch (err) {
+    logger.error('Price check failed', err as Error);
+    res.status(500).json({ success: false, error: 'Price check failed' });
   }
 });
 

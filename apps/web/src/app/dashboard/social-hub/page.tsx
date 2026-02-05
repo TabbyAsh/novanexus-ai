@@ -68,7 +68,8 @@ interface Analytics {
   growth_trend: number;
 }
 
-const SOCIALBOT_URL = 'http://localhost:3012';
+// In production this must be set (e.g., https://socialbot.novanexus-ai.com)
+const SOCIALBOT_URL = process.env.NEXT_PUBLIC_SOCIALBOT_URL || 'http://localhost:3012';
 
 const PLATFORM_ICONS: Record<string, typeof Twitter> = {
   twitter: Twitter,

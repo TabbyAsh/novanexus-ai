@@ -3,7 +3,8 @@
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
-import { useState, ReactNode } from 'react';
+import { useState, ReactNode, useEffect } from 'react';
+import { api } from '@/lib/api';
 
 interface NavItem {
   name: string;
@@ -80,126 +81,222 @@ const navItems: NavItem[] = [
   },
 ];
 
-function Sidebar({ collapsed, onToggle }: { collapsed: boolean; onToggle: () => void }) {
-  const pathname = usePathname();
+// Hook to detect mobile viewport
+function useIsMobile() {
+  const [isMobile, setIsMobile] = useState(false);
+  
+  useEffect(() => {
+    const checkMobile = () => setIsMobile(window.innerWidth < 768);
+    checkMobile();
+    window.addEventListener('resize', checkMobile);
+    return () => window.removeEventListener('resize', checkMobile);
+  }, []);
+  
+  return isMobile;
+}
+
+// User Profile component - fetches actual logged-in user data
+function UserProfile({ collapsed, isMobile }: { collapsed: boolean; isMobile: boolean }) {
+  const [user, setUser] = useState<{ email: string; role: string; orgName?: string } | null>(null);
+  
+  useEffect(() => {
+    async function fetchUser() {
+      try {
+        const response = await api.getMe();
+        if (response.success && response.data) {
+          setUser({
+            email: response.data.user.email,
+            role: response.data.role,
+            orgName: response.data.org?.name,
+          });
+        }
+      } catch (err) {
+        console.error('Failed to fetch user:', err);
+      }
+    }
+    
+    if (api.isAuthenticated()) {
+      fetchUser();
+    }
+  }, []);
+  
+  // Extract display name from email (before @)
+  const displayName = user?.email?.split('@')[0] || 'User';
+  const displayRole = user?.role || 'Member';
+  const initials = displayName.charAt(0).toUpperCase();
   
   return (
-    <motion.aside
-      initial={false}
-      animate={{ width: collapsed ? 80 : 260 }}
-      transition={{ duration: 0.3, ease: 'easeInOut' }}
-      className="fixed left-0 top-0 bottom-0 z-40 bg-[#0a0a0f]/95 backdrop-blur-xl border-r border-white/10"
-    >
-      {/* Logo */}
-      <div className="h-16 flex items-center justify-between px-4 border-b border-white/10">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-            <span className="text-white font-bold text-xl">N</span>
-          </div>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.span
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                exit={{ opacity: 0, x: -10 }}
-                className="text-white font-bold text-lg tracking-tight whitespace-nowrap"
-              >
-                Nova<span className="text-cyan-400">Nexus</span>
-              </motion.span>
-            )}
-          </AnimatePresence>
-        </Link>
-        
-        <button
-          onClick={onToggle}
-          className="p-2 rounded-lg hover:bg-white/10 transition-colors"
-        >
-          <svg 
-            className={`w-5 h-5 text-gray-400 transition-transform ${collapsed ? 'rotate-180' : ''}`} 
-            fill="none" 
-            viewBox="0 0 24 24" 
-            stroke="currentColor"
-          >
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
-          </svg>
-        </button>
-      </div>
-      
-      {/* Navigation */}
-      <nav className="p-4 space-y-2">
-        {navItems.map((item) => {
-          const isActive = pathname === item.href;
-          return (
-            <Link
-              key={item.href}
-              href={item.href}
-              className={`
-                flex items-center gap-3 px-4 py-3 rounded-xl
-                transition-all duration-200
-                ${isActive 
-                  ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/30 text-white shadow-lg shadow-cyan-500/10' 
-                  : 'text-gray-400 hover:text-white hover:bg-white/5'
-                }
-              `}
-            >
-              <span className={isActive ? 'text-cyan-400' : ''}>{item.icon}</span>
-              <AnimatePresence>
-                {!collapsed && (
-                  <motion.span
-                    initial={{ opacity: 0 }}
-                    animate={{ opacity: 1 }}
-                    exit={{ opacity: 0 }}
-                    className="font-medium whitespace-nowrap"
-                  >
-                    {item.name}
-                  </motion.span>
-                )}
-              </AnimatePresence>
-              {item.badge && !collapsed && (
-                <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
-                  {item.badge}
-                </span>
-              )}
-            </Link>
-          );
-        })}
-      </nav>
-      
-      {/* Bottom section */}
-      <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10">
-        <div className="flex items-center gap-3 px-4 py-3">
-          <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
-            <span className="text-white font-bold">W</span>
-          </div>
-          <AnimatePresence>
-            {!collapsed && (
-              <motion.div
-                initial={{ opacity: 0 }}
-                animate={{ opacity: 1 }}
-                exit={{ opacity: 0 }}
-              >
-                <p className="text-white font-medium text-sm">Wyatt</p>
-                <p className="text-gray-500 text-xs">CEO</p>
-              </motion.div>
-            )}
-          </AnimatePresence>
+    <div className="absolute bottom-0 left-0 right-0 p-4 border-t border-white/10">
+      <div className="flex items-center gap-3 px-4 py-3">
+        <div className="w-10 h-10 rounded-full bg-gradient-to-br from-purple-500 to-pink-500 flex items-center justify-center flex-shrink-0">
+          <span className="text-white font-bold">{initials}</span>
         </div>
+        <AnimatePresence>
+          {(!collapsed || isMobile) && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              className="overflow-hidden"
+            >
+              <p className="text-white font-medium text-sm truncate">{displayName}</p>
+              <p className="text-gray-500 text-xs">{displayRole}</p>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
-    </motion.aside>
+    </div>
   );
 }
 
-function Header() {
+function Sidebar({ collapsed, onToggle, isMobile }: { collapsed: boolean; onToggle: () => void; isMobile: boolean }) {
+  const pathname = usePathname();
+  
+  // On mobile, sidebar slides in/out from left; on desktop it collapses to icon-only
+  const sidebarWidth = isMobile ? 280 : (collapsed ? 80 : 260);
+  const translateX = isMobile && collapsed ? -280 : 0;
+  
   return (
-    <header className="h-16 flex items-center justify-between px-6 border-b border-white/10 backdrop-blur-xl bg-[#0a0a0f]/80">
+    <>
+      {/* Mobile overlay */}
+      <AnimatePresence>
+        {isMobile && !collapsed && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onToggle}
+            className="fixed inset-0 bg-black/60 backdrop-blur-sm z-40 md:hidden"
+          />
+        )}
+      </AnimatePresence>
+      
+      <motion.aside
+        initial={false}
+        animate={{ 
+          width: sidebarWidth,
+          x: translateX 
+        }}
+        transition={{ duration: 0.3, ease: 'easeInOut' }}
+        className="fixed left-0 top-0 bottom-0 z-50 bg-[#0a0a0f]/95 backdrop-blur-xl border-r border-white/10"
+      >
+        {/* Logo */}
+        <div className="h-16 flex items-center justify-between px-4 border-b border-white/10">
+          <Link href="/" className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center flex-shrink-0">
+              <span className="text-white font-bold text-xl">N</span>
+            </div>
+            <AnimatePresence>
+              {(!collapsed || isMobile) && (
+                <motion.span
+                  initial={{ opacity: 0, x: -10 }}
+                  animate={{ opacity: 1, x: 0 }}
+                  exit={{ opacity: 0, x: -10 }}
+                  className="text-white font-bold text-lg tracking-tight whitespace-nowrap"
+                >
+                  Nova<span className="text-cyan-400">Nexus</span>
+                </motion.span>
+              )}
+            </AnimatePresence>
+          </Link>
+          
+          {/* Desktop collapse button */}
+          <button
+            onClick={onToggle}
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors hidden md:block"
+          >
+            <svg 
+              className={`w-5 h-5 text-gray-400 transition-transform ${collapsed ? 'rotate-180' : ''}`} 
+              fill="none" 
+              viewBox="0 0 24 24" 
+              stroke="currentColor"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 19l-7-7 7-7m8 14l-7-7 7-7" />
+            </svg>
+          </button>
+          
+          {/* Mobile close button */}
+          <button
+            onClick={onToggle}
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors md:hidden"
+          >
+            <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M6 18L18 6M6 6l12 12" />
+            </svg>
+          </button>
+        </div>
+        
+        {/* Navigation */}
+        <nav className="p-4 space-y-2 overflow-y-auto scroll-container" style={{ maxHeight: 'calc(100dvh - 160px)' }}>
+          {navItems.map((item) => {
+            const isActive = pathname === item.href;
+            return (
+              <Link
+                key={item.href}
+                href={item.href}
+                onClick={() => isMobile && onToggle()}
+                className={`
+                  flex items-center gap-3 px-4 py-3 rounded-xl
+                  transition-all duration-200
+                  ${isActive 
+                    ? 'bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/30 text-white shadow-lg shadow-cyan-500/10' 
+                    : 'text-gray-400 hover:text-white hover:bg-white/5'
+                  }
+                `}
+              >
+                <span className={`flex-shrink-0 ${isActive ? 'text-cyan-400' : ''}`}>{item.icon}</span>
+                <AnimatePresence>
+                  {(!collapsed || isMobile) && (
+                    <motion.span
+                      initial={{ opacity: 0 }}
+                      animate={{ opacity: 1 }}
+                      exit={{ opacity: 0 }}
+                      className="font-medium whitespace-nowrap"
+                    >
+                      {item.name}
+                    </motion.span>
+                  )}
+                </AnimatePresence>
+                {item.badge && (!collapsed || isMobile) && (
+                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-400 border border-cyan-500/30">
+                    {item.badge}
+                  </span>
+                )}
+              </Link>
+            );
+          })}
+        </nav>
+        
+        {/* Bottom section - User Info */}
+        <UserProfile collapsed={collapsed} isMobile={isMobile} />
+      </motion.aside>
+    </>
+  );
+}
+
+function Header({ onMenuClick, isMobile }: { onMenuClick: () => void; isMobile: boolean }) {
+  return (
+    <header className="h-16 flex items-center justify-between px-4 md:px-6 border-b border-white/10 backdrop-blur-xl bg-[#0a0a0f]/80">
       <div className="flex items-center gap-4">
+        {/* Mobile hamburger menu */}
+        {isMobile && (
+          <button
+            onClick={onMenuClick}
+            className="p-2 rounded-lg hover:bg-white/10 transition-colors md:hidden"
+          >
+            <svg className="w-6 h-6 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16" />
+            </svg>
+          </button>
+        )}
         <span className="flex items-center gap-2 px-3 py-1.5 rounded-full bg-green-500/20 border border-green-500/30">
           <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-          <span className="text-green-400 text-sm font-medium">Systems Online</span>
+          <span className="text-green-400 text-sm font-medium hidden sm:inline">Systems Online</span>
+          <span className="text-green-400 text-sm font-medium sm:hidden">Online</span>
         </span>
       </div>
       
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 md:gap-4">
         {/* Notifications */}
         <button className="relative p-2 rounded-lg hover:bg-white/10 transition-colors">
           <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -209,8 +306,9 @@ function Header() {
         </button>
         
         {/* Quick actions */}
-        <button className="px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-medium text-sm hover:shadow-lg hover:shadow-cyan-500/25 transition-all">
-          Quick Trade
+        <button className="px-3 md:px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-medium text-sm hover:shadow-lg hover:shadow-cyan-500/25 transition-all">
+          <span className="hidden sm:inline">Quick Trade</span>
+          <span className="sm:hidden">Trade</span>
         </button>
       </div>
     </header>
@@ -218,20 +316,33 @@ function Header() {
 }
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
-  const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
+  const isMobile = useIsMobile();
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(true); // Start collapsed on mobile
+  
+  // Auto-collapse on mobile, auto-expand on desktop
+  useEffect(() => {
+    setSidebarCollapsed(isMobile);
+  }, [isMobile]);
+  
+  // Calculate main content margin based on sidebar state
+  const mainMarginLeft = isMobile ? 0 : (sidebarCollapsed ? 80 : 260);
   
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white">
-      <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
+      <Sidebar 
+        collapsed={sidebarCollapsed} 
+        onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} 
+        isMobile={isMobile}
+      />
       
       <motion.div
         initial={false}
-        animate={{ marginLeft: sidebarCollapsed ? 80 : 260 }}
+        animate={{ marginLeft: mainMarginLeft }}
         transition={{ duration: 0.3, ease: 'easeInOut' }}
         className="min-h-screen"
       >
-        <Header />
-        <main className="p-6">
+        <Header onMenuClick={() => setSidebarCollapsed(false)} isMobile={isMobile} />
+        <main className="p-4 md:p-6">
           {children}
         </main>
       </motion.div>

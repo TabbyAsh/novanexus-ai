@@ -17,6 +17,8 @@ import {
   Boxes,
   BarChart3,
   Target,
+  Search,
+  ExternalLink,
 } from 'lucide-react';
 
 // Types
@@ -54,7 +56,29 @@ interface InventoryAlert {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
 }
 
-const STOREBOT_URL = 'http://localhost:3011';
+interface ProductAppraisal {
+  query: string;
+  avgPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  medianPrice: number;
+  priceRange: string;
+  recommendedPrice: number;
+  marketDemand: 'low' | 'medium' | 'high';
+  confidence: number;
+  sources: Array<{
+    title: string;
+    price: number;
+    source: string;
+    url: string;
+    rating?: number;
+    condition?: string;
+  }>;
+  appraisedAt: string;
+}
+
+// In production this must be set (e.g., https://storebot.novanexus-ai.com)
+const STOREBOT_URL = process.env.NEXT_PUBLIC_STOREBOT_URL || 'http://localhost:3011';
 
 export default function MarketplaceDashboard() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -62,8 +86,14 @@ export default function MarketplaceDashboard() {
   const [alerts, setAlerts] = useState<InventoryAlert[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [activeTab, setActiveTab] = useState<'products' | 'pricing' | 'inventory'>('products');
+
+  type MarketplaceTab = 'products' | 'pricing' | 'appraisal' | 'inventory';
+  const [activeTab, setActiveTab] = useState<MarketplaceTab>('products');
+
   const [applyingPrice, setApplyingPrice] = useState<string | null>(null);
+  const [appraisalQuery, setAppraisalQuery] = useState('');
+  const [appraisal, setAppraisal] = useState<ProductAppraisal | null>(null);
+  const [isAppraising, setIsAppraising] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -117,6 +147,26 @@ export default function MarketplaceDashboard() {
       console.error('Failed to apply price:', error);
     }
     setApplyingPrice(null);
+  };
+
+  const appraiseItem = async () => {
+    if (!appraisalQuery.trim()) return;
+    setIsAppraising(true);
+    setAppraisal(null);
+    try {
+      const res = await fetch(`${STOREBOT_URL}/api/products/appraise`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: appraisalQuery }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setAppraisal(data.data.appraisal);
+      }
+    } catch (error) {
+      console.error('Appraisal failed:', error);
+    }
+    setIsAppraising(false);
   };
 
   useEffect(() => {
@@ -232,14 +282,17 @@ export default function MarketplaceDashboard() {
 
       {/* Tabs */}
       <div className="flex gap-2 mb-6">
-        {[
-          { id: 'products', label: 'Products', icon: Package },
-          { id: 'pricing', label: 'Pricing AI', icon: TrendingUp },
-          { id: 'inventory', label: 'Inventory', icon: Boxes },
-        ].map((tab) => (
+        {(
+          [
+            { id: 'products', label: 'Products', icon: Package },
+            { id: 'pricing', label: 'Pricing AI', icon: TrendingUp },
+            { id: 'appraisal', label: 'Appraise Item', icon: Search },
+            { id: 'inventory', label: 'Inventory', icon: Boxes },
+          ] as const satisfies ReadonlyArray<{ id: MarketplaceTab; label: string; icon: typeof Package }>
+        ).map((tab) => (
           <button
             key={tab.id}
-            onClick={() => setActiveTab(tab.id as typeof activeTab)}
+            onClick={() => setActiveTab(tab.id)}
             className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${
               activeTab === tab.id
                 ? 'bg-blue-600 text-white'
@@ -430,6 +483,163 @@ export default function MarketplaceDashboard() {
                 </div>
               ))}
             </div>
+          </div>
+        </div>
+      )}
+
+      {activeTab === 'appraisal' && (
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          {/* Search/Appraisal Form */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <Search className="w-5 h-5 text-cyan-400" />
+              Product Appraisal
+            </h2>
+            <p className="text-gray-400 text-sm mb-4">
+              Enter a product name or description to get real-time market pricing data from multiple sources.
+            </p>
+            
+            <div className="flex gap-3 mb-4">
+              <input
+                type="text"
+                value={appraisalQuery}
+                onChange={(e) => setAppraisalQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && appraiseItem()}
+                placeholder="e.g., iPhone 15 Pro, Nike Air Max 90, Sony WH-1000XM5"
+                className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500"
+              />
+              <button
+                onClick={appraiseItem}
+                disabled={isAppraising || !appraisalQuery.trim()}
+                className="px-6 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg transition flex items-center gap-2"
+              >
+                {isAppraising ? (
+                  <RefreshCw className="w-4 h-4 animate-spin" />
+                ) : (
+                  <Search className="w-4 h-4" />
+                )}
+                {isAppraising ? 'Searching...' : 'Appraise'}
+              </button>
+            </div>
+
+            {/* Quick suggestions */}
+            <div className="flex flex-wrap gap-2">
+              <span className="text-gray-500 text-sm">Try:</span>
+              {['AirPods Pro', 'PS5 Console', 'Nike Dunks', 'MacBook Air'].map((item) => (
+                <button
+                  key={item}
+                  onClick={() => { setAppraisalQuery(item); }}
+                  className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition"
+                >
+                  {item}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {/* Appraisal Results */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
+              <DollarSign className="w-5 h-5 text-green-400" />
+              Appraisal Results
+            </h2>
+
+            {!appraisal ? (
+              <div className="text-center py-12 text-gray-500">
+                <Search className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>Enter a product to see market pricing</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {/* Price Summary */}
+                <div className="grid grid-cols-3 gap-4">
+                  <div className="p-4 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-400 text-xs mb-1">Recommended Price</p>
+                    <p className="text-2xl font-bold text-green-400">{formatCurrency(appraisal.recommendedPrice)}</p>
+                  </div>
+                  <div className="p-4 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-400 text-xs mb-1">Market Range</p>
+                    <p className="text-lg font-medium text-white">{appraisal.priceRange}</p>
+                  </div>
+                  <div className="p-4 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-400 text-xs mb-1">Market Demand</p>
+                    <p className={`text-lg font-medium capitalize ${
+                      appraisal.marketDemand === 'high' ? 'text-green-400' :
+                      appraisal.marketDemand === 'medium' ? 'text-yellow-400' : 'text-red-400'
+                    }`}>{appraisal.marketDemand}</p>
+                  </div>
+                </div>
+
+                {/* Confidence Meter */}
+                <div className="p-4 bg-gray-800 rounded-lg">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-gray-400 text-sm">Confidence</span>
+                    <span className="text-white font-medium">{appraisal.confidence}%</span>
+                  </div>
+                  <div className="w-full bg-gray-700 rounded-full h-2">
+                    <div
+                      className={`h-2 rounded-full ${
+                        appraisal.confidence >= 70 ? 'bg-green-500' :
+                        appraisal.confidence >= 40 ? 'bg-yellow-500' : 'bg-red-500'
+                      }`}
+                      style={{ width: `${appraisal.confidence}%` }}
+                    />
+                  </div>
+                </div>
+
+                {/* Price Statistics */}
+                <div className="grid grid-cols-4 gap-2">
+                  <div className="p-3 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-500 text-xs">Min</p>
+                    <p className="text-white font-medium">{formatCurrency(appraisal.minPrice)}</p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-500 text-xs">Avg</p>
+                    <p className="text-white font-medium">{formatCurrency(appraisal.avgPrice)}</p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-500 text-xs">Median</p>
+                    <p className="text-white font-medium">{formatCurrency(appraisal.medianPrice)}</p>
+                  </div>
+                  <div className="p-3 bg-gray-800 rounded-lg text-center">
+                    <p className="text-gray-500 text-xs">Max</p>
+                    <p className="text-white font-medium">{formatCurrency(appraisal.maxPrice)}</p>
+                  </div>
+                </div>
+
+                {/* Sources */}
+                {appraisal.sources.length > 0 && (
+                  <div>
+                    <p className="text-gray-400 text-sm mb-2">Market Sources ({appraisal.sources.length})</p>
+                    <div className="space-y-2 max-h-48 overflow-y-auto">
+                      {appraisal.sources.map((source, idx) => (
+                        <div key={idx} className="p-3 bg-gray-800 rounded-lg flex items-center justify-between">
+                          <div className="flex-1">
+                            <p className="text-white text-sm truncate">{source.title}</p>
+                            <div className="flex items-center gap-2 text-xs text-gray-500">
+                              <span className="capitalize">{source.source}</span>
+                              {source.condition && <span>• {source.condition}</span>}
+                              {source.rating && <span>• ★ {source.rating.toFixed(1)}</span>}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <span className="text-green-400 font-medium">{formatCurrency(source.price)}</span>
+                            <a
+                              href={source.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1 hover:bg-gray-700 rounded"
+                            >
+                              <ExternalLink className="w-4 h-4 text-gray-400" />
+                            </a>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
