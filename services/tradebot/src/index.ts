@@ -9,6 +9,7 @@ import {
 } from '@nova/bot-sdk';
 import { generateId, nowTimestamp } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
+import { RegimeType } from '@nova/nexus-core';
 import { NexusTrader } from './nexus-trader';
 
 const PORT = parseInt(process.env.PORT || '3010', 10);
@@ -385,9 +386,25 @@ class ScannerEngine {
   }
 
   async scan(symbols: string[], filters?: { minScore?: number; signals?: string[] }): Promise<ScannerResult[]> {
-    const results: ScannerResult[] = [];
+    if (symbols.length === 0) return [];
 
-    for (const symbol of symbols) {
+    const clamp = (n: number, min: number, max: number): number => Math.max(min, Math.min(max, n));
+    const mean = (arr: number[]): number => arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+
+    const computeSmaCross = (indicators: Indicators): number => {
+      const short = indicators.sma20 ?? indicators.ema12;
+      const long = indicators.sma50 ?? indicators.ema26;
+      if (typeof short !== 'number' || typeof long !== 'number' || !Number.isFinite(short) || !Number.isFinite(long) || long === 0) {
+        return 0;
+      }
+
+      // Relative MA spread, scaled so ~5% spread maps to +/-1.
+      const raw = (short - long) / Math.abs(long);
+      return clamp(raw / 0.05, -1, 1);
+    };
+
+    // Fetch quotes/indicators first so we can infer a scan-level regime.
+    const samples = await Promise.all(symbols.map(async (symbol) => {
       const [quote, indicators] = await Promise.all([
         this.marketData.getQuote(symbol),
         this.marketData.getIndicators(symbol),
@@ -395,30 +412,187 @@ class ScannerEngine {
 
       const rsi = indicators.rsi ?? (30 + Math.random() * 40);
       const macdVal = indicators.macd?.macd ?? (Math.random() - 0.5) * 2;
-      const momentum = (Math.random() - 0.5) * 10;
+      const momentum = indicators.macd?.histogram !== undefined
+        ? indicators.macd.histogram * 20
+        : (Math.random() - 0.5) * 10;
       const volumeSpike = quote.volume > 5000000;
+      const smaCross = computeSmaCross(indicators);
 
-      // Calculate score based on indicators
-      let score = 50;
-      if (rsi < 35) score += 15; // Oversold
-      if (rsi > 65) score -= 15; // Overbought
-      if (macdVal > 0.5) score += 10;
-      if (macdVal < -0.5) score -= 10;
-      if (momentum > 3) score += 10;
-      if (volumeSpike) score += 5;
-      if (quote.changePercent > 2) score += 10;
-      if (quote.changePercent < -2) score -= 10;
+      return { symbol, quote, indicators, rsi, macdVal, momentum, volumeSpike, smaCross };
+    }));
+
+    // Coarse regime snapshot (trend + volatility) from the scanned universe.
+    const avgRsi = mean(samples.map(s => clamp(s.rsi, 0, 100)));
+    const avgSmaCross = mean(samples.map(s => s.smaCross));
+    const avgTrendStrength = mean(samples.map(s => Math.abs(s.smaCross)));
+    const avgAbsChangePct = mean(samples.map(s => Math.abs(s.quote.changePercent ?? 0)));
+
+    const atrPercentile = clamp(avgAbsChangePct / 5, 0, 1); // 5% avg move ~= 100th percentile proxy
+    const adxApprox = clamp(avgTrendStrength * 100, 0, 50);
+
+    const snapshotConfidence = symbols.length >= 8 ? 0.75 : symbols.length >= 3 ? 0.65 : 0.6;
+
+    let regimePrimary: RegimeType = RegimeType.UNKNOWN;
+    let regimeSecondary: RegimeType | undefined;
+
+    try {
+      // Note: nexusTrader is declared later in the module; this runs only when scan() is invoked.
+      const state = nexusTrader.updateRegimeFromMarketSnapshot({
+        rsi: avgRsi,
+        smaCross: avgSmaCross,
+        adx: adxApprox,
+        atrPercentile,
+        confidence: snapshotConfidence,
+      });
+
+      regimePrimary = state.primary;
+      regimeSecondary = state.secondary;
+    } catch {
+      // Regime classification is best-effort; scanning must remain functional even if it fails.
+    }
+
+    const activeRegimes = new Set<RegimeType>([regimePrimary, regimeSecondary].filter(Boolean) as RegimeType[]);
+
+    const isHighVol = activeRegimes.has(RegimeType.HIGH_VOLATILITY)
+      || activeRegimes.has(RegimeType.VOLATILITY_EXPANSION)
+      || activeRegimes.has(RegimeType.CRISIS);
+
+    const isLowVol = activeRegimes.has(RegimeType.LOW_VOLATILITY)
+      || activeRegimes.has(RegimeType.VOLATILITY_CONTRACTION);
+
+    const isBull = activeRegimes.has(RegimeType.BULL_STRONG)
+      || activeRegimes.has(RegimeType.BULL_WEAK)
+      || activeRegimes.has(RegimeType.EUPHORIA)
+      || activeRegimes.has(RegimeType.BREAKOUT);
+
+    const isBear = activeRegimes.has(RegimeType.BEAR_STRONG)
+      || activeRegimes.has(RegimeType.BEAR_WEAK)
+      || activeRegimes.has(RegimeType.CRISIS)
+      || activeRegimes.has(RegimeType.BREAKDOWN);
+
+    const isRanging = activeRegimes.has(RegimeType.RANGING);
+
+    const isTrending = activeRegimes.has(RegimeType.TRENDING)
+      || activeRegimes.has(RegimeType.BREAKOUT)
+      || activeRegimes.has(RegimeType.BREAKDOWN);
+
+    const isTransition = activeRegimes.has(RegimeType.TRANSITION)
+      || regimePrimary === RegimeType.UNKNOWN;
+
+    // Scoring profile: adjust weights/thresholds by regime without changing output shape.
+    let bullBias = 1;
+    let bearBias = 1;
+    let rsiWeight = 1;
+    let momentumWeight = 1;
+    let dampener = 1;
+
+    let buyThreshold = 65;
+    let sellThreshold = 35;
+
+    if (isBull && !isBear) {
+      bullBias *= 1.1;
+      bearBias *= 0.85;
+      buyThreshold = 63;
+      sellThreshold = 30;
+    }
+
+    if (isBear && !isBull) {
+      bullBias *= 0.85;
+      bearBias *= 1.1;
+      buyThreshold = 70;
+      sellThreshold = 40;
+    }
+
+    if (isRanging) {
+      rsiWeight *= 1.2;
+      momentumWeight *= 0.85;
+    }
+
+    if (isTrending) {
+      rsiWeight *= 0.9;
+      momentumWeight *= 1.1;
+    }
+
+    if (isHighVol) {
+      dampener *= 0.85;
+      buyThreshold += 5;
+      sellThreshold -= 5;
+      rsiWeight *= 0.95;
+      momentumWeight *= 0.95;
+    }
+
+    if (isLowVol) {
+      momentumWeight *= 1.05;
+      buyThreshold -= 1;
+      sellThreshold += 1;
+    }
+
+    if (isTransition) {
+      dampener *= 0.9;
+      buyThreshold += 2;
+      sellThreshold -= 2;
+    }
+
+    buyThreshold = clamp(buyThreshold, 55, 85);
+    sellThreshold = clamp(sellThreshold, 15, 45);
+
+    const results: ScannerResult[] = [];
+
+    for (const s of samples) {
+      const { symbol, quote, rsi, macdVal, momentum, volumeSpike, smaCross } = s;
+
+      let bull = 0;
+      let bear = 0;
+
+      // Mean reversion: RSI extremes
+      if (rsi < 35) bull += 15 * rsiWeight;
+      if (rsi > 65) bear += 15 * rsiWeight;
+
+      // Momentum: MACD direction
+      if (macdVal > 0.5) bull += 10 * momentumWeight;
+      if (macdVal < -0.5) bear += 10 * momentumWeight;
+
+      // Momentum: derived momentum proxy (histogram-based)
+      if (momentum > 3) bull += 10 * momentumWeight;
+      if (momentum < -3) bear += 10 * momentumWeight;
+
+      // Trend: short-vs-long MA cross signal
+      if (smaCross > 0.3) bull += 8 * momentumWeight;
+      if (smaCross < -0.3) bear += 8 * momentumWeight;
+
+      // Volume spike as a (directional) confirmation
+      if (volumeSpike) {
+        if ((quote.changePercent ?? 0) >= 0) bull += 5 * momentumWeight;
+        else bear += 5 * momentumWeight;
+      }
+
+      // Intraday move (directional)
+      if (quote.changePercent > 2) bull += 10 * momentumWeight;
+      if (quote.changePercent < -2) bear += 10 * momentumWeight;
+
+      bull *= bullBias;
+      bear *= bearBias;
+
+      let score = 50 + bull - bear;
+
+      // In high-vol / transition regimes, compress toward neutral (HOLD) rather than over-signaling.
+      score = 50 + (score - 50) * dampener;
 
       // Determine signal
       let signal: 'BUY' | 'SELL' | 'HOLD' = 'HOLD';
-      if (score >= 65) signal = 'BUY';
-      else if (score <= 35) signal = 'SELL';
+      if (score >= buyThreshold) signal = 'BUY';
+      else if (score <= sellThreshold) signal = 'SELL';
 
       const result: ScannerResult = {
         symbol,
         signal,
         score: Math.min(100, Math.max(0, Math.round(score))),
-        indicators: { rsi: Math.round(rsi * 10) / 10, macd: macdVal, momentum, volumeSpike },
+        indicators: {
+          rsi: Math.round(rsi * 10) / 10,
+          macd: macdVal,
+          momentum,
+          volumeSpike,
+        },
         quote,
       };
 
