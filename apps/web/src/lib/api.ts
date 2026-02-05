@@ -1,32 +1,44 @@
-// Environment detection
-const getApiBase = () => {
-  // Server-side or env variable explicitly set
+// ==========================================================================
+// DYNAMIC API URL RESOLUTION - Called at request time, not module load
+// ==========================================================================
+// This MUST be a function called at request time because:
+// 1. During SSR, window is undefined
+// 2. Module-level code runs on server first and gets cached
+// 3. We need to detect the actual runtime environment
+
+function getApiBase(): string {
+  // Explicit env var always wins
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
-  // Client-side production detection
+  
+  // Client-side: detect from current URL
   if (typeof window !== 'undefined') {
     const hostname = window.location.hostname;
-    if (hostname === 'novanexus-ai.com' || hostname === 'www.novanexus-ai.com') {
-      return 'https://api.novanexus-ai.com';
-    }
-    if (hostname.includes('vercel.app')) {
+    
+    // Production domains
+    if (hostname === 'novanexus-ai.com' || 
+        hostname === 'www.novanexus-ai.com' ||
+        hostname.endsWith('.vercel.app')) {
       return 'https://api.novanexus-ai.com';
     }
   }
-  // Default to localhost for development
+  
+  // Development fallback
   return 'http://localhost:3000';
-};
+}
 
-const API_BASE = getApiBase();
-const isProduction = typeof window !== 'undefined' && 
-  (window.location.hostname === 'novanexus-ai.com' || 
-   window.location.hostname === 'www.novanexus-ai.com' ||
-   window.location.hostname.includes('vercel.app'));
+function isProductionEnv(): boolean {
+  if (typeof window === 'undefined') return false;
+  const hostname = window.location.hostname;
+  return hostname === 'novanexus-ai.com' || 
+         hostname === 'www.novanexus-ai.com' ||
+         hostname.endsWith('.vercel.app');
+}
 
-// In production, all requests go through gateway. In dev, tradebot can be called directly.
-const TRADEBOT_URL = isProduction ? API_BASE : 'http://localhost:3010';
-const TRADEBOT_PREFIX = isProduction ? '/v1' : '/api';
+function getTradebotUrl(): string {
+  return isProductionEnv() ? getApiBase() : 'http://localhost:3010';
+}
 
 interface ApiResponse<T> {
   success: boolean;
@@ -87,7 +99,8 @@ class ApiClient {
     }
 
     try {
-      const response = await fetch(`${API_BASE}${path}`, {
+      const apiBase = getApiBase();
+      const response = await fetch(`${apiBase}${path}`, {
         method,
         headers,
         body: body ? JSON.stringify(body) : undefined,
@@ -116,7 +129,8 @@ class ApiClient {
 
   private async refreshAccessToken(): Promise<boolean> {
     try {
-      const response = await fetch(`${API_BASE}/v1/auth/refresh`, {
+      const apiBase = getApiBase();
+      const response = await fetch(`${apiBase}/v1/auth/refresh`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ refreshToken: this.refreshToken }),
@@ -582,9 +596,11 @@ class ApiClient {
     body?: unknown
   ): Promise<ApiResponse<T>> {
     try {
+      const isProd = isProductionEnv();
+      const baseUrl = getTradebotUrl();
       // In production, convert /api/* to /v1/* for gateway
-      const finalPath = isProduction ? path.replace('/api/', '/v1/').replace('/api', '/v1') : path;
-      const response = await fetch(`${TRADEBOT_URL}${finalPath}`, {
+      const finalPath = isProd ? path.replace('/api/', '/v1/').replace('/api', '/v1') : path;
+      const response = await fetch(`${baseUrl}${finalPath}`, {
         method,
         headers: { 'Content-Type': 'application/json' },
         body: body ? JSON.stringify(body) : undefined,
