@@ -1,0 +1,28 @@
+{
+  "name": "@nova/tradebot",
+  "version": "0.1.0",
+  "description": "Trading scanner, thesis generator, and paper trading bot",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn -r tsconfig-paths/register src/index.ts",
+    "start": "node dist/index.js",
+    "test": "jest --passWithNoTests"
+  },
+  "dependencies": {
+    "@nova/bot-sdk": "*",
+    "@nova/nexus-core": "*",
+    "@nova/shared": "*",
+    "@nova/telemetry": "*",
+    "axios": "^1.13.4",
+    "express": "^4.18.2",
+    "openai": "^6.17.0",
+    "tsconfig-paths": "^4.2.0"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/node": "^20.10.0",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.0"
+  }
+}

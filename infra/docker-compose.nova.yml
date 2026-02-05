@@ -1,0 +1,67 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: nova
+      POSTGRES_PASSWORD: nova_dev_password
+      POSTGRES_DB: nova
+    ports:
+      - "5432:5432"
+    volumes:
+      - nova_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U nova"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - nova_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  api:
+    build:
+      context: ../services/api
+      dockerfile: Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - NOVA_MODE=docker
+      - DATABASE_URL=postgresql+asyncpg://nova:nova_dev_password@postgres:5432/nova
+      - REDIS_URL=redis://redis:6379
+      - SECRET_KEY=${SECRET_KEY:-dev-secret-key-change-in-production}
+      - NOVA_ALLOW_REAL_ACTIONS=false
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ../data:/app/data
+
+  worker:
+    build:
+      context: ../services/bots
+      dockerfile: Dockerfile
+    environment:
+      - NOVA_MODE=docker
+      - DATABASE_URL=postgresql+asyncpg://nova:nova_dev_password@postgres:5432/nova
+      - PYTHONPATH=/app/services/api:/app/services/core:/app/services/bots
+    depends_on:
+      - api
+    volumes:
+      - ../data:/app/data
+
+volumes:
+  nova_postgres_data:
+  nova_redis_data:

@@ -1,6 +1,9 @@
 import type { NovaEvent, ActorType, UUID } from '@nova/shared';
 import { generateId, nowTimestamp, computeEventHash } from '@nova/shared';
 
+// Re-export PostgresEventStore
+export { PostgresEventStore, getEventStore, ChainVerificationResult, ChainError } from './postgres-store';
+
 /**
  * Event builder for creating properly formatted events
  */

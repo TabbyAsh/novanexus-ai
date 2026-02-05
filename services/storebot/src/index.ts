@@ -1,125 +1,205 @@
-import express, { Request, Response, NextFunction } from 'express';
+import express, { Request, Response } from 'express';
+import cors from 'cors';
+import {
+  BotClient,
+  createBotConfig,
+  createBotHealthRoutes,
+  TaskDefinition,
+  TaskContext,
+  TaskResult,
+} from '@nova/bot-sdk';
+import { generateId, nowTimestamp } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
-import { SERVICE_PORTS, HTTP_STATUS } from '@nova/shared';
-import type { Product, Listing, Order, BotRunInput, BotRunOutput, ProductStatus, ListingStatus, OrderStatus } from '@nova/shared';
+import { PricingEngine, Product as PricingProduct, PriceRecommendation } from './pricing-engine';
 
+const PORT = parseInt(process.env.PORT || '3011', 10);
+const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
+
+const logger = createLogger('storebot');
 const app = express();
-const logger = createLogger('storebot-service');
-const PORT = process.env.PORT || SERVICE_PORTS.STOREBOT;
-
-// In-memory stores
-const products: Map<string, Product> = new Map();
-const listings: Map<string, Listing> = new Map();
-const orders: Map<string, Order> = new Map();
-
+app.use(cors());
 app.use(express.json());
-app.use((req: Request, _res: Response, next: NextFunction) => {
-  logger.info(`${req.method} ${req.path}`);
-  next();
-});
 
-app.get('/health', (_req, res) => {
-  res.json({ status: 'healthy', service: 'storebot', timestamp: new Date().toISOString() });
-});
+// Initialize pricing engine
+const pricingEngine = new PricingEngine(process.env.DATABASE_URL);
 
-// Bot standard interface
-app.post('/internal/bot/run', async (req: Request, res: Response) => {
-  const input: BotRunInput = req.body;
-  logger.info('StoreBot task received', { taskId: input.taskId, type: input.type });
-  
-  const output: BotRunOutput = {
-    status: 'DONE',
-    output: { message: `Processed ${input.type}` },
-    events: [{ type: `store.${input.type}.completed`, payload: input.input }],
-  };
-  
-  res.json(output);
-});
+// ============================================================================
+// Types
+// ============================================================================
 
-// POST /v1/store/products - Create product
-app.post('/v1/store/products', async (req: Request, res: Response) => {
-  const product: Product = {
-    id: crypto.randomUUID(),
-    orgId: req.headers['x-org-id'] as string || 'default-org',
-    sku: req.body.sku || `SKU-${Date.now()}`,
-    title: req.body.title,
-    status: 'DRAFT' as ProductStatus,
-    meta: req.body.meta || {},
-    createdAt: new Date().toISOString(),
-    updatedAt: new Date().toISOString(),
-  };
-  
-  products.set(product.id, product);
-  res.status(HTTP_STATUS.CREATED).json({ success: true, data: { product } });
-});
+interface Product {
+  id: string;
+  sku: string;
+  title: string;
+  status: string;
+  meta: Record<string, unknown>;
+  createdAt: string;
+}
 
-// GET /v1/store/products - List products
-app.get('/v1/store/products', async (req: Request, res: Response) => {
-  res.json({ success: true, data: { products: Array.from(products.values()) } });
-});
+interface PricingRecommendation {
+  id: string;
+  productId: string;
+  sku: string;
+  title: string;
+  currentPrice: number;
+  recommendedPrice: number;
+  reason: string;
+  confidence: number;
+  createdAt: string;
+}
 
-// POST /v1/store/listings/publish - Publish listing
-app.post('/v1/store/listings/publish', async (req: Request, res: Response) => {
-  const listing: Listing = {
-    id: crypto.randomUUID(),
-    orgId: req.headers['x-org-id'] as string || 'default-org',
-    productId: req.body.productId,
-    channel: req.body.channel || 'shopify',
-    price: req.body.price,
-    status: 'PENDING' as ListingStatus,
-    meta: req.body.meta || {},
-  };
-  
-  listings.set(listing.id, listing);
-  
-  // Simulate async publish
-  setTimeout(() => {
-    listing.status = 'ACTIVE';
-  }, 1000);
-  
-  res.status(HTTP_STATUS.CREATED).json({ success: true, data: { listing } });
-});
+interface InventoryAlert {
+  id: string;
+  productId: string;
+  sku: string;
+  title: string;
+  alertType: string;
+  message: string;
+  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  createdAt: string;
+}
 
-// GET /v1/store/listings - List listings
-app.get('/v1/store/listings', async (req: Request, res: Response) => {
-  res.json({ success: true, data: { listings: Array.from(listings.values()) } });
-});
+// ============================================================================
+// Stub Data
+// ============================================================================
 
-// POST /v1/store/orders/sync - Sync orders
-app.post('/v1/store/orders/sync', async (req: Request, res: Response) => {
-  const { channel } = req.body;
-  
-  // Stub: simulate synced orders
-  const syncedOrders = [
-    { orderRef: `ORD-${Date.now()}`, status: 'PAID', total: 99.99, channel },
+const products: Product[] = [
+  { id: 'p1', sku: 'WIDGET-001', title: 'Premium Widget', status: 'ACTIVE', meta: { price: 29.99, inventory: 150, category: 'Widgets' }, createdAt: nowTimestamp() },
+  { id: 'p2', sku: 'GADGET-002', title: 'Smart Gadget', status: 'ACTIVE', meta: { price: 89.99, inventory: 25, category: 'Electronics' }, createdAt: nowTimestamp() },
+  { id: 'p3', sku: 'TOOL-003', title: 'Pro Tool Set', status: 'OUT_OF_STOCK', meta: { price: 149.99, inventory: 0, category: 'Tools' }, createdAt: nowTimestamp() },
+  { id: 'p4', sku: 'SUPPLY-004', title: 'Office Supplies', status: 'ACTIVE', meta: { price: 19.99, inventory: 500, category: 'Office' }, createdAt: nowTimestamp() },
+  { id: 'p5', sku: 'TECH-005', title: 'Wireless Charger', status: 'DRAFT', meta: { price: 39.99, inventory: 75, category: 'Electronics' }, createdAt: nowTimestamp() },
+];
+
+// ============================================================================
+// Business Logic
+// ============================================================================
+
+function checkInventory(): InventoryAlert[] {
+  return [
+    { id: 'ia1', productId: 'p3', sku: 'TOOL-003', title: 'Pro Tool Set', alertType: 'OUT_OF_STOCK', message: 'Product is out of stock - urgent reorder needed', severity: 'HIGH', createdAt: nowTimestamp() },
+    { id: 'ia2', productId: 'p2', sku: 'GADGET-002', title: 'Smart Gadget', alertType: 'LOW_STOCK', message: 'Only 25 units remaining, below minimum threshold of 30', severity: 'MEDIUM', createdAt: nowTimestamp() },
   ];
-  
-  res.json({ success: true, data: { synced: syncedOrders.length, orders: syncedOrders } });
-});
+}
 
-// POST /v1/store/pricing/recommend - Get pricing recommendations
-app.post('/v1/store/pricing/recommend', async (req: Request, res: Response) => {
-  const { productId, cost } = req.body;
+function analyzePricing(): PricingRecommendation[] {
+  return [
+    { id: 'pr1', productId: 'p1', sku: 'WIDGET-001', title: 'Premium Widget', currentPrice: 29.99, recommendedPrice: 34.99, reason: 'Strong demand and healthy inventory - opportunity to increase margin', confidence: 85, createdAt: nowTimestamp() },
+    { id: 'pr2', productId: 'p4', sku: 'SUPPLY-004', title: 'Office Supplies', currentPrice: 19.99, recommendedPrice: 17.99, reason: 'High inventory levels - promotional pricing recommended', confidence: 72, createdAt: nowTimestamp() },
+  ];
+}
+
+// ============================================================================
+// Bot Setup
+// ============================================================================
+
+const botConfig = createBotConfig('STORE', [
+  { name: 'inventory', version: '1.0.0', description: 'Inventory monitoring and alerts' },
+  { name: 'pricing', version: '1.0.0', description: 'Dynamic pricing optimization' },
+], { orchestratorUrl: ORCHESTRATOR_URL });
+
+const bot = new BotClient(botConfig);
+
+bot.registerTaskHandler('CHECK_INVENTORY', async (_task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.logger.info('Checking inventory levels');
+  await ctx.reportProgress(50, 'Analyzing inventory...');
   
-  const recommendation = {
-    productId,
-    cost,
-    suggestedPrice: cost * 2.5,
-    margin: 0.6,
-    competitorRange: { low: cost * 2, high: cost * 3 },
-    confidence: 0.75,
+  const alerts = checkInventory();
+  
+  for (const alert of alerts) {
+    await ctx.emit('INVENTORY_ALERT', { ...alert });
+  }
+  
+  return {
+    success: true,
+    output: { alerts, checkedAt: nowTimestamp() },
+    metrics: { alertCount: alerts.length },
   };
+});
+
+bot.registerTaskHandler('ANALYZE_PRICING', async (_task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.logger.info('Analyzing pricing');
+  await ctx.reportProgress(50, 'Computing recommendations...');
   
-  res.json({ success: true, data: { recommendation } });
+  const recommendations = analyzePricing();
+  
+  return {
+    success: true,
+    output: { recommendations, analyzedAt: nowTimestamp() },
+    metrics: { recommendationCount: recommendations.length },
+  };
 });
 
-// GET /v1/store/orders - List orders
-app.get('/v1/store/orders', async (req: Request, res: Response) => {
-  res.json({ success: true, data: { orders: Array.from(orders.values()) } });
+// ============================================================================
+// Express Routes
+// ============================================================================
+
+const healthRoutes = createBotHealthRoutes({ bot });
+app.get('/health', healthRoutes.healthHandler);
+app.get('/ready', healthRoutes.readyHandler);
+app.get('/metrics', healthRoutes.metricsHandler);
+
+app.get('/api/products', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { products } });
 });
 
-app.listen(PORT, () => {
-  logger.info(`StoreBot service started on port ${PORT}`);
+app.get('/api/inventory/alerts', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { alerts: checkInventory() } });
 });
 
+app.get('/api/pricing/recommendations', (_req: Request, res: Response) => {
+  res.json({ success: true, data: { recommendations: analyzePricing() } });
+});
+
+// Advanced Pricing Engine API
+app.get('/api/pricing/analyze', async (_req: Request, res: Response) => {
+  try {
+    const recommendations = await pricingEngine.analyzeAllProducts();
+    res.json({ success: true, data: { recommendations, analyzedAt: nowTimestamp() } });
+  } catch (err) {
+    logger.error('Pricing analysis failed');
+    res.status(500).json({ success: false, error: 'Analysis failed' });
+  }
+});
+
+app.post('/api/pricing/apply', async (req: Request, res: Response) => {
+  try {
+    const { productId, newPrice, reason } = req.body;
+    const success = await pricingEngine.applyPrice(productId, newPrice, reason);
+    res.json({ success, message: success ? 'Price updated' : 'Failed to update price' });
+  } catch (err) {
+    logger.error('Price application failed');
+    res.status(500).json({ success: false, error: 'Failed to apply price' });
+  }
+});
+
+app.get('/api/products/catalog', async (_req: Request, res: Response) => {
+  try {
+    const products = await pricingEngine.getProducts();
+    res.json({ success: true, data: { products } });
+  } catch (err) {
+    logger.error('Failed to get catalog');
+    res.status(500).json({ success: false, error: 'Failed to get catalog' });
+  }
+});
+
+// ============================================================================
+// Start Server
+// ============================================================================
+
+async function main() {
+  app.listen(PORT, () => logger.info(`StoreBot API started on port ${PORT}`));
+  
+  try {
+    await bot.start();
+    logger.info('StoreBot connected to orchestrator');
+  } catch (error) {
+    logger.warn('Running in standalone mode', { error });
+  }
+}
+
+process.on('SIGTERM', async () => { await bot.stop(); process.exit(0); });
+process.on('SIGINT', async () => { await bot.stop(); process.exit(0); });
+
+main();
 export default app;

@@ -1,0 +1,22 @@
+[project]
+name = "nova-bots"
+version = "0.1.0"
+description = "Nova Bots - TradeBot, StoreBot, SocialBot, OpsBot"
+requires-python = ">=3.11"
+dependencies = [
+    "pydantic>=2.5.0",
+    "python-dateutil>=2.8.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.4.0",
+    "pytest-asyncio>=0.23.0",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["nova_bots"]

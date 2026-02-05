@@ -1,32 +1,55 @@
 import express, { Request, Response, NextFunction } from 'express';
 import { createLogger } from '@nova/telemetry';
-import { SERVICE_PORTS, HTTP_STATUS } from '@nova/shared';
-import { computeEventHash } from '@nova/shared';
-import type { ApiResponse, NovaEvent } from '@nova/shared';
+import {
+  SERVICE_PORTS,
+  HTTP_STATUS,
+  ERROR_CODES,
+  query,
+  queryOne,
+  transaction,
+  computeEventHash,
+  nowTimestamp,
+  verifyToken,
+} from '@nova/shared';
+import type { ApiResponse, NovaEvent, JWTPayload } from '@nova/shared';
 
 const app = express();
 const logger = createLogger('eventbus-service');
 const PORT = process.env.PORT || SERVICE_PORTS.EVENTBUS;
-
-// In-memory event store (replace with Postgres)
-const events: NovaEvent[] = [];
-let lastHash = '0'.repeat(64); // Genesis hash
+const GENESIS_HASH = '0'.repeat(64);
 
 app.use(express.json());
 app.use((req: Request, _res: Response, next: NextFunction) => {
-  const requestId = req.headers['x-request-id'] as string || crypto.randomUUID();
+  const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  req.headers['x-request-id'] = requestId;
   logger.info(`${req.method} ${req.path}`, { requestId });
   next();
 });
 
+// Auth middleware helper
+function extractAuth(req: Request): JWTPayload | null {
+  const authHeader = req.headers.authorization;
+  if (!authHeader?.startsWith('Bearer ')) return null;
+  return verifyToken(authHeader.substring(7));
+}
+
 // Health check
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({ 
-    status: 'healthy', 
-    service: 'eventbus',
-    eventCount: events.length,
-    timestamp: new Date().toISOString() 
-  });
+app.get('/health', async (_req: Request, res: Response) => {
+  try {
+    const countResult = await queryOne<{ count: string }>('SELECT COUNT(*) as count FROM events');
+    res.json({
+      status: 'healthy',
+      service: 'eventbus',
+      eventCount: parseInt(countResult?.count || '0', 10),
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      status: 'unhealthy',
+      service: 'eventbus',
+      error: 'Database connection failed',
+    });
+  }
 });
 
 // ============================================
@@ -36,37 +59,74 @@ app.get('/health', (_req: Request, res: Response) => {
 // POST /v1/events - Emit a new event
 app.post('/v1/events', async (req: Request, res: Response) => {
   try {
+    const auth = extractAuth(req);
     const { type, payload, actorType, actorId, orgId } = req.body;
-    
-    const ts = new Date().toISOString();
-    const hash = computeEventHash(lastHash, payload, type, ts, actorType, actorId);
-    
-    const event: NovaEvent = {
-      id: crypto.randomUUID(),
-      orgId,
-      actorType,
-      actorId,
-      type,
-      ts,
-      payload,
-      prevHash: lastHash,
-      hash,
-    };
-    
-    events.push(event);
-    lastHash = hash;
-    
+
+    // Validate required fields
+    if (!type || !payload || !actorType || !actorId || !orgId) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Missing required fields' },
+      });
+    }
+
+    // For authenticated requests, validate org access
+    if (auth && auth.orgId !== orgId && actorType === 'USER') {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({
+        success: false,
+        error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Cannot emit events to other orgs' },
+      });
+    }
+
+    const event = await transaction(async (client) => {
+      // Get the last event hash for this org (for chain integrity)
+      const lastEventResult = await client.query<{ hash: string }>(
+        'SELECT hash FROM events WHERE org_id = $1 ORDER BY ts DESC LIMIT 1 FOR UPDATE',
+        [orgId]
+      );
+      const prevHash = lastEventResult.rows[0]?.hash || GENESIS_HASH;
+
+      const ts = nowTimestamp();
+      const hash = computeEventHash(prevHash, payload, type, ts, actorType, actorId);
+
+      // Insert the event
+      const insertResult = await client.query<{
+        id: string;
+        org_id: string;
+        actor_type: string;
+        actor_id: string;
+        type: string;
+        ts: string;
+        payload_json: string;
+        prev_hash: string;
+        hash: string;
+      }>(
+        `INSERT INTO events (org_id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         RETURNING id, org_id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash`,
+        [orgId, actorType, actorId, type, ts, JSON.stringify(payload), prevHash, hash]
+      );
+
+      const row = insertResult.rows[0];
+      return {
+        id: row.id,
+        orgId: row.org_id,
+        actorType: row.actor_type as 'USER' | 'BOT' | 'SYSTEM',
+        actorId: row.actor_id,
+        type: row.type,
+        ts: row.ts,
+        payload: JSON.parse(row.payload_json),
+        prevHash: row.prev_hash,
+        hash: row.hash,
+      };
+    });
+
     logger.info('Event emitted', { eventId: event.id, type });
-    
-    // TODO: Notify subscribers
-    // TODO: Persist to database
-    
-    const response: ApiResponse<{ event: NovaEvent }> = {
+
+    res.status(HTTP_STATUS.CREATED).json({
       success: true,
       data: { event },
-    };
-    
-    res.status(HTTP_STATUS.CREATED).json(response);
+    });
   } catch (error) {
     logger.error('Failed to emit event', error as Error);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
@@ -79,39 +139,101 @@ app.post('/v1/events', async (req: Request, res: Response) => {
 // POST /v1/events/query - Query events with filters
 app.post('/v1/events/query', async (req: Request, res: Response) => {
   try {
+    const auth = extractAuth(req);
     const { orgId, types, actorType, actorId, fromTs, toTs, limit = 100, offset = 0 } = req.body;
-    
-    let filtered = [...events];
-    
-    if (orgId) {
-      filtered = filtered.filter(e => e.orgId === orgId);
+
+    // For authenticated requests, enforce org scope
+    const effectiveOrgId = auth ? auth.orgId : orgId;
+
+    if (!effectiveOrgId) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'orgId is required' },
+      });
     }
+
+    // Build dynamic query
+    const conditions: string[] = ['org_id = $1'];
+    const params: any[] = [effectiveOrgId];
+    let paramIndex = 2;
+
     if (types && types.length > 0) {
-      filtered = filtered.filter(e => types.includes(e.type));
+      conditions.push(`type = ANY($${paramIndex})`);
+      params.push(types);
+      paramIndex++;
     }
+
     if (actorType) {
-      filtered = filtered.filter(e => e.actorType === actorType);
+      conditions.push(`actor_type = $${paramIndex}`);
+      params.push(actorType);
+      paramIndex++;
     }
+
     if (actorId) {
-      filtered = filtered.filter(e => e.actorId === actorId);
+      conditions.push(`actor_id = $${paramIndex}`);
+      params.push(actorId);
+      paramIndex++;
     }
+
     if (fromTs) {
-      filtered = filtered.filter(e => e.ts >= fromTs);
+      conditions.push(`ts >= $${paramIndex}`);
+      params.push(fromTs);
+      paramIndex++;
     }
+
     if (toTs) {
-      filtered = filtered.filter(e => e.ts <= toTs);
+      conditions.push(`ts <= $${paramIndex}`);
+      params.push(toTs);
+      paramIndex++;
     }
-    
-    // Sort by timestamp descending
-    filtered.sort((a, b) => b.ts.localeCompare(a.ts));
-    
-    // Paginate
-    const paginated = filtered.slice(offset, offset + limit);
-    
+
+    const whereClause = conditions.join(' AND ');
+
+    // Get total count
+    const countResult = await queryOne<{ count: string }>(
+      `SELECT COUNT(*) as count FROM events WHERE ${whereClause}`,
+      params
+    );
+    const total = parseInt(countResult?.count || '0', 10);
+
+    // Get events
+    const effectiveLimit = Math.min(limit, 1000);
+    params.push(effectiveLimit, offset);
+
+    const result = await query<{
+      id: string;
+      org_id: string;
+      actor_type: string;
+      actor_id: string;
+      type: string;
+      ts: string;
+      payload_json: string;
+      prev_hash: string;
+      hash: string;
+    }>(
+      `SELECT id, org_id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash
+       FROM events WHERE ${whereClause}
+       ORDER BY ts DESC
+       LIMIT $${paramIndex} OFFSET $${paramIndex + 1}`,
+      params
+    );
+
+    const events: NovaEvent[] = result.rows.map((row) => ({
+      id: row.id,
+      orgId: row.org_id,
+      actorType: row.actor_type as 'USER' | 'BOT' | 'SYSTEM',
+      actorId: row.actor_id,
+      type: row.type,
+      ts: row.ts,
+      payload: JSON.parse(row.payload_json),
+      prevHash: row.prev_hash,
+      hash: row.hash,
+    }));
+
     res.json({
       success: true,
-      data: { events: paginated },
-      meta: { total: filtered.length, limit, offset },
+      data: { events },
+      meta: { total, limit: effectiveLimit, offset },
     });
   } catch (error) {
     logger.error('Failed to query events', error as Error);
@@ -122,59 +244,186 @@ app.post('/v1/events/query', async (req: Request, res: Response) => {
   }
 });
 
-// GET /v1/events/:id - Get event by ID
-app.get('/v1/events/:id', async (req: Request, res: Response) => {
-  const event = events.find(e => e.id === req.params.id);
-  
-  if (!event) {
-    return res.status(HTTP_STATUS.NOT_FOUND).json({
+// GET /v1/events/recent - Get recent events (authenticated)
+app.get('/v1/events/recent', async (req: Request, res: Response) => {
+  try {
+    const auth = extractAuth(req);
+    if (!auth) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+      });
+    }
+
+    const limit = Math.min(parseInt(req.query.limit as string) || 50, 200);
+
+    const result = await query<{
+      id: string;
+      org_id: string;
+      actor_type: string;
+      actor_id: string;
+      type: string;
+      ts: string;
+      payload_json: string;
+      prev_hash: string;
+      hash: string;
+    }>(
+      `SELECT id, org_id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash
+       FROM events WHERE org_id = $1
+       ORDER BY ts DESC
+       LIMIT $2`,
+      [auth.orgId, limit]
+    );
+
+    const events: NovaEvent[] = result.rows.map((row) => ({
+      id: row.id,
+      orgId: row.org_id,
+      actorType: row.actor_type as 'USER' | 'BOT' | 'SYSTEM',
+      actorId: row.actor_id,
+      type: row.type,
+      ts: row.ts,
+      payload: JSON.parse(row.payload_json),
+      prevHash: row.prev_hash,
+      hash: row.hash,
+    }));
+
+    res.json({ success: true, data: { events } });
+  } catch (error) {
+    logger.error('Failed to get recent events', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
       success: false,
-      error: { code: 'NOT_FOUND', message: 'Event not found' },
+      error: { code: 'QUERY_FAILED', message: 'Failed to get recent events' },
     });
   }
-  
-  res.json({ success: true, data: { event } });
+});
+
+// GET /v1/events/:id - Get event by ID
+app.get('/v1/events/:id', async (req: Request, res: Response) => {
+  try {
+    const auth = extractAuth(req);
+    const eventId = req.params.id;
+
+    const result = await queryOne<{
+      id: string;
+      org_id: string;
+      actor_type: string;
+      actor_id: string;
+      type: string;
+      ts: string;
+      payload_json: string;
+      prev_hash: string;
+      hash: string;
+    }>('SELECT * FROM events WHERE id = $1', [eventId]);
+
+    if (!result) {
+      return res.status(HTTP_STATUS.NOT_FOUND).json({
+        success: false,
+        error: { code: ERROR_CODES.NOT_FOUND, message: 'Event not found' },
+      });
+    }
+
+    // Check org access
+    if (auth && auth.orgId !== result.org_id) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({
+        success: false,
+        error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Access denied' },
+      });
+    }
+
+    const event: NovaEvent = {
+      id: result.id,
+      orgId: result.org_id,
+      actorType: result.actor_type as 'USER' | 'BOT' | 'SYSTEM',
+      actorId: result.actor_id,
+      type: result.type,
+      ts: result.ts,
+      payload: JSON.parse(result.payload_json),
+      prevHash: result.prev_hash,
+      hash: result.hash,
+    };
+
+    res.json({ success: true, data: { event } });
+  } catch (error) {
+    logger.error('Failed to get event', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'QUERY_FAILED', message: 'Failed to get event' },
+    });
+  }
 });
 
 // GET /v1/events/chain/verify - Verify event chain integrity
 app.get('/v1/events/chain/verify', async (req: Request, res: Response) => {
   try {
+    const auth = extractAuth(req);
+    if (!auth) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+      });
+    }
+
+    // Get all events for this org in chronological order
+    const result = await query<{
+      id: string;
+      actor_type: string;
+      actor_id: string;
+      type: string;
+      ts: string;
+      payload_json: string;
+      prev_hash: string;
+      hash: string;
+    }>(
+      `SELECT id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash
+       FROM events WHERE org_id = $1 ORDER BY ts ASC`,
+      [auth.orgId]
+    );
+
     let valid = true;
-    let brokenAt: number | null = null;
-    
-    for (let i = 0; i < events.length; i++) {
-      const event = events[i];
-      
-      // Verify hash
-      const expectedHash = computeEventHash(
-        event.prevHash,
-        event.payload,
+    let brokenAt: string | null = null;
+    let brokenReason: string | null = null;
+    let expectedHash: string = GENESIS_HASH;
+
+    for (let i = 0; i < result.rows.length; i++) {
+      const event = result.rows[i];
+
+      // Verify that prevHash matches expected
+      if (event.prev_hash !== expectedHash) {
+        valid = false;
+        brokenAt = event.id;
+        brokenReason = `Chain linkage broken: expected prevHash ${expectedHash.substring(0, 8)}... but got ${event.prev_hash.substring(0, 8)}...`;
+        break;
+      }
+
+      // Verify hash computation
+      const payload = JSON.parse(event.payload_json);
+      const computedHash = computeEventHash(
+        event.prev_hash,
+        payload,
         event.type,
         event.ts,
-        event.actorType,
-        event.actorId
+        event.actor_type,
+        event.actor_id
       );
-      
-      if (event.hash !== expectedHash) {
+
+      if (event.hash !== computedHash) {
         valid = false;
-        brokenAt = i;
+        brokenAt = event.id;
+        brokenReason = `Hash mismatch: stored ${event.hash.substring(0, 8)}... but computed ${computedHash.substring(0, 8)}...`;
         break;
       }
-      
-      // Verify chain linkage
-      if (i > 0 && event.prevHash !== events[i - 1].hash) {
-        valid = false;
-        brokenAt = i;
-        break;
-      }
+
+      expectedHash = event.hash;
     }
-    
+
     res.json({
       success: true,
       data: {
         valid,
-        eventCount: events.length,
+        eventCount: result.rows.length,
         brokenAt,
+        brokenReason,
+        lastHash: expectedHash,
       },
     });
   } catch (error) {
@@ -186,17 +435,143 @@ app.get('/v1/events/chain/verify', async (req: Request, res: Response) => {
   }
 });
 
+// GET /v1/events/stats - Get event statistics
+app.get('/v1/events/stats', async (req: Request, res: Response) => {
+  try {
+    const auth = extractAuth(req);
+    if (!auth) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+      });
+    }
+
+    const [totalResult, byTypeResult, last24hResult] = await Promise.all([
+      queryOne<{ count: string }>(
+        'SELECT COUNT(*) as count FROM events WHERE org_id = $1',
+        [auth.orgId]
+      ),
+      query<{ type: string; count: string }>(
+        `SELECT type, COUNT(*) as count FROM events
+         WHERE org_id = $1
+         GROUP BY type ORDER BY count DESC LIMIT 10`,
+        [auth.orgId]
+      ),
+      queryOne<{ count: string }>(
+        `SELECT COUNT(*) as count FROM events
+         WHERE org_id = $1 AND ts > NOW() - INTERVAL '24 hours'`,
+        [auth.orgId]
+      ),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        total: parseInt(totalResult?.count || '0', 10),
+        last24Hours: parseInt(last24hResult?.count || '0', 10),
+        byType: byTypeResult.rows.map((r) => ({ type: r.type, count: parseInt(r.count, 10) })),
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to get event stats', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'QUERY_FAILED', message: 'Failed to get event stats' },
+    });
+  }
+});
+
 // ============================================
-// Subscription Routes (for future implementation)
+// Subscription Routes
 // ============================================
 
 // POST /v1/subscriptions - Create subscription
 app.post('/v1/subscriptions', async (req: Request, res: Response) => {
-  // TODO: Implement event subscriptions
-  res.status(HTTP_STATUS.CREATED).json({
-    success: true,
-    data: { subscription: { id: crypto.randomUUID(), ...req.body } },
-  });
+  try {
+    const auth = extractAuth(req);
+    if (!auth) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+      });
+    }
+
+    const { consumer, eventType, enabled = true } = req.body;
+
+    if (!consumer || !eventType) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'consumer and eventType are required' },
+      });
+    }
+
+    const result = await queryOne<{ id: string }>(
+      `INSERT INTO subscriptions (org_id, consumer, event_type, enabled)
+       VALUES ($1, $2, $3, $4)
+       RETURNING id`,
+      [auth.orgId, consumer, eventType, enabled]
+    );
+
+    res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      data: {
+        subscription: {
+          id: result?.id,
+          orgId: auth.orgId,
+          consumer,
+          eventType,
+          enabled,
+        },
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to create subscription', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'CREATE_FAILED', message: 'Failed to create subscription' },
+    });
+  }
+});
+
+// GET /v1/subscriptions - List subscriptions
+app.get('/v1/subscriptions', async (req: Request, res: Response) => {
+  try {
+    const auth = extractAuth(req);
+    if (!auth) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+      });
+    }
+
+    const result = await query<{
+      id: string;
+      consumer: string;
+      event_type: string;
+      cursor: string | null;
+      enabled: boolean;
+    }>('SELECT * FROM subscriptions WHERE org_id = $1', [auth.orgId]);
+
+    res.json({
+      success: true,
+      data: {
+        subscriptions: result.rows.map((r) => ({
+          id: r.id,
+          orgId: auth.orgId,
+          consumer: r.consumer,
+          eventType: r.event_type,
+          cursor: r.cursor,
+          enabled: r.enabled,
+        })),
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to list subscriptions', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'QUERY_FAILED', message: 'Failed to list subscriptions' },
+    });
+  }
 });
 
 // Start server

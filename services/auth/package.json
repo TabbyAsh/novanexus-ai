@@ -7,13 +7,10 @@
     "build": "tsc",
     "dev": "ts-node-dev --respawn src/index.ts",
     "start": "node dist/index.js",
-    "test": "jest",
+    "test": "jest --passWithNoTests",
     "lint": "eslint src/"
   },
   "dependencies": {
-    "@nova/shared": "workspace:*",
-    "@nova/policy": "workspace:*",
-    "@nova/telemetry": "workspace:*",
     "express": "^4.18.2",
     "bcryptjs": "^2.4.3",
     "jsonwebtoken": "^9.0.2",

@@ -121,3 +121,4 @@ ENV/
 *.local.json
 *.local.yaml
 *.local.yml
+.vercel

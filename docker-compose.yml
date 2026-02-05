@@ -93,8 +93,10 @@ services:
 
   orchestrator:
     build:
-      context: ./services/orchestrator
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.ws
+      args:
+        WORKSPACE: "@nova/orchestrator-service"
     container_name: nova-orchestrator
     ports:
       - "3002:3002"
@@ -113,8 +115,10 @@ services:
 
   eventbus:
     build:
-      context: ./services/eventbus
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.ws
+      args:
+        WORKSPACE: "@nova/eventbus-service"
     container_name: nova-eventbus
     ports:
       - "3003:3003"
@@ -182,8 +186,10 @@ services:
   # ============================================
   tradebot:
     build:
-      context: ./services/tradebot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.ws
+      args:
+        WORKSPACE: "@nova/tradebot"
     container_name: nova-tradebot
     ports:
       - "3010:3010"
@@ -205,8 +211,10 @@ services:
 
   storebot:
     build:
-      context: ./services/storebot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.ws
+      args:
+        WORKSPACE: "@nova/storebot"
     container_name: nova-storebot
     ports:
       - "3011:3011"
@@ -225,8 +233,10 @@ services:
 
   socialbot:
     build:
-      context: ./services/socialbot
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Dockerfile.ws
+      args:
+        WORKSPACE: "@nova/socialbot"
     container_name: nova-socialbot
     ports:
       - "3012:3012"
