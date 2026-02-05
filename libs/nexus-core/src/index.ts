@@ -279,9 +279,9 @@ export {
 // NEXUS - The unified system
 // ============================================================================
 
-import { ConstitutionEnforcer, AutonomyTier } from './constitution';
+import { ConstitutionEnforcer, AutonomyTier, DegradationLevel } from './constitution';
 import { MindSpace } from './mindspace';
-import { DecisionLedger } from './ledger';
+import { DecisionLedger, LedgerEntryType } from './ledger';
 import { DataEngine } from './data-engine';
 import { Evaluator } from './evaluator';
 import { Blender } from './blender';
@@ -388,7 +388,7 @@ export class NovaNexus {
 
     // Record system start in ledger
     this.ledger.append(
-      'SYSTEM_EVENT' as any,
+      LedgerEntryType.SYSTEM_EVENT,
       'system',
       { type: 'system', id: 'nexus' },
       { event: 'initialized', timestamp: Date.now() },
@@ -487,9 +487,7 @@ export class NovaNexus {
    */
   emergencyHalt(reason: string): void {
     this.executor.halt(reason);
-    this.constitution.setDegradationLevel(
-      require('./constitution').DegradationLevel.EMERGENCY
-    );
+    this.constitution.setDegradationLevel(DegradationLevel.EMERGENCY);
     
     this.ledger.recordHumanOverride(
       'EMERGENCY_HALT',
@@ -506,9 +504,7 @@ export class NovaNexus {
    */
   resume(): void {
     this.executor.resume();
-    this.constitution.setDegradationLevel(
-      require('./constitution').DegradationLevel.NORMAL
-    );
+    this.constitution.setDegradationLevel(DegradationLevel.NORMAL);
     
     console.log('[NOVA NEXUS] System resumed');
   }

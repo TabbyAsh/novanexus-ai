@@ -16,6 +16,7 @@ import {
   CommandStatus,
   DataDomain,
   AssetType,
+  LedgerEntryType,
 } from '@nova/nexus-core';
 import { createLogger } from '@nova/telemetry';
 import { generateId, nowTimestamp } from '@nova/shared';
@@ -226,9 +227,9 @@ export class NexusTrader {
 
     // 7. Record in ledger
     this.nexus.ledger.append(
-      'STRATEGY_EVALUATION' as any,
+      LedgerEntryType.DECISION_MADE,
       'nexus-trader',
-      { type: 'system' as const, id: thesis.symbol },
+      { type: 'system', id: thesis.symbol },
       { thesis, decision, valuation },
       { tags: ['evaluation', thesis.signal, thesis.symbol] }
     );
