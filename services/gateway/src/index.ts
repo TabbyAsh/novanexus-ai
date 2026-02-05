@@ -648,7 +648,13 @@ app.all('/v1/social/*', (req: Request, res: Response) => {
 });
 
 app.all('/v1/content*', (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.socialbot, req, res);
+  // SocialBot uses /api/content/* routes; rewrite to keep a stable public /v1/content/* contract.
+  proxyRequestRewrite(
+    SERVICE_URLS.socialbot,
+    req.originalUrl.replace('/v1/content', '/api/content'),
+    req,
+    res
+  );
 });
 
 // Research routes -> ResearchBot
