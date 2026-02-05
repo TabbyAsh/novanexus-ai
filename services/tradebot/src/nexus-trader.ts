@@ -85,6 +85,13 @@ export class NexusTrader {
   }
 
   /**
+   * Check if NexusTrader is initialized
+   */
+  isInitialized(): boolean {
+    return this.initialized;
+  }
+
+  /**
    * Initialize the Nexus trading system
    */
   async initialize(): Promise<void> {

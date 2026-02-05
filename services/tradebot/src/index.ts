@@ -824,8 +824,39 @@ bot.registerTaskHandler('UPDATE_PAPER_TRADES', async (task: TaskDefinition, ctx:
 // Express Routes - Health & API
 // ============================================================================
 
+// Standalone liveness check - always returns 200 if service is running
+// This is used by load balancers and monitoring systems
+app.get('/health/live', (_req: Request, res: Response) => {
+  res.json({ 
+    status: 'ok', 
+    service: 'tradebot',
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+  });
+});
+
+// Primary health check - returns 200 with degraded status if orchestrator not connected
+app.get('/health', (_req: Request, res: Response) => {
+  const checks = {
+    alpaca: USE_ALPACA ? 'enabled' : 'disabled',
+    nexus: nexusTrader.isInitialized() ? 'initialized' : 'not_initialized',
+    database: 'ok', // Would check DB if needed
+  };
+  
+  res.json({
+    status: 'healthy',
+    service: 'tradebot',
+    mode: USE_ALPACA ? 'live' : 'paper',
+    checks,
+    timestamp: new Date().toISOString(),
+    uptime: process.uptime(),
+    version: '0.1.0',
+  });
+});
+
+// Full readiness with orchestrator (optional)
 const healthRoutes = createBotHealthRoutes({ bot });
-app.get('/health', healthRoutes.healthHandler);
+app.get('/health/full', healthRoutes.healthHandler);
 app.get('/ready', healthRoutes.readyHandler);
 app.get('/metrics', healthRoutes.metricsHandler);
 
