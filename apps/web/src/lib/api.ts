@@ -1,7 +1,30 @@
-const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+// Environment detection
+const getApiBase = () => {
+  // Server-side or env variable explicitly set
+  if (process.env.NEXT_PUBLIC_API_URL) {
+    return process.env.NEXT_PUBLIC_API_URL;
+  }
+  // Client-side production detection
+  if (typeof window !== 'undefined') {
+    const hostname = window.location.hostname;
+    if (hostname === 'novanexus-ai.com' || hostname === 'www.novanexus-ai.com') {
+      return 'https://api.novanexus-ai.com';
+    }
+    if (hostname.includes('vercel.app')) {
+      return 'https://api.novanexus-ai.com';
+    }
+  }
+  // Default to localhost for development
+  return 'http://localhost:3000';
+};
+
+const API_BASE = getApiBase();
+const isProduction = typeof window !== 'undefined' && 
+  (window.location.hostname === 'novanexus-ai.com' || 
+   window.location.hostname === 'www.novanexus-ai.com' ||
+   window.location.hostname.includes('vercel.app'));
 
 // In production, all requests go through gateway. In dev, tradebot can be called directly.
-const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
 const TRADEBOT_URL = isProduction ? API_BASE : 'http://localhost:3010';
 const TRADEBOT_PREFIX = isProduction ? '/v1' : '/api';
 

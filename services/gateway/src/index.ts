@@ -97,12 +97,57 @@ declare global {
   }
 }
 
-app.use(express.json());
+app.use(express.json({ limit: '1mb' })); // Limit payload size
 
-// CORS middleware
+// ==========================================================================
+// SECURITY HEADERS MIDDLEWARE
+// ==========================================================================
+const ALLOWED_ORIGINS = [
+  'http://localhost:3000',
+  'http://localhost:3100',
+  'https://novanexus-ai.com',
+  'https://www.novanexus-ai.com',
+  'https://novanexus-ai.vercel.app',
+];
+
 app.use((req: Request, res: Response, next: NextFunction) => {
-  const origin = req.headers.origin || '*';
-  res.setHeader('Access-Control-Allow-Origin', origin);
+  // Security headers
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'geolocation=(), microphone=(), camera=()');
+  
+  // HSTS for production (force HTTPS)
+  if (process.env.NODE_ENV === 'production' || req.headers.host?.includes('novanexus')) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains; preload');
+  }
+  
+  // Content Security Policy
+  res.setHeader('Content-Security-Policy', 
+    "default-src 'self'; " +
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: https:; " +
+    "connect-src 'self' https://api.novanexus-ai.com https://api.alpaca.markets wss:; " +
+    "frame-ancestors 'none';"
+  );
+  
+  next();
+});
+
+// CORS middleware with origin validation
+app.use((req: Request, res: Response, next: NextFunction) => {
+  const origin = req.headers.origin;
+  
+  // Check if origin is allowed
+  if (origin && (ALLOWED_ORIGINS.includes(origin) || origin.includes('vercel.app'))) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    // Allow requests without origin (server-to-server, curl, etc)
+    res.setHeader('Access-Control-Allow-Origin', '*');
+  }
+  
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
   res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
