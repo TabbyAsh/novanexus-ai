@@ -1,0 +1,5 @@
+# Build artifacts accidentally emitted into src/
+# (nexus-core should emit to dist/ via libs/nexus-core/tsconfig.json)
+*.js
+*.d.ts
+*.map

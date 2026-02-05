@@ -122,3 +122,6 @@ ENV/
 *.local.yaml
 *.local.yml
 .vercel
+
+# Turbo (cache + daemon logs)
+.turbo/
