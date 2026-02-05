@@ -390,6 +390,104 @@ class ApiClient {
     }>('GET', `/v1/bots${query}`);
   }
 
+  // Market Data endpoints
+  async getMarketQuote(symbol: string) {
+    return this.request<{
+      quote: {
+        symbol: string;
+        price: number;
+        change: number;
+        changePercent: number;
+        volume: number;
+        bid: number;
+        ask: number;
+        timestamp: string;
+        source: string;
+      };
+    }>('GET', `/v1/market/quote/${symbol}`);
+  }
+
+  async getMarketQuotes(symbols: string[]) {
+    return this.request<{
+      quotes: Array<{
+        symbol: string;
+        price: number;
+        change: number;
+        changePercent: number;
+        volume: number;
+        timestamp: string;
+      }>;
+    }>('POST', '/v1/market/quotes', { symbols });
+  }
+
+  async getMarketIndicators(symbol: string) {
+    return this.request<{
+      indicators: {
+        symbol: string;
+        rsi: number;
+        sma20: number;
+        sma50: number;
+        sma200: number;
+        macd: { value: number; signal: number; histogram: number };
+        vwap: number;
+      };
+    }>('GET', `/v1/market/indicators/${symbol}`);
+  }
+
+  async getWatchlistQuotes(watchlistId: string = 'default') {
+    return this.tradebotRequest<{
+      watchlist: { id: string; name: string; symbols: string[] };
+      quotes: Array<{
+        symbol: string;
+        price: number;
+        change: number;
+        changePercent: number;
+        volume: number;
+      }>;
+    }>('GET', `/api/watchlists/${watchlistId}/quotes`);
+  }
+
+  // Watchlist management
+  async addToWatchlist(watchlistId: string, symbol: string) {
+    return this.tradebotRequest<{ watchlist: any }>(
+      'POST',
+      `/api/watchlists/${watchlistId}/symbols`,
+      { symbol }
+    );
+  }
+
+  async removeFromWatchlist(watchlistId: string, symbol: string) {
+    return this.tradebotRequest<{ watchlist: any }>(
+      'DELETE',
+      `/api/watchlists/${watchlistId}/symbols/${symbol}`
+    );
+  }
+
+  // Create paper trade from signal directly
+  async createPaperTradeFromSignal(signal: {
+    symbol: string;
+    type: 'bullish' | 'bearish';
+    entry: number;
+    target: number;
+    stopLoss: number;
+  }, quantity: number = 10) {
+    // First create a thesis
+    const thesisResult = await this.tradebotRequest<{ thesis: any }>(
+      'POST',
+      '/api/theses',
+      { symbol: signal.symbol }
+    );
+    if (!thesisResult.success || !thesisResult.data?.thesis) {
+      return { success: false, error: { code: 'THESIS_FAILED', message: 'Failed to create thesis' } };
+    }
+    // Then open a paper trade
+    return this.tradebotRequest<{ trade: any }>(
+      'POST',
+      '/api/trades',
+      { thesisId: thesisResult.data.thesis.id, quantity }
+    );
+  }
+
   // Trade endpoints
   async runScan(watchlistId?: string, filters?: { minScore?: number; signals?: string[] }) {
     return this.request<{

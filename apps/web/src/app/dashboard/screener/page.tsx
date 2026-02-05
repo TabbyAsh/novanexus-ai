@@ -37,8 +37,15 @@ interface ScanStatus {
 }
 
 // Signal Card Component with enhanced visuals
-function SignalCard({ signal, index }: { signal: Signal; index: number }) {
+function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: { 
+  signal: Signal; 
+  index: number;
+  onAddToWatchlist: (symbol: string) => void;
+  onPaperTrade: (signal: Signal) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
+  const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
+  const [isPaperTrading, setIsPaperTrading] = useState(false);
   
   const typeColors = {
     bullish: { 
@@ -205,22 +212,44 @@ function SignalCard({ signal, index }: { signal: Signal; index: number }) {
                 </div>
               </div>
               
-              <div className="flex gap-3 mt-6">
-                <motion.button 
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-semibold text-sm hover:shadow-lg hover:shadow-cyan-500/30 transition-all"
-                >
-                  📋 Add to Watchlist
-                </motion.button>
-                <motion.button 
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="flex-1 py-3 rounded-xl bg-gradient-to-r from-green-500 to-emerald-600 text-white font-semibold text-sm hover:shadow-lg hover:shadow-green-500/30 transition-all"
-                >
-                  📊 Paper Trade
-                </motion.button>
-              </div>
+                              <div className="flex gap-3 mt-6">
+                                <motion.button 
+                                  whileHover={{ scale: isAddingToWatchlist ? 1 : 1.02 }}
+                                  whileTap={{ scale: isAddingToWatchlist ? 1 : 0.98 }}
+                                  disabled={isAddingToWatchlist}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsAddingToWatchlist(true);
+                                    onAddToWatchlist(signal.symbol);
+                                    setTimeout(() => setIsAddingToWatchlist(false), 1000);
+                                  }}
+                                  className={`flex-1 py-3 rounded-xl text-white font-semibold text-sm transition-all ${
+                                    isAddingToWatchlist 
+                                      ? 'bg-gray-600 cursor-not-allowed' 
+                                      : 'bg-gradient-to-r from-cyan-500 to-purple-600 hover:shadow-lg hover:shadow-cyan-500/30'
+                                  }`}
+                                >
+                                  {isAddingToWatchlist ? '✓ Added!' : '📋 Add to Watchlist'}
+                                </motion.button>
+                                <motion.button 
+                                  whileHover={{ scale: isPaperTrading ? 1 : 1.02 }}
+                                  whileTap={{ scale: isPaperTrading ? 1 : 0.98 }}
+                                  disabled={isPaperTrading}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsPaperTrading(true);
+                                    onPaperTrade(signal);
+                                    setTimeout(() => setIsPaperTrading(false), 1500);
+                                  }}
+                                  className={`flex-1 py-3 rounded-xl text-white font-semibold text-sm transition-all ${
+                                    isPaperTrading 
+                                      ? 'bg-gray-600 cursor-not-allowed' 
+                                      : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:shadow-lg hover:shadow-green-500/30'
+                                  }`}
+                                >
+                                  {isPaperTrading ? '⏳ Opening...' : '📊 Paper Trade'}
+                                </motion.button>
+                              </div>
             </div>
           </motion.div>
         )}
@@ -372,6 +401,37 @@ export default function ScreenerPage() {
     runScan();
   }, []);
 
+  // Handler for adding signal to watchlist
+  const handleAddToWatchlist = useCallback(async (symbol: string) => {
+    try {
+      const result = await api.addToWatchlist('default', symbol);
+      if (result.success) {
+        console.log(`Added ${symbol} to watchlist`);
+      }
+    } catch (err) {
+      console.error('Failed to add to watchlist:', err);
+    }
+  }, []);
+
+  // Handler for opening paper trade from signal
+  const handlePaperTrade = useCallback(async (signal: Signal) => {
+    try {
+      const result = await api.createPaperTradeFromSignal({
+        symbol: signal.symbol,
+        type: signal.type as 'bullish' | 'bearish',
+        entry: signal.entry,
+        target: signal.target,
+        stopLoss: signal.stopLoss,
+      }, 10);
+      if (result.success) {
+        console.log(`Opened paper trade for ${signal.symbol}`);
+        // Could show a toast notification here
+      }
+    } catch (err) {
+      console.error('Failed to open paper trade:', err);
+    }
+  }, []);
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -501,7 +561,13 @@ export default function ScreenerPage() {
             </div>
           ) : (
             signals.map((signal, i) => (
-              <SignalCard key={`${signal.symbol}-${i}`} signal={signal} index={i} />
+              <SignalCard 
+                key={`${signal.symbol}-${i}`} 
+                signal={signal} 
+                index={i}
+                onAddToWatchlist={handleAddToWatchlist}
+                onPaperTrade={handlePaperTrade}
+              />
             ))
           )}
         </div>
