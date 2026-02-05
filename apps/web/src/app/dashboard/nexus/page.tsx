@@ -80,6 +80,51 @@ export default function NexusDashboardPage() {
   const trustTrend = status?.nexus?.trust?.trustTrend as string | undefined;
   const inactionCount = status?.nexus?.inaction?.totalArtifacts as number | undefined;
 
+  const riskAvoidance = useMemo(() => {
+    const inaction = status?.nexus?.inaction ?? {};
+    const risk = status?.nexus?.risk ?? {};
+
+    const cards = (ledger ?? [])
+      .map((r: any) => r?.card)
+      .filter(Boolean);
+
+    const artifacts = cards
+      .map((c: any) => c?.inaction?.artifact)
+      .filter(Boolean);
+
+    const riskVetoes = cards.filter((c: any) => c?.risk?.check && c.risk.check.approved === false).length;
+    const riskAbstentions = artifacts.filter((a: any) => a?.type === 'RISK_ABSTENTION').length;
+
+    const billableArtifacts = artifacts.filter((a: any) => a?.billable).length;
+    const billableValueFromArtifacts = artifacts.reduce((sum: number, a: any) => {
+      const v = typeof a?.billableValue === 'number' ? a.billableValue : 0;
+      return sum + v;
+    }, 0);
+
+    const rejections = (ledger ?? []).filter((r: any) => r?.decision?.approved === false).length;
+
+    return {
+      // InactionEngine stats (system-of-record)
+      totalArtifacts: typeof inaction.totalArtifacts === 'number' ? inaction.totalArtifacts : 0,
+      pendingOutcomes: typeof inaction.pendingOutcomes === 'number' ? inaction.pendingOutcomes : 0,
+      totalAvoidedLoss: typeof inaction.totalAvoidedLoss === 'number' ? inaction.totalAvoidedLoss : 0,
+      totalBillableValue: typeof inaction.totalBillableValue === 'number' ? inaction.totalBillableValue : 0,
+      restraintRate: typeof inaction.restraintRate === 'number' ? inaction.restraintRate : 0,
+      emotionalTradesBlocked: typeof inaction.emotionalTradesBlocked === 'number' ? inaction.emotionalTradesBlocked : 0,
+
+      // Derived (from recent decision cards)
+      riskVetoes,
+      riskAbstentions,
+      billableArtifacts,
+      billableValueFromArtifacts,
+      rejections,
+
+      // Risk context
+      isHalted: Boolean(risk.isHalted),
+      recentTriggers: typeof risk.recentTriggers === 'number' ? risk.recentTriggers : 0,
+    };
+  }, [ledger, status?.nexus?.inaction, status?.nexus?.risk]);
+
   const decisionApproved = useMemo(() => {
     const approved = card?.decision?.approved;
     return typeof approved === 'boolean' ? approved : null;
@@ -217,6 +262,77 @@ export default function NexusDashboardPage() {
             </div>
             <p className="text-2xl font-bold text-pink-300 mt-2">{typeof inactionCount === 'number' ? inactionCount : '—'}</p>
             <p className="text-xs text-gray-500 mt-1">Artifacts recorded</p>
+          </div>
+        </div>
+
+        {/* Risk-Avoidance Metrics */}
+        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+          <div className="flex items-start justify-between gap-4">
+            <div>
+              <h2 className="text-lg font-semibold text-white">Risk-Avoidance Metrics</h2>
+              <p className="text-gray-400 text-sm mt-1">
+                Restraint is recorded as first-class output (inaction artifacts + avoided-loss accounting).
+              </p>
+            </div>
+            {riskAvoidance.isHalted && (
+              <span className="px-3 py-1.5 rounded-full text-xs font-semibold border bg-red-500/15 text-red-300 border-red-500/30">
+                HALTED
+              </span>
+            )}
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-6 gap-4 mt-4">
+            <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500">Total Avoided Loss</p>
+              <p className="text-2xl font-bold text-green-300 mt-2">
+                ${riskAvoidance.totalAvoidedLoss.toFixed(0)}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">Requires outcome tracking</p>
+            </div>
+
+            <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500">Total Restraint Value</p>
+              <p className="text-2xl font-bold text-pink-300 mt-2">
+                ${riskAvoidance.totalBillableValue.toFixed(0)}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">Billable inaction value</p>
+            </div>
+
+            <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500">Restraint Rate</p>
+              <p className="text-2xl font-bold text-white mt-2">
+                {riskAvoidance.restraintRate.toFixed(2)}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">Artifacts/day (last 30d)</p>
+            </div>
+
+            <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500">Risk Abstentions</p>
+              <p className="text-2xl font-bold text-yellow-300 mt-2">
+                {riskAvoidance.riskAbstentions}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">From recent decision cards</p>
+            </div>
+
+            <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500">Risk Engine Vetoes</p>
+              <p className="text-2xl font-bold text-red-300 mt-2">
+                {riskAvoidance.riskVetoes}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">Survivability constraints</p>
+            </div>
+
+            <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
+              <p className="text-xs text-gray-500">Recent Risk Triggers</p>
+              <p className="text-2xl font-bold text-white mt-2">
+                {riskAvoidance.recentTriggers}
+              </p>
+              <p className="text-xs text-gray-600 mt-1">Last 24h</p>
+            </div>
+          </div>
+
+          <div className="mt-4 text-xs text-gray-500">
+            Recent cards: {ledger.length} • Rejections: {riskAvoidance.rejections} • Billable artifacts (recent): {riskAvoidance.billableArtifacts} • Billable value (recent): ${riskAvoidance.billableValueFromArtifacts.toFixed(0)}
           </div>
         </div>
 
