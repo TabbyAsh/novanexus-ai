@@ -104,6 +104,178 @@ export {
 } from './execution';
 
 // ============================================================================
+// INVESTMENT SECTOR MODULES
+// ============================================================================
+
+// Signal Ingestion - Universal signal capture
+export {
+  SignalIngestion,
+  SignalCategory,
+  MarketSignalType,
+  AttentionSignalType,
+  StructuralSignalType,
+  type Signal,
+  type MarketSignal,
+  type AttentionSignal,
+  type StructuralSignal,
+  type TranslatedSignal,
+  type ConfidenceScore,
+  type TemporalRelevance,
+  type FailureCondition,
+} from './signal-ingestion';
+
+// Strategy Engine - Conditional strategy families
+export {
+  StrategyEngine,
+  StrategyFamily,
+  MarketRegime,
+  TimeHorizon,
+  type Strategy,
+  type StrategySignal,
+  type EntryCondition,
+  type ExitCondition,
+} from './strategy-engine';
+
+// Simulation Engine - Pre-execution simulation
+export {
+  SimulationEngine,
+  type SimulationResult,
+  type SimulationScenario,
+  type DrawdownDistribution,
+  type TailRiskMetrics,
+  type OpportunityCost,
+  type MonteCarloConfig,
+} from './simulation-engine';
+
+// Capital Allocator - Dynamic pool management
+export {
+  CapitalAllocator,
+  PoolType,
+  type CapitalPool,
+  type PoolPosition,
+  type AllocationRule,
+  type AllocationRequest,
+  type AllocationResult,
+} from './capital-allocator';
+
+// Watchlist Intelligence - Living watchlists
+export {
+  WatchlistIntelligence,
+  WatchlistType,
+  ReadinessState,
+  ThesisStatus,
+  type Watchlist,
+  type WatchlistItem,
+  type Catalyst,
+  type ReadinessTrigger,
+  type ReadinessBlocker,
+} from './watchlist';
+
+// ============================================================================
+// INTELLIGENCE EMPIRE MODULES
+// ============================================================================
+
+// Meta-Governance - Constitutional layer governing Nova itself
+export {
+  MetaGovernance,
+  CapabilityType,
+  type ConstitutionalArticle,
+  type Amendment,
+  type Evidence,
+  type Signature,
+  type Capability,
+  type CapabilityChange,
+  type RollbackPoint,
+  type RollbackRequest,
+  type Proposal,
+} from './meta-governance';
+
+// State Lattice - Time-indexed world state graph
+export {
+  StateLattice,
+  NodeType,
+  EdgeType,
+  type LatticeNode,
+  type LatticeEdge,
+  type StateSnapshot,
+  type LatticeQuery,
+  type LatticeQueryResult,
+} from './lattice';
+
+// Regime Engine - Environment classification
+export {
+  RegimeEngine,
+  RegimeType,
+  RegimeCategory,
+  type RegimeIndicator,
+  type RegimeEvidence,
+  type RegimeState,
+  type RegimeTransition,
+  type RegimeHistoryEntry,
+} from './regime-engine';
+
+// Risk Engine - Survivability constraints
+export {
+  RiskEngine,
+  ConstraintType,
+  RiskEventType,
+  type Constraint,
+  type RiskEnvelope,
+  type RiskEvent,
+  type PositionRequest,
+  type RiskCheckResult,
+  type PortfolioRiskState,
+} from './risk-engine';
+
+// Trust Ledger - User memory separate from truth
+export {
+  TrustLedger,
+  InteractionType,
+  type Explanation,
+  type Override,
+  type FrictionStep,
+  type TrustScore,
+  type UserPreferences,
+} from './trust-ledger';
+
+// Inaction Artifacts - Restraint as billable value
+export {
+  InactionEngine,
+  InactionType,
+  InactionOutcome,
+  type InactionArtifact,
+  type AvoidedLossReport,
+  type RestraintMetrics,
+} from './inaction';
+
+// Commerce Intelligence - Marketplace sector
+export {
+  CommerceIntelligence,
+  MarketType,
+  DemandState,
+  SaturationLevel,
+  type ProductAnalysis,
+  type TimingWindow,
+  type PricingRecommendation,
+  type ListingOptimization,
+  type CommerceSignal,
+} from './commerce';
+
+// Nova Platform - Unified platform layer
+export {
+  NovaPlatform,
+  WorkflowType,
+  WorkflowStatus,
+  AutomationTier,
+  type DecisionWorkflow,
+  type WorkflowStage,
+  type JournalEntry,
+  type AutomationRule,
+  type PlatformState,
+  type ReplaySession,
+} from './platform';
+
+// ============================================================================
 // NEXUS - The unified system
 // ============================================================================
 
@@ -115,11 +287,39 @@ import { Evaluator } from './evaluator';
 import { Blender } from './blender';
 import { Appraiser } from './appraiser';
 import { ExecutionFabric } from './execution';
+import { SignalIngestion } from './signal-ingestion';
+import { StrategyEngine } from './strategy-engine';
+import { SimulationEngine } from './simulation-engine';
+import { CapitalAllocator } from './capital-allocator';
+import { WatchlistIntelligence } from './watchlist';
+
+// Intelligence Empire modules
+import { MetaGovernance } from './meta-governance';
+import { StateLattice } from './lattice';
+import { RegimeEngine } from './regime-engine';
+import { RiskEngine } from './risk-engine';
+import { TrustLedger } from './trust-ledger';
+import { InactionEngine } from './inaction';
+import { CommerceIntelligence } from './commerce';
+import { NovaPlatform } from './platform';
 
 /**
- * The Nova Nexus System - all components integrated
+ * The Nova Nexus System - Complete Intelligence Empire
+ * 
+ * 5 SYSTEM AXIOMS:
+ * 1. Everything Must Ground - concepts resolve to data, logic, artifact, action, output, or value
+ * 2. Intelligence Never Executes - intelligence proposes, execution obeys constraints
+ * 3. Decisions Are The Atomic Unit - optimize decisions, not models
+ * 4. Memory Is Sacred - nothing overwritten, everything replayable
+ * 5. Governance Is Above Capability - no capability outranks constraint
+ * 
+ * 3 CORE SECTORS:
+ * - Investment & Capital Intelligence
+ * - Marketplace & Commerce Intelligence
+ * - Nova Nexus Platform
  */
 export class NovaNexus {
+  // Core Components (Foundation Layer)
   public readonly constitution: ConstitutionEnforcer;
   public readonly mind: MindSpace;
   public readonly ledger: DecisionLedger;
@@ -128,11 +328,28 @@ export class NovaNexus {
   public readonly blender: Blender;
   public readonly appraiser: Appraiser;
   public readonly executor: ExecutionFabric;
+  
+  // Investment Sector Components
+  public readonly signals: SignalIngestion;
+  public readonly strategies: StrategyEngine;
+  public readonly simulator: SimulationEngine;
+  public readonly capital: CapitalAllocator;
+  public readonly watchlist: WatchlistIntelligence;
+
+  // Intelligence Empire Components
+  public readonly governance: MetaGovernance;     // Layer 0: Meta-Governance
+  public readonly lattice: StateLattice;          // Layer 3: State & Lattice
+  public readonly regime: RegimeEngine;           // Layer 4: Intelligence Engines
+  public readonly risk: RiskEngine;               // Layer 4: Intelligence Engines
+  public readonly trust: TrustLedger;             // Layer 7: Trust Ledger
+  public readonly inaction: InactionEngine;       // Inaction as first-class output
+  public readonly commerce: CommerceIntelligence; // Sector 2: Commerce
+  public readonly platform: NovaPlatform;         // Sector 3: Platform
 
   private initialized: boolean = false;
 
-  constructor() {
-    // Initialize all components
+  constructor(initialCapital: number = 100000) {
+    // Initialize core components
     this.constitution = new ConstitutionEnforcer();
     this.mind = new MindSpace();
     this.ledger = new DecisionLedger();
@@ -141,6 +358,23 @@ export class NovaNexus {
     this.blender = new Blender();
     this.appraiser = new Appraiser();
     this.executor = new ExecutionFabric();
+    
+    // Initialize Investment Sector components
+    this.signals = new SignalIngestion();
+    this.strategies = new StrategyEngine();
+    this.simulator = new SimulationEngine();
+    this.capital = new CapitalAllocator(initialCapital);
+    this.watchlist = new WatchlistIntelligence();
+
+    // Initialize Intelligence Empire components
+    this.governance = new MetaGovernance();
+    this.lattice = new StateLattice();
+    this.regime = new RegimeEngine();
+    this.risk = new RiskEngine(initialCapital);
+    this.trust = new TrustLedger();
+    this.inaction = new InactionEngine();
+    this.commerce = new CommerceIntelligence();
+    this.platform = new NovaPlatform();
   }
 
   /**
@@ -166,10 +400,11 @@ export class NovaNexus {
   }
 
   /**
-   * Get system status
+   * Get system status - Complete Empire Status
    */
   getStatus(): {
     initialized: boolean;
+    // Core
     constitution: ReturnType<ConstitutionEnforcer['getState']>;
     mind: ReturnType<MindSpace['getSummary']>;
     ledger: ReturnType<DecisionLedger['getStats']>;
@@ -178,9 +413,25 @@ export class NovaNexus {
     blender: ReturnType<Blender['getStats']>;
     appraiser: ReturnType<Appraiser['getStats']>;
     executor: ReturnType<ExecutionFabric['getStats']>;
+    // Investment Sector
+    signals: ReturnType<SignalIngestion['getStats']>;
+    strategies: ReturnType<StrategyEngine['getStats']>;
+    simulator: ReturnType<SimulationEngine['getStats']>;
+    capital: ReturnType<CapitalAllocator['getStats']>;
+    watchlist: ReturnType<WatchlistIntelligence['getStats']>;
+    // Intelligence Empire
+    governance: ReturnType<MetaGovernance['getStats']>;
+    lattice: ReturnType<StateLattice['getStats']>;
+    regime: ReturnType<RegimeEngine['getStats']>;
+    risk: ReturnType<RiskEngine['getStats']>;
+    trust: ReturnType<TrustLedger['getStats']>;
+    inaction: ReturnType<InactionEngine['getStats']>;
+    commerce: ReturnType<CommerceIntelligence['getStats']>;
+    platform: ReturnType<NovaPlatform['getStats']>;
   } {
     return {
       initialized: this.initialized,
+      // Core
       constitution: this.constitution.getState(),
       mind: this.mind.getSummary(),
       ledger: this.ledger.getStats(),
@@ -189,6 +440,21 @@ export class NovaNexus {
       blender: this.blender.getStats(),
       appraiser: this.appraiser.getStats(),
       executor: this.executor.getStats(),
+      // Investment Sector
+      signals: this.signals.getStats(),
+      strategies: this.strategies.getStats(),
+      simulator: this.simulator.getStats(),
+      capital: this.capital.getStats(),
+      watchlist: this.watchlist.getStats(),
+      // Intelligence Empire
+      governance: this.governance.getStats(),
+      lattice: this.lattice.getStats(),
+      regime: this.regime.getStats(),
+      risk: this.risk.getStats(),
+      trust: this.trust.getStats(),
+      inaction: this.inaction.getStats(),
+      commerce: this.commerce.getStats(),
+      platform: this.platform.getStats(),
     };
   }
 
