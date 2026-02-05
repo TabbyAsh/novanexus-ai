@@ -17,6 +17,13 @@ import {
   DataDomain,
   AssetType,
   LedgerEntryType,
+  InactionType,
+  type Explanation,
+  type InactionArtifact,
+  type LedgerEntry,
+  type RiskCheckResult,
+  type RiskEnvelope,
+  type TrustScore,
 } from '@nova/nexus-core';
 import { createLogger } from '@nova/telemetry';
 import { generateId, nowTimestamp } from '@nova/shared';
@@ -58,10 +65,37 @@ export interface TradeExecution {
   error?: string;
 }
 
+export interface NexusDecisionCard {
+  id: string;
+  createdAt: string;
+  thesis: TradingThesis;
+  decision: TradeDecision;
+
+  ledgerEntry?: Pick<
+    LedgerEntry,
+    'id' | 'sequence' | 'type' | 'timestamp' | 'hash' | 'prevHash' | 'domain' | 'tags' | 'autonomyTier'
+  >;
+
+  risk?: {
+    envelope: RiskEnvelope | null;
+    check: RiskCheckResult | null;
+  };
+
+  trust?: {
+    trustScore: TrustScore | null;
+    explanation: Explanation | null;
+  };
+
+  inaction?: {
+    artifact: InactionArtifact | null;
+  };
+}
+
 interface DecisionRecord {
   id: string;
   thesis: TradingThesis;
   decision: TradeDecision;
+  card?: NexusDecisionCard;
   execution?: TradeExecution;
   timestamp: number;
 }
@@ -134,9 +168,21 @@ export class NexusTrader {
   }
 
   /**
-   * Evaluate a trade thesis through the Nexus AI system
+   * Evaluate a trade thesis through the Nexus AI system.
+   *
+   * Returns the decision only (compat layer). Use evaluateTradeCard for a full decision card.
    */
   async evaluateTrade(thesis: TradingThesis): Promise<TradeDecision> {
+    const { decision } = await this.evaluateTradeCard(thesis);
+    return decision;
+  }
+
+  /**
+   * Evaluate a trade thesis and return a full, UI-ready decision card.
+   */
+  async evaluateTradeCard(thesis: TradingThesis): Promise<{ decision: TradeDecision; card: NexusDecisionCard }> {
+    const decisionId = generateId();
+
     // 1. Store thesis in MindSpace memory
     this.nexus.mind.remember('trading', 'thesis', thesis, {
       confidence: thesis.confidence,
@@ -157,9 +203,15 @@ export class NexusTrader {
     });
 
     // 3. Ingest signal into blender
+    const blenderSignalType = thesis.signal === 'BUY'
+      ? 'bullish_signal'
+      : thesis.signal === 'SELL'
+        ? 'bearish_signal'
+        : 'neutral_signal';
+
     this.nexus.blender.ingestSignal({
       domain: DataDomain.MARKET,
-      type: thesis.signal === 'BUY' ? 'bullish_signal' : 'bearish_signal',
+      type: blenderSignalType,
       signal: `${thesis.signal} signal for ${thesis.symbol}`,
       strength: thesis.confidence,
       confidence: thesis.confidence,
@@ -176,7 +228,7 @@ export class NexusTrader {
         technical: {
           support: thesis.stopLoss,
           resistance: thesis.targetPrice,
-          trend: thesis.signal === 'BUY' ? 0.5 : -0.5,
+          trend: thesis.signal === 'BUY' ? 0.5 : thesis.signal === 'SELL' ? -0.5 : 0,
           rsi: (thesis.indicators.rsi as number) || 50,
         },
       }
@@ -185,14 +237,46 @@ export class NexusTrader {
     // 5. Check constitution state
     const constitutionState = this.nexus.constitution.getState();
     const currentTier = constitutionState.tier;
-    
-    // 6. Build decision
+
+    // 6. Survivability-first risk checks (absolute veto authority)
+    let riskEnvelope: RiskEnvelope | null = null;
+    let riskCheck: RiskCheckResult | null = null;
+
+    try {
+      riskEnvelope = this.nexus.risk.generateEnvelope();
+
+      const hasValidPrice = thesis.entryPrice > 0;
+      const isActionableSignal = thesis.signal === 'BUY' || thesis.signal === 'SELL';
+
+      if (hasValidPrice && isActionableSignal) {
+        const quantity = Math.max(1, Math.floor(1000 / thesis.entryPrice));
+        const side = thesis.signal === 'BUY' ? 'long' : 'short';
+
+        riskCheck = this.nexus.risk.checkPosition({
+          symbol: thesis.symbol,
+          side,
+          size: quantity,
+          price: thesis.entryPrice,
+          stopLoss: thesis.stopLoss > 0 ? thesis.stopLoss : undefined,
+          strategy: 'nexus-trader',
+        });
+      }
+    } catch (error) {
+      logger.warn('Risk engine check failed', { error });
+    }
+
+    // 7. Build decision
     const constraints: string[] = [];
     let approved = false;
     let reasoning = '';
 
+    // Basic sanity checks
+    if (!thesis.entryPrice || thesis.entryPrice <= 0) {
+      constraints.push('Entry price missing or invalid');
+      reasoning = 'Cannot evaluate trade without a valid entry price';
+    }
     // Check confidence threshold
-    if (thesis.confidence < 0.5) {
+    else if (thesis.confidence < 0.5) {
       constraints.push('Confidence below threshold (50%)');
       reasoning = 'Insufficient confidence for trade execution';
     }
@@ -211,7 +295,11 @@ export class NexusTrader {
       constraints.push('System in OBSERVE tier - no execution');
       reasoning = 'Autonomy tier restricts execution';
     }
-    else {
+    // Risk engine veto
+    else if (riskCheck && !riskCheck.approved) {
+      constraints.push(`Risk engine veto: ${riskCheck.rejectionReason ?? 'Position request rejected'}`);
+      reasoning = 'Rejected by survivability constraints (risk engine veto)';
+    } else {
       approved = true;
       reasoning = `Trade approved: ${thesis.signal} ${thesis.symbol} - Confidence: ${(thesis.confidence * 100).toFixed(1)}%, R/R: ${thesis.riskRewardRatio.toFixed(2)}`;
     }
@@ -225,17 +313,164 @@ export class NexusTrader {
       timestamp: nowTimestamp(),
     };
 
-    // 7. Record in ledger
-    this.nexus.ledger.append(
-      LedgerEntryType.DECISION_MADE,
-      'nexus-trader',
-      { type: 'system', id: thesis.symbol },
-      { thesis, decision, valuation },
-      { tags: ['evaluation', thesis.signal, thesis.symbol] }
+    // 8. Trust Ledger: record what was explained (separate from truth)
+    const explanationReasoning: string[] = [
+      `Signal: ${thesis.signal} ${thesis.symbol}`,
+      `Thesis confidence: ${(thesis.confidence * 100).toFixed(1)}%`,
+      `Risk/Reward: ${thesis.riskRewardRatio.toFixed(2)}`,
+      `Valuation: ${valuation.recommendation.action.toUpperCase()}`,
+      `Autonomy tier: ${currentTier}`,
+    ];
+
+    if (riskEnvelope) {
+      explanationReasoning.push(`Risk state: ${riskEnvelope.state} (score ${riskEnvelope.riskScore})`);
+    }
+
+    if (riskCheck?.warnings?.length) {
+      for (const warning of riskCheck.warnings.slice(0, 5)) {
+        explanationReasoning.push(`Risk warning: ${warning}`);
+      }
+    }
+
+    const explanationEvidence: Explanation['content']['evidence'] = [
+      {
+        type: 'signal_confidence',
+        description: `Signal confidence ${(thesis.confidence * 100).toFixed(0)}%`,
+        weight: Math.max(0.1, Math.min(1, thesis.confidence)),
+      },
+      {
+        type: 'risk_reward',
+        description: `R/R ${thesis.riskRewardRatio.toFixed(2)}`,
+        weight: thesis.riskRewardRatio >= 1.5 ? 0.7 : 0.3,
+      },
+      {
+        type: 'valuation',
+        description: `Valuation recommends ${valuation.recommendation.action.toUpperCase()}`,
+        weight: valuation.recommendation.action === 'hold' ? 0.4 : 0.6,
+      },
+    ];
+
+    const explanation = this.nexus.trust.recordExplanation(
+      {
+        type: 'decision',
+        id: decisionId,
+        summary: `${thesis.signal} ${thesis.symbol} (${decision.approved ? 'approved' : 'rejected'})`,
+      },
+      {
+        summary: decision.reasoning,
+        reasoning: explanationReasoning,
+        evidence: explanationEvidence,
+        alternatives: decision.approved
+          ? ['HOLD (no action)']
+          : ['Wait for better conditions', 'Reduce size', 'Tighten stop loss'],
+        caveats: [
+          'Intelligence proposes; execution obeys constraints.',
+          'Governance tier may restrict execution even when a trade is approved.',
+        ],
+      },
+      decision.confidence,
+      'standard'
     );
 
+    const trustScore = this.nexus.trust.getTrustScore() ?? null;
+
+    // 9. Inaction Artifacts: restraint as a first-class output
+    let inactionArtifact: InactionArtifact | null = null;
+    if (!decision.approved) {
+      const regime = this.nexus.regime.getCurrentRegime()?.primary ?? 'UNKNOWN';
+      const portfolioState = riskEnvelope?.state ?? 'unknown';
+
+      const inactionType = (riskCheck && !riskCheck.approved)
+        ? InactionType.RISK_ABSTENTION
+        : thesis.confidence < 0.5
+          ? InactionType.CONFIDENCE_INSUFFICIENT
+          : currentTier === AutonomyTier.OBSERVE
+            ? InactionType.NO_TRADE
+            : InactionType.NO_TRADE;
+
+      inactionArtifact = this.nexus.inaction.recordInaction(
+        inactionType,
+        {
+          type: 'trade',
+          symbol: thesis.symbol,
+          proposedAction: thesis.signal,
+          proposedSize: thesis.entryPrice > 0 ? Math.max(1, Math.floor(1000 / thesis.entryPrice)) : undefined,
+          proposedPrice: thesis.entryPrice,
+        },
+        {
+          primaryReason: decision.reasoning,
+          supportingFactors: constraints.slice(0, 8),
+          confidence: decision.confidence,
+          constraints,
+        },
+        {
+          regime: String(regime),
+          volatility: 0,
+          riskLevel: riskEnvelope?.riskScore ?? 0,
+          signalStrength: thesis.confidence,
+          portfolioState,
+        }
+      );
+    }
+
+    // 10. Truth Ledger: immutable record of what happened (with references to other artifacts)
+    const ledgerEntry = this.nexus.ledger.append(
+      LedgerEntryType.DECISION_MADE,
+      'nexus-trader',
+      { type: 'agent', id: 'nexus-trader', name: 'NexusTrader' },
+      {
+        decisionId,
+        thesis,
+        decision,
+        valuation,
+        risk: {
+          envelope: riskEnvelope,
+          check: riskCheck,
+        },
+        trust: {
+          explanationId: explanation.id,
+        },
+        inaction: {
+          artifactId: inactionArtifact?.id ?? null,
+        },
+      },
+      {
+        tags: ['evaluation', thesis.signal, thesis.symbol, decision.approved ? 'approved' : 'rejected'],
+        autonomyTier: currentTier,
+      }
+    );
+
+    const card: NexusDecisionCard = {
+      id: decisionId,
+      createdAt: nowTimestamp(),
+      thesis,
+      decision,
+      ledgerEntry: {
+        id: ledgerEntry.id,
+        sequence: ledgerEntry.sequence,
+        type: ledgerEntry.type,
+        timestamp: ledgerEntry.timestamp,
+        hash: ledgerEntry.hash,
+        prevHash: ledgerEntry.prevHash,
+        domain: ledgerEntry.domain,
+        tags: ledgerEntry.tags,
+        autonomyTier: ledgerEntry.autonomyTier,
+      },
+      risk: {
+        envelope: riskEnvelope,
+        check: riskCheck,
+      },
+      trust: {
+        trustScore,
+        explanation,
+      },
+      inaction: {
+        artifact: inactionArtifact,
+      },
+    };
+
     // Track stats
-    if (approved) {
+    if (decision.approved) {
       this.dailyStats.approvals++;
     } else {
       this.dailyStats.rejections++;
@@ -243,13 +478,14 @@ export class NexusTrader {
 
     // Store in local ledger
     this.decisionLedger.push({
-      id: generateId(),
+      id: decisionId,
       thesis,
       decision,
+      card,
       timestamp: Date.now(),
     });
 
-    return decision;
+    return { decision, card };
   }
 
   /**

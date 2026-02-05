@@ -1369,22 +1369,27 @@ const nexusTrader = new NexusTrader();
 app.post('/api/nexus/initialize', async (_req: Request, res: Response) => {
   try {
     await nexusTrader.initialize();
-    res.json({ 
-      success: true, 
-      message: 'Nova Nexus AI initialized',
-      status: nexusTrader.getStatus()
+    res.json({
+      success: true,
+      data: {
+        message: 'Nova Nexus AI initialized',
+        status: nexusTrader.getStatus(),
+      },
     });
   } catch (error) {
     logger.error('Failed to initialize Nexus', error as Error);
-    res.status(500).json({ success: false, error: 'Failed to initialize Nexus AI' });
+    res.status(500).json({
+      success: false,
+      error: { code: 'NEXUS_INIT_FAILED', message: 'Failed to initialize Nexus AI' },
+    });
   }
 });
 
 // Get Nexus status
 app.get('/api/nexus/status', (_req: Request, res: Response) => {
-  res.json({ 
-    success: true, 
-    status: nexusTrader.getStatus()
+  res.json({
+    success: true,
+    data: { status: nexusTrader.getStatus() },
   });
 });
 
@@ -1394,7 +1399,10 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
     const { symbol, signal, price, indicators, confidence } = req.body;
     
     if (!symbol || !signal) {
-      return res.status(400).json({ success: false, error: 'symbol and signal required' });
+      return res.status(400).json({
+        success: false,
+        error: { code: 'BAD_REQUEST', message: 'symbol and signal required' },
+      });
     }
     
     const thesis = {
@@ -1412,16 +1420,22 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     };
     
-    const decision = await nexusTrader.evaluateTrade(thesis);
+    const { decision, card } = await nexusTrader.evaluateTradeCard(thesis);
     
-    res.json({ 
-      success: true, 
-      decision,
-      message: decision.approved ? 'Trade approved by Nova Nexus' : 'Trade rejected by Nova Nexus'
+    res.json({
+      success: true,
+      data: {
+        decision,
+        card,
+        message: decision.approved ? 'Trade approved by Nova Nexus' : 'Trade rejected by Nova Nexus',
+      },
     });
   } catch (error) {
     logger.error('Nexus analysis failed', error as Error);
-    res.status(500).json({ success: false, error: 'Nexus analysis failed' });
+    res.status(500).json({
+      success: false,
+      error: { code: 'NEXUS_ANALYZE_FAILED', message: 'Nexus analysis failed' },
+    });
   }
 });
 
@@ -1431,7 +1445,10 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
     const { symbol, signal, price, indicators, confidence, autoExecute } = req.body;
     
     if (!symbol || !signal) {
-      return res.status(400).json({ success: false, error: 'symbol and signal required' });
+      return res.status(400).json({
+        success: false,
+        error: { code: 'BAD_REQUEST', message: 'symbol and signal required' },
+      });
     }
     
     const thesis = {
@@ -1451,14 +1468,19 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
     
     const result = await nexusTrader.executeAITrade(thesis, autoExecute !== false);
     
-    res.json({ 
-      success: true, 
-      result,
-      message: result.executed ? 'Trade executed by Nova Nexus' : result.decision.reasoning
+    res.json({
+      success: true,
+      data: {
+        result,
+        message: result.executed ? 'Trade executed by Nova Nexus' : result.decision.reasoning,
+      },
     });
   } catch (error) {
     logger.error('Nexus execution failed', error as Error);
-    res.status(500).json({ success: false, error: 'Nexus execution failed' });
+    res.status(500).json({
+      success: false,
+      error: { code: 'NEXUS_EXECUTE_FAILED', message: 'Nexus execution failed' },
+    });
   }
 });
 
@@ -1466,7 +1488,7 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
 app.get('/api/nexus/ledger', (req: Request, res: Response) => {
   const { limit } = req.query;
   const ledger = nexusTrader.getDecisionLedger(limit ? parseInt(limit as string) : 50);
-  res.json({ success: true, ledger });
+  res.json({ success: true, data: { ledger } });
 });
 
 // Run autonomous scan with Nexus AI
@@ -1476,7 +1498,10 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
     const watchlist = watchlistManager.get(watchlistId || 'default');
     
     if (!watchlist) {
-      return res.status(404).json({ success: false, error: 'Watchlist not found' });
+      return res.status(404).json({
+        success: false,
+        error: { code: 'NOT_FOUND', message: 'Watchlist not found' },
+      });
     }
     
     // Scan market
@@ -1510,15 +1535,20 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
       executions.push({ symbol: opp.symbol, ...result });
     }
     
-    res.json({ 
-      success: true, 
-      scanned: scanResults.length,
-      opportunities: opportunities.length,
-      executions
+    res.json({
+      success: true,
+      data: {
+        scanned: scanResults.length,
+        opportunities: opportunities.length,
+        executions,
+      },
     });
   } catch (error) {
     logger.error('Autonomous scan failed', error as Error);
-    res.status(500).json({ success: false, error: 'Autonomous scan failed' });
+    res.status(500).json({
+      success: false,
+      error: { code: 'NEXUS_AUTONOMOUS_SCAN_FAILED', message: 'Autonomous scan failed' },
+    });
   }
 });
 
@@ -1526,10 +1556,16 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
 app.post('/api/nexus/stop', async (_req: Request, res: Response) => {
   try {
     await nexusTrader.shutdown();
-    res.json({ success: true, message: 'Nova Nexus AI stopped' });
+    res.json({
+      success: true,
+      data: { message: 'Nova Nexus AI stopped' },
+    });
   } catch (error) {
     logger.error('Failed to stop Nexus', error as Error);
-    res.status(500).json({ success: false, error: 'Failed to stop Nexus AI' });
+    res.status(500).json({
+      success: false,
+      error: { code: 'NEXUS_STOP_FAILED', message: 'Failed to stop Nexus AI' },
+    });
   }
 });
 

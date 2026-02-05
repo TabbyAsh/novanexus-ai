@@ -901,7 +901,7 @@ class ApiClient {
   }
 
   async analyzeTradeWithNexus(params: { symbol: string; signal: string; price: number; indicators?: any; confidence?: number }) {
-    return this.tradebotRequest<{ decision: any; message: string }>('POST', '/api/nexus/analyze', params);
+    return this.tradebotRequest<{ decision: any; card: any; message: string }>('POST', '/api/nexus/analyze', params);
   }
 
   async executeNexusTrade(params: { symbol: string; signal: string; price: number; autoExecute?: boolean }) {
