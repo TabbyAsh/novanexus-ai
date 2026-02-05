@@ -615,7 +615,13 @@ app.get('/v1/store/pricing-recommendations', (req: Request, res: Response) => {
 });
 
 app.all('/v1/store/*', (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.storebot, req, res);
+  // StoreBot uses /api/* routes; rewrite to keep a stable public /v1/store/* contract.
+  proxyRequestRewrite(
+    SERVICE_URLS.storebot,
+    req.originalUrl.replace('/v1/store', '/api'),
+    req,
+    res
+  );
 });
 
 app.all('/v1/products*', (req: Request, res: Response) => {

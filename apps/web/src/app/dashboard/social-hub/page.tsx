@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { api } from '@/lib/api';
 import {
   Twitter,
   Linkedin,
@@ -68,8 +69,6 @@ interface Analytics {
   growth_trend: number;
 }
 
-// In production this must be set (e.g., https://socialbot.novanexus-ai.com)
-const SOCIALBOT_URL = process.env.NEXT_PUBLIC_SOCIALBOT_URL || 'http://localhost:3012';
 
 const PLATFORM_ICONS: Record<string, typeof Twitter> = {
   twitter: Twitter,
@@ -100,28 +99,19 @@ export default function SocialHubDashboard() {
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
-    try {
-      const [accountsRes, postsRes, suggestionsRes, analyticsRes] = await Promise.all([
-        fetch(`${SOCIALBOT_URL}/api/content/accounts`),
-        fetch(`${SOCIALBOT_URL}/api/content/posts?limit=20`),
-        fetch(`${SOCIALBOT_URL}/api/content/suggestions`),
-        fetch(`${SOCIALBOT_URL}/api/content/analytics?days=30`),
-      ]);
 
-      const [accountsData, postsData, suggestionsData, analyticsData] = await Promise.all([
-        accountsRes.json(),
-        postsRes.json(),
-        suggestionsRes.json(),
-        analyticsRes.json(),
-      ]);
+    const [accountsRes, postsRes, suggestionsRes, analyticsRes] = await Promise.all([
+      api.getContentAccounts(),
+      api.getContentPosts({ limit: 20 }),
+      api.getContentSuggestions(),
+      api.getContentAnalytics(30),
+    ]);
 
-      if (accountsData.success) setAccounts(accountsData.data.accounts);
-      if (postsData.success) setPosts(postsData.data.posts);
-      if (suggestionsData.success) setSuggestions(suggestionsData.data.suggestions);
-      if (analyticsData.success) setAnalytics(analyticsData.data.analytics);
-    } catch (error) {
-      console.error('Failed to load social data:', error);
-    }
+    if (accountsRes.success && accountsRes.data?.accounts) setAccounts(accountsRes.data.accounts);
+    if (postsRes.success && postsRes.data?.posts) setPosts(postsRes.data.posts);
+    if (suggestionsRes.success && suggestionsRes.data?.suggestions) setSuggestions(suggestionsRes.data.suggestions);
+    if (analyticsRes.success && analyticsRes.data?.analytics) setAnalytics(analyticsRes.data.analytics);
+
     setIsLoading(false);
   }, []);
 
@@ -133,25 +123,20 @@ export default function SocialHubDashboard() {
     if (!newPostContent) return;
 
     setIsCreating(true);
-    try {
-      const res = await fetch(`${SOCIALBOT_URL}/api/content/posts`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          platform: newPostPlatform,
-          content: newPostContent,
-          content_type: 'text',
-        }),
-      });
 
-      const data = await res.json();
-      if (data.success) {
-        setNewPostContent('');
-        loadData();
-      }
-    } catch (error) {
-      console.error('Failed to create post:', error);
+    const res = await api.createContentPost({
+      platform: newPostPlatform,
+      content: newPostContent,
+      content_type: 'text',
+    });
+
+    if (res.success) {
+      setNewPostContent('');
+      loadData();
+    } else {
+      console.error('Failed to create post:', res.error);
     }
+
     setIsCreating(false);
   };
 

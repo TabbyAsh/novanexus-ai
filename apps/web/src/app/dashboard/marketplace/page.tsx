@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import { api } from '@/lib/api';
 import {
   Package,
   DollarSign,
@@ -77,8 +78,6 @@ interface ProductAppraisal {
   appraisedAt: string;
 }
 
-// In production this must be set (e.g., https://storebot.novanexus-ai.com)
-const STOREBOT_URL = process.env.NEXT_PUBLIC_STOREBOT_URL || 'http://localhost:3011';
 
 export default function MarketplaceDashboard() {
   const [products, setProducts] = useState<Product[]>([]);
@@ -97,75 +96,58 @@ export default function MarketplaceDashboard() {
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
-    try {
-      const [productsRes, recommendationsRes, alertsRes] = await Promise.all([
-        fetch(`${STOREBOT_URL}/api/products/catalog`),
-        fetch(`${STOREBOT_URL}/api/pricing/recommendations`),
-        fetch(`${STOREBOT_URL}/api/inventory/alerts`),
-      ]);
 
-      const [productsData, recommendationsData, alertsData] = await Promise.all([
-        productsRes.json(),
-        recommendationsRes.json(),
-        alertsRes.json(),
-      ]);
+    const [productsRes, pricingRes, alertsRes] = await Promise.all([
+      api.getStoreCatalog(),
+      api.analyzeStorePricing(),
+      api.getInventoryAlerts(),
+    ]);
 
-      if (productsData.success) setProducts(productsData.data.products);
-      if (recommendationsData.success) setRecommendations(recommendationsData.data.recommendations);
-      if (alertsData.success) setAlerts(alertsData.data.alerts);
-    } catch (error) {
-      console.error('Failed to load store data:', error);
-    }
+    if (productsRes.success && productsRes.data?.products) setProducts(productsRes.data.products);
+    if (pricingRes.success && pricingRes.data?.recommendations) setRecommendations(pricingRes.data.recommendations);
+    if (alertsRes.success && alertsRes.data?.alerts) setAlerts(alertsRes.data.alerts);
+
     setIsLoading(false);
   }, []);
 
   const runPricingAnalysis = async () => {
     setIsAnalyzing(true);
-    try {
-      const res = await fetch(`${STOREBOT_URL}/api/pricing/analyze`);
-      const data = await res.json();
-      if (data.success) {
-        setRecommendations(data.data.recommendations);
-      }
-    } catch (error) {
-      console.error('Failed to run analysis:', error);
+
+    const res = await api.analyzeStorePricing();
+    if (res.success && res.data?.recommendations) {
+      setRecommendations(res.data.recommendations);
     }
+
     setIsAnalyzing(false);
   };
 
   const applyPrice = async (productId: string, newPrice: number, reason: string) => {
     setApplyingPrice(productId);
-    try {
-      await fetch(`${STOREBOT_URL}/api/pricing/apply`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ productId, newPrice, reason }),
-      });
-      // Refresh data after applying
-      await loadData();
-    } catch (error) {
-      console.error('Failed to apply price:', error);
+
+    const res = await api.applyStorePrice({ productId, newPrice, reason });
+    if (!res.success) {
+      console.error('Failed to apply price:', res.error);
     }
+
+    // Refresh data after applying
+    await loadData();
+
     setApplyingPrice(null);
   };
 
   const appraiseItem = async () => {
     if (!appraisalQuery.trim()) return;
+
     setIsAppraising(true);
     setAppraisal(null);
-    try {
-      const res = await fetch(`${STOREBOT_URL}/api/products/appraise`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ query: appraisalQuery }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setAppraisal(data.data.appraisal);
-      }
-    } catch (error) {
-      console.error('Appraisal failed:', error);
+
+    const res = await api.appraiseStoreProduct(appraisalQuery);
+    if (res.success && res.data?.appraisal) {
+      setAppraisal(res.data.appraisal);
+    } else {
+      console.error('Appraisal failed:', res.error);
     }
+
     setIsAppraising(false);
   };
 

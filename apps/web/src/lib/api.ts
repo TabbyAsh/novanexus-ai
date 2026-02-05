@@ -593,6 +593,24 @@ class ApiClient {
     }>('GET', '/v1/store/products');
   }
 
+  async getStoreCatalog() {
+    return this.request<{
+      products: Array<{
+        id: string;
+        sku: string;
+        name: string;
+        description: string;
+        category: string;
+        base_cost: number;
+        current_price: number;
+        min_price: number;
+        max_price: number;
+        stock_quantity: number;
+        reorder_point: number;
+      }>;
+    }>('GET', '/v1/store/products/catalog');
+  }
+
   async getInventoryAlerts() {
     return this.request<{
       alerts: Array<{
@@ -602,7 +620,7 @@ class ApiClient {
         title: string;
         alertType: string;
         message: string;
-        severity: string;
+        severity: 'HIGH' | 'MEDIUM' | 'LOW';
         createdAt: string;
       }>;
     }>('GET', '/v1/store/alerts');
@@ -622,6 +640,51 @@ class ApiClient {
         createdAt: string;
       }>;
     }>('GET', '/v1/store/pricing-recommendations');
+  }
+
+  async analyzeStorePricing() {
+    return this.request<{
+      recommendations: Array<{
+        product_id: string;
+        current_price: number;
+        recommended_price: number;
+        reason: string;
+        confidence: number;
+        projected_margin: number;
+        projected_revenue_change: number;
+      }>;
+      analyzedAt: string;
+    }>('GET', '/v1/store/pricing/analyze');
+  }
+
+  async applyStorePrice(params: { productId: string; newPrice: number; reason: string }) {
+    return this.request<{ success: boolean; message: string }>('POST', '/v1/store/pricing/apply', params);
+  }
+
+  async appraiseStoreProduct(query: string) {
+    return this.request<{
+      appraisal: {
+        query: string;
+        avgPrice: number;
+        minPrice: number;
+        maxPrice: number;
+        medianPrice: number;
+        priceRange: string;
+        recommendedPrice: number;
+        marketDemand: 'low' | 'medium' | 'high';
+        confidence: number;
+        sources: Array<{
+          title: string;
+          price: number;
+          currency?: string;
+          source: string;
+          url: string;
+          rating?: number;
+          condition?: string;
+        }>;
+        appraisedAt: string;
+      };
+    }>('POST', '/v1/store/products/appraise', { query });
   }
 
   // Social endpoints
@@ -673,6 +736,77 @@ class ApiClient {
         createdAt: string;
       }>;
     }>('GET', '/v1/social/alerts');
+  }
+
+  // SocialBot Content Manager endpoints
+  async getContentAccounts() {
+    return this.request<{
+      accounts: Array<{
+        id: string;
+        platform: string;
+        account_name: string;
+        follower_count: number;
+        engagement_rate: number;
+      }>;
+    }>('GET', '/v1/content/accounts');
+  }
+
+  async getContentPosts(params?: { status?: string; limit?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    const query = qs.toString();
+
+    return this.request<{
+      posts: Array<{
+        id: string;
+        platform: string;
+        content_type: string;
+        content: string;
+        status: string;
+        scheduled_for: string | null;
+        published_at: string | null;
+        performance: {
+          impressions: number;
+          likes: number;
+          comments: number;
+          shares: number;
+          engagement_rate: number;
+        } | null;
+      }>;
+    }>('GET', `/v1/content/posts${query ? `?${query}` : ''}`);
+  }
+
+  async getContentSuggestions(platform?: string) {
+    const query = platform ? `?platform=${encodeURIComponent(platform)}` : '';
+    return this.request<{
+      suggestions: Array<{
+        platform: string;
+        content_type: string;
+        suggested_content: string;
+        suggested_hashtags: string[];
+        optimal_time: string;
+        predicted_engagement: number;
+        reasoning: string;
+      }>;
+    }>('GET', `/v1/content/suggestions${query}`);
+  }
+
+  async getContentAnalytics(days: number = 30) {
+    return this.request<{
+      analytics: {
+        total_posts: number;
+        total_impressions: number;
+        total_engagement: number;
+        avg_engagement_rate: number;
+        platform_breakdown: Record<string, { posts: number; engagement: number }>;
+        growth_trend: number;
+      };
+    }>('GET', `/v1/content/analytics?days=${days}`);
+  }
+
+  async createContentPost(params: { platform: string; content_type: string; content: string }) {
+    return this.request<{ post: unknown }>('POST', '/v1/content/posts', params);
   }
 
   // Task creation for bot workflows
