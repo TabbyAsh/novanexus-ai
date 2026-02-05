@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "paths": {
+      "@nova/shared": ["libs/shared/dist"],
+      "@nova/shared/*": ["libs/shared/dist/*"],
+      "@nova/telemetry": ["libs/telemetry/dist"],
+      "@nova/telemetry/*": ["libs/telemetry/dist/*"]
+    }
+  }
+}

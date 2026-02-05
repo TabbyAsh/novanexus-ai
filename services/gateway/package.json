@@ -4,7 +4,7 @@
   "description": "API Gateway for Nova platform",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "ts-node-dev -r tsconfig-paths/register --respawn src/index.ts",
     "start": "node dist/index.js"
   },

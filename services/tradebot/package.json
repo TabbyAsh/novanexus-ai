@@ -4,7 +4,7 @@
   "description": "Trading scanner, thesis generator, and paper trading bot",
   "main": "dist/index.js",
   "scripts": {
-    "build": "tsc",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "ts-node-dev --respawn -r tsconfig-paths/register src/index.ts",
     "start": "node dist/index.js",
     "test": "jest --passWithNoTests"

@@ -202,6 +202,30 @@ interface Indicators {
   source: 'calculated' | 'stub';
 }
 
+// Minimal Yahoo Finance chart response typing (enough for our usage)
+interface YahooChartResponse {
+  chart?: {
+    result?: Array<{
+      meta: {
+        regularMarketPrice?: number;
+        previousClose?: number;
+        regularMarketVolume?: number;
+        regularMarketTime?: number;
+      };
+      timestamp?: number[];
+      indicators?: {
+        quote?: Array<{
+          open?: Array<number | null>;
+          high?: Array<number | null>;
+          low?: Array<number | null>;
+          close?: Array<number | null>;
+          volume?: Array<number | null>;
+        }>;
+      };
+    }>;
+  };
+}
+
 // ============================================
 // Indicator Calculations
 // ============================================
@@ -349,6 +373,103 @@ function generateStubCandles(symbol: string, limit: number): Candle[] {
   }
   
   return candles;
+}
+
+// ============================================
+// Yahoo Finance API (Free, no API key needed)
+// ============================================
+
+const yahooRateLimiter = new RateLimiter(10, 60000); // Be nice to Yahoo
+
+async function fetchYahooQuote(symbol: string): Promise<Quote | null> {
+  const canProceed = await yahooRateLimiter.acquire();
+  if (!canProceed) {
+    logger.warn('Rate limit exceeded for Yahoo Finance');
+    return null;
+  }
+
+  try {
+    // Using Yahoo Finance v8 API (publicly accessible)
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1d&range=1d`;
+    const response = await fetchWithRetry(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+
+    if (!response.ok) {
+      logger.warn(`Yahoo Finance API error: ${response.status}`, { symbol });
+      return null;
+    }
+
+    const data = (await response.json()) as YahooChartResponse;
+    const result = data.chart?.result?.[0];
+    if (!result) return null;
+
+    const meta = result.meta;
+    const quote = result.indicators?.quote?.[0];
+    const price = meta.regularMarketPrice || meta.previousClose || 0;
+    const prevClose = meta.previousClose || price;
+    const change = price - prevClose;
+
+    return {
+      symbol: symbol.toUpperCase(),
+      price: Math.round(price * 100) / 100,
+      change: Math.round(change * 100) / 100,
+      changePercent: Math.round((change / prevClose) * 10000) / 100,
+      volume: meta.regularMarketVolume || quote?.volume?.[quote.volume.length - 1] || 0,
+      bid: Math.round((price - 0.01) * 100) / 100,
+      ask: Math.round((price + 0.01) * 100) / 100,
+      timestamp: new Date(meta.regularMarketTime * 1000).toISOString(),
+      source: 'polygon', // Keep as polygon for compatibility
+    };
+  } catch (error) {
+    logger.error('Yahoo Finance request failed', error as Error, { symbol });
+    return null;
+  }
+}
+
+async function fetchYahooCandles(
+  symbol: string,
+  interval: string,
+  range: string
+): Promise<Candle[] | null> {
+  const canProceed = await yahooRateLimiter.acquire();
+  if (!canProceed) {
+    logger.warn('Rate limit exceeded for Yahoo Finance candles');
+    return null;
+  }
+
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=${interval}&range=${range}`;
+    const response = await fetchWithRetry(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+      },
+    });
+
+    if (!response.ok) return null;
+
+    const data = (await response.json()) as YahooChartResponse;
+    const result = data.chart?.result?.[0];
+    if (!result) return null;
+
+    const timestamps = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0];
+    if (!quote) return null;
+
+    return timestamps.map((ts: number, i: number) => ({
+      timestamp: new Date(ts * 1000).toISOString(),
+      open: Math.round((quote.open?.[i] || 0) * 100) / 100,
+      high: Math.round((quote.high?.[i] || 0) * 100) / 100,
+      low: Math.round((quote.low?.[i] || 0) * 100) / 100,
+      close: Math.round((quote.close?.[i] || 0) * 100) / 100,
+      volume: quote.volume?.[i] || 0,
+    })).filter((c: Candle) => c.close > 0);
+  } catch (error) {
+    logger.error('Yahoo Finance candles request failed', error as Error, { symbol });
+    return null;
+  }
 }
 
 // ============================================
@@ -565,12 +686,26 @@ app.get('/v1/market/quote/:symbol', async (req: Request, res: Response) => {
     return res.json({ success: true, data: { quote: cached }, cached: true });
   }
   
-  // Try Polygon API
+  // Try data sources in order of preference:
+  // 1. Polygon (if API key configured)
+  // 2. Finnhub (if API key configured)
+  // 3. Yahoo Finance (free, no API key needed)
+  // 4. Stub data (last resort)
   let quote = await fetchPolygonQuote(symbol);
   
-  // Fallback to stub if API fails
+  if (!quote && USE_FINNHUB) {
+    quote = await fetchFinnhubQuote(symbol);
+  }
+  
+  if (!quote) {
+    // Yahoo Finance as free fallback
+    quote = await fetchYahooQuote(symbol);
+  }
+  
+  // Fallback to stub if all APIs fail
   if (!quote) {
     quote = generateStubQuote(symbol);
+    logger.warn(`Using stub data for ${symbol} - configure POLYGON_API_KEY or FINNHUB_API_KEY for real data`);
   }
   
   // Cache the result
@@ -601,6 +736,17 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
   const intervalConfig = intervalMap[interval as string] || intervalMap['1d'];
   const cacheKey = `candles:${symbol.toUpperCase()}:${interval}:${limitNum}`;
   
+  // Map interval to Yahoo Finance format
+  const yahooIntervalMap: Record<string, { interval: string; range: string }> = {
+    '1m': { interval: '1m', range: '1d' },
+    '5m': { interval: '5m', range: '5d' },
+    '15m': { interval: '15m', range: '5d' },
+    '1h': { interval: '1h', range: '1mo' },
+    '1d': { interval: '1d', range: `${Math.ceil(limitNum / 5)}mo` },
+    '1w': { interval: '1wk', range: `${Math.ceil(limitNum / 4)}y` },
+  };
+  const yahooConfig = yahooIntervalMap[interval as string] || yahooIntervalMap['1d'];
+  
   // Check cache
   const cached = candleCache.get<Candle[]>(cacheKey);
   if (cached) {
@@ -611,7 +757,10 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
     });
   }
   
-  // Try Polygon API
+  // Try data sources in order:
+  // 1. Polygon (if configured)
+  // 2. Yahoo Finance (free fallback)
+  // 3. Stub data (last resort)
   let candles = await fetchPolygonCandles(
     symbol,
     intervalConfig.multiplier,
@@ -619,9 +768,15 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
     limitNum
   );
   
-  // Fallback to stub
+  // Try Yahoo Finance as fallback
+  if (!candles || candles.length === 0) {
+    candles = await fetchYahooCandles(symbol, yahooConfig.interval, yahooConfig.range);
+  }
+  
+  // Fallback to stub if all APIs fail
   if (!candles || candles.length === 0) {
     candles = generateStubCandles(symbol, limitNum);
+    logger.warn(`Using stub candles for ${symbol}`);
   }
   
   // Cache result
