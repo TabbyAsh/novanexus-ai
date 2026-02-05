@@ -23,6 +23,7 @@ import {
   type LedgerEntry,
   type RiskCheckResult,
   type RiskEnvelope,
+  type RegimeState,
   type TrustScore,
 } from '@nova/nexus-core';
 import { createLogger } from '@nova/telemetry';
@@ -117,6 +118,50 @@ export class NexusTrader {
 
   constructor() {
     this.nexus = createNexus();
+  }
+
+  /**
+   * Update the regime engine using a coarse market snapshot.
+   *
+   * This is used to make scanning/screening regime-aware without changing any API response shapes.
+   * It does not execute trades and does not write ledger entries.
+   */
+  updateRegimeFromMarketSnapshot(snapshot: {
+    rsi?: number;
+    /** Normalized short-vs-long MA cross signal (-1..1). */
+    smaCross?: number;
+    /** Approximate trend strength (0..50) analogous to ADX. */
+    adx?: number;
+    /** Normalized volatility percentile proxy (0..1). */
+    atrPercentile?: number;
+    confidence?: number;
+  }): RegimeState {
+    const confidence = typeof snapshot.confidence === 'number' && Number.isFinite(snapshot.confidence)
+      ? Math.max(0.1, Math.min(1, snapshot.confidence))
+      : 0.65;
+
+    if (typeof snapshot.rsi === 'number' && Number.isFinite(snapshot.rsi)) {
+      this.nexus.regime.updateIndicator('RSI', snapshot.rsi, { confidence });
+    }
+
+    if (typeof snapshot.smaCross === 'number' && Number.isFinite(snapshot.smaCross)) {
+      // 'SMA_Cross' is expected to be a signed, normalized (-1..1) trend signal.
+      const v = Math.max(-1, Math.min(1, snapshot.smaCross));
+      this.nexus.regime.updateIndicator('SMA_Cross', v, { confidence });
+    }
+
+    if (typeof snapshot.adx === 'number' && Number.isFinite(snapshot.adx)) {
+      const v = Math.max(0, Math.min(50, snapshot.adx));
+      this.nexus.regime.updateIndicator('ADX', v, { confidence });
+    }
+
+    if (typeof snapshot.atrPercentile === 'number' && Number.isFinite(snapshot.atrPercentile)) {
+      // 'ATR_Percentile' is used here as a volatility proxy; pass a normalized (0..1) value.
+      const v = Math.max(0, Math.min(1, snapshot.atrPercentile));
+      this.nexus.regime.updateIndicator('ATR_Percentile', v, { confidence, normalized: v });
+    }
+
+    return this.nexus.regime.classifyRegime();
   }
 
   /**
@@ -380,13 +425,117 @@ export class NexusTrader {
       const regime = this.nexus.regime.getCurrentRegime()?.primary ?? 'UNKNOWN';
       const portfolioState = riskEnvelope?.state ?? 'unknown';
 
+      const proposedSize = thesis.entryPrice > 0 ? Math.max(1, Math.floor(1000 / thesis.entryPrice)) : undefined;
+
+      // Select the most precise inaction type we can, without inventing new types.
       const inactionType = (riskCheck && !riskCheck.approved)
         ? InactionType.RISK_ABSTENTION
-        : thesis.confidence < 0.5
-          ? InactionType.CONFIDENCE_INSUFFICIENT
-          : currentTier === AutonomyTier.OBSERVE
-            ? InactionType.NO_TRADE
-            : InactionType.NO_TRADE;
+        : currentTier === AutonomyTier.OBSERVE
+          ? InactionType.NO_TRADE
+          : thesis.confidence < 0.5
+            ? InactionType.CONFIDENCE_INSUFFICIENT
+            : thesis.riskRewardRatio < 1.5
+              ? InactionType.TIMING_SUBOPTIMAL
+              : valuation.recommendation.action === 'hold' && thesis.signal !== 'HOLD'
+                ? InactionType.DEFERRED_ENTRY
+                : InactionType.NO_TRADE;
+
+      const supportingFactors: string[] = [];
+      supportingFactors.push(...constraints);
+      if (riskEnvelope) {
+        supportingFactors.push(`Risk envelope: ${riskEnvelope.state} (score ${riskEnvelope.riskScore})`);
+      }
+      if (riskCheck?.violatedConstraints?.length) {
+        supportingFactors.push(`Violated constraints: ${riskCheck.violatedConstraints.join(', ')}`);
+      }
+      if (riskCheck?.warnings?.length) {
+        for (const w of riskCheck.warnings.slice(0, 3)) {
+          supportingFactors.push(`Risk warning: ${w}`);
+        }
+      }
+
+      const alternatives: Array<{ action: string; whyRejected: string }> = [];
+
+      // Alternative actions are recorded as "considered but rejected" (the system chose restraint).
+      if (riskCheck && !riskCheck.approved) {
+        alternatives.push({
+          action: 'Execute proposed trade as-is',
+          whyRejected: riskCheck.rejectionReason ?? 'Rejected by risk engine',
+        });
+        alternatives.push({
+          action: 'Reduce position size and re-evaluate',
+          whyRejected: 'Not auto-tuning size; requires explicit re-analysis with updated parameters.',
+        });
+        alternatives.push({
+          action: 'Tighten stop loss and re-evaluate',
+          whyRejected: 'Not auto-tuning stops; requires explicit re-analysis with updated parameters.',
+        });
+      } else if (currentTier === AutonomyTier.OBSERVE) {
+        alternatives.push({
+          action: 'Execute trade despite tier restriction',
+          whyRejected: 'Governance restriction: OBSERVE tier forbids execution.',
+        });
+        alternatives.push({
+          action: 'Escalate autonomy tier',
+          whyRejected: 'Tier changes require governance/human action, not automatic escalation.',
+        });
+      } else if (thesis.confidence < 0.5) {
+        alternatives.push({
+          action: 'Execute trade with low confidence',
+          whyRejected: 'Confidence below threshold (50%).',
+        });
+        alternatives.push({
+          action: 'Wait for stronger signal',
+          whyRejected: 'Deferred until signal confidence improves.',
+        });
+      } else if (thesis.riskRewardRatio < 1.5) {
+        alternatives.push({
+          action: 'Execute trade with poor R/R',
+          whyRejected: 'Risk/reward ratio below 1.5.',
+        });
+        alternatives.push({
+          action: 'Rework thesis (target/stop) and re-evaluate',
+          whyRejected: 'Thesis adjustments require explicit re-analysis.',
+        });
+      } else if (valuation.recommendation.action === 'hold' && thesis.signal !== 'HOLD') {
+        alternatives.push({
+          action: 'Execute trade despite HOLD valuation',
+          whyRejected: 'Valuation analysis conflicts with signal.',
+        });
+        alternatives.push({
+          action: 'Wait for valuation alignment',
+          whyRejected: 'Deferred until valuation supports the signal.',
+        });
+      }
+
+      // Revisit conditions provide a concrete "when to look again" anchor.
+      const revisitConditions: InactionArtifact['revisitConditions'] = (() => {
+        const now = Date.now();
+
+        if (inactionType === InactionType.CONFIDENCE_INSUFFICIENT) {
+          const threshold = Math.min(0.95, Math.max(0.6, thesis.confidence + 0.1));
+          return { signalThreshold: threshold, timeLimit: now + 4 * 60 * 60 * 1000 };
+        }
+
+        if (inactionType === InactionType.RISK_ABSTENTION) {
+          const waitMs = riskEnvelope?.state === 'critical'
+            ? 24 * 60 * 60 * 1000
+            : riskEnvelope?.state === 'high'
+              ? 6 * 60 * 60 * 1000
+              : 60 * 60 * 1000;
+          return { timeLimit: now + waitMs };
+        }
+
+        if (currentTier === AutonomyTier.OBSERVE) {
+          return { timeLimit: now + 6 * 60 * 60 * 1000 };
+        }
+
+        if (inactionType === InactionType.DEFERRED_ENTRY) {
+          return { timeLimit: now + 24 * 60 * 60 * 1000 };
+        }
+
+        return { timeLimit: now + 2 * 60 * 60 * 1000 };
+      })();
 
       inactionArtifact = this.nexus.inaction.recordInaction(
         inactionType,
@@ -394,12 +543,12 @@ export class NexusTrader {
           type: 'trade',
           symbol: thesis.symbol,
           proposedAction: thesis.signal,
-          proposedSize: thesis.entryPrice > 0 ? Math.max(1, Math.floor(1000 / thesis.entryPrice)) : undefined,
+          proposedSize,
           proposedPrice: thesis.entryPrice,
         },
         {
           primaryReason: decision.reasoning,
-          supportingFactors: constraints.slice(0, 8),
+          supportingFactors: supportingFactors.slice(0, 12),
           confidence: decision.confidence,
           constraints,
         },
@@ -409,6 +558,10 @@ export class NexusTrader {
           riskLevel: riskEnvelope?.riskScore ?? 0,
           signalStrength: thesis.confidence,
           portfolioState,
+        },
+        {
+          alternatives,
+          revisitConditions,
         }
       );
     }
