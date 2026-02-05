@@ -394,9 +394,8 @@ export const TradingDashboard: React.FC = () => {
   // Fetch account data
   const fetchAccount = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/alpaca/account');
-      const data = await res.json();
-      if (data.success) {
+      const data = await api.getAlpacaAccount();
+      if (data.success && data.data) {
         setAccount(data.data.account);
       }
     } catch (err) {
@@ -409,9 +408,8 @@ export const TradingDashboard: React.FC = () => {
   // Fetch positions
   const fetchPositions = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/alpaca/positions');
-      const data = await res.json();
-      if (data.success) {
+      const data = await api.getAlpacaPositions();
+      if (data.success && data.data) {
         setPositions(data.data.positions);
       }
     } catch (err) {
@@ -424,13 +422,8 @@ export const TradingDashboard: React.FC = () => {
   // Fetch scanner results
   const fetchScanResults = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/scan', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ watchlistId: 'default' }),
-      });
-      const data = await res.json();
-      if (data.success) {
+      const data = await api.scanMarket('default');
+      if (data.success && data.data) {
         setScanResults(data.data.results);
       }
     } catch (err) {
@@ -443,9 +436,8 @@ export const TradingDashboard: React.FC = () => {
   // Fetch theses
   const fetchTheses = useCallback(async () => {
     try {
-      const res = await fetch('http://localhost:3010/api/theses');
-      const data = await res.json();
-      if (data.success) {
+      const data = await api.getActiveTheses();
+      if (data.success && data.data) {
         setTheses(data.data.theses);
       }
     } catch (err) {
@@ -458,14 +450,9 @@ export const TradingDashboard: React.FC = () => {
   // Generate thesis for a symbol
   const generateThesis = useCallback(async (symbol: string) => {
     try {
-      const res = await fetch('http://localhost:3010/api/theses', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ symbol }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setTheses((prev) => [...prev, data.data.thesis]);
+      const data = await api.generateThesis(symbol);
+      if (data.success && data.data) {
+        setTheses((prev) => [...prev, data.data!.thesis]);
       }
     } catch (err) {
       console.error('Failed to generate thesis:', err);
@@ -476,18 +463,14 @@ export const TradingDashboard: React.FC = () => {
   // Execute paper trade
   const executeTrade = useCallback(async (thesisId: string) => {
     try {
-      const res = await fetch('http://localhost:3010/api/alpaca/execute-thesis', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ thesisId, qty: 1 }),
-      });
-      const data = await res.json();
+      // Use the Nexus trade execution
+      const data = await api.executeNexusTrade({ symbol: thesisId, signal: 'BUY', price: 0 });
       if (data.success) {
         // Refresh positions after trade
         fetchPositions();
         fetchAccount();
       } else {
-        setError(data.error || 'Failed to execute trade');
+        setError(data.error?.message || 'Failed to execute trade');
       }
     } catch (err) {
       console.error('Failed to execute trade:', err);

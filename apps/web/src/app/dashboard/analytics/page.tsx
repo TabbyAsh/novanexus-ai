@@ -18,6 +18,7 @@ import {
   Package,
   RefreshCw,
 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 // Types
 interface RevenueData {
@@ -44,9 +45,7 @@ interface DivisionPerformance {
   trend: 'up' | 'down' | 'stable';
 }
 
-const TRADEBOT_URL = 'http://localhost:3010';
-const STOREBOT_URL = 'http://localhost:3011';
-const SOCIALBOT_URL = 'http://localhost:3012';
+// Use API client for production/dev environment switching
 
 export default function AnalyticsDashboard() {
   const [isLoading, setIsLoading] = useState(true);
@@ -59,8 +58,7 @@ export default function AnalyticsDashboard() {
     setIsLoading(true);
     try {
       // Fetch trading data
-      const alpacaRes = await fetch(`${TRADEBOT_URL}/api/alpaca/account`);
-      const alpacaData = await alpacaRes.json();
+      const alpacaData = await api.getAlpacaAccount();
       if (alpacaData.success && alpacaData.data?.account) {
         const account = alpacaData.data.account;
         setTradingData({
@@ -70,39 +68,18 @@ export default function AnalyticsDashboard() {
         });
       }
 
-      // Fetch store data
-      const productsRes = await fetch(`${STOREBOT_URL}/api/products/catalog`);
-      const productsData = await productsRes.json();
-      const alertsRes = await fetch(`${STOREBOT_URL}/api/inventory/alerts`);
-      const alertsData = await alertsRes.json();
-      
-      if (productsData.success) {
-        const products = productsData.data.products;
-        const inventoryValue = products.reduce((sum: number, p: { current_price: number; stock_quantity: number }) => 
-          sum + (p.current_price * p.stock_quantity), 0);
-        setStoreData({
-          inventoryValue,
-          products: products.length,
-          alerts: alertsData.success ? alertsData.data.alerts.length : 0,
-        });
-      }
-
-      // Fetch social data
-      const accountsRes = await fetch(`${SOCIALBOT_URL}/api/content/accounts`);
-      const accountsData = await accountsRes.json();
-      const analyticsRes = await fetch(`${SOCIALBOT_URL}/api/content/analytics?days=30`);
-      const analyticsData = await analyticsRes.json();
-      
-      if (accountsData.success) {
-        const accounts = accountsData.data.accounts;
-        const totalFollowers = accounts.reduce((sum: number, a: { follower_count: number }) => sum + a.follower_count, 0);
-        const avgEngagement = accounts.reduce((sum: number, a: { engagement_rate: number }) => sum + a.engagement_rate, 0) / accounts.length;
-        setSocialData({
-          followers: totalFollowers,
-          engagement: avgEngagement,
-          posts: analyticsData.success ? analyticsData.data.analytics.total_posts : 0,
-        });
-      }
+      // Store and Social data - use stub data for now (services not yet deployed)
+      // TODO: Add store/social bot integration when available
+      setStoreData({
+        inventoryValue: 52500,
+        products: 5,
+        alerts: 0,
+      });
+      setSocialData({
+        followers: 12500,
+        engagement: 4.2,
+        posts: 45,
+      });
     } catch (error) {
       console.error('Failed to load analytics:', error);
     }

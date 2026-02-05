@@ -55,6 +55,20 @@ const PUBLIC_ROUTES = [
   '/v1/auth/refresh',
   '/v1/billing/pricing',
   '/billing/webhook',  // Stripe webhook - authenticated by signature
+  // Nova Nexus AI - public status
+  '/v1/nexus/status',
+  '/v1/nexus/initialize',
+  '/v1/nexus/analyze',
+  '/v1/nexus/ledger',
+  // Alpaca status - public
+  '/v1/alpaca/status',
+  '/v1/alpaca/account',
+  '/v1/alpaca/positions',
+  '/v1/alpaca/orders',
+  // AI Screener - public for demo
+  '/v1/ai-screener/',
+  // Market scanning - public for demo
+  '/v1/trade/scan',
 ];
 
 // Premium features that require paid plan (LITE or higher)
@@ -635,6 +649,82 @@ app.post('/v1/billing/portal', (req: Request, res: Response) => {
 // Stripe webhook - needs raw body, passthrough to billing
 app.post('/billing/webhook', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.billing, '/webhook', req, res);
+});
+
+// ============================================
+// Nova Nexus AI Routes -> TradeBot
+// ============================================
+
+app.all('/v1/nexus/status', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/status', req, res);
+});
+
+app.all('/v1/nexus/initialize', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/initialize', req, res);
+});
+
+app.all('/v1/nexus/analyze', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/analyze', req, res);
+});
+
+app.all('/v1/nexus/execute', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/execute', req, res);
+});
+
+app.all('/v1/nexus/autonomous-scan', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/autonomous-scan', req, res);
+});
+
+app.all('/v1/nexus/ledger', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/ledger', req, res);
+});
+
+app.all('/v1/nexus/stop', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/stop', req, res);
+});
+
+// ============================================
+// Alpaca Trading Routes -> TradeBot
+// ============================================
+
+app.all('/v1/alpaca/status', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/status', req, res);
+});
+
+app.all('/v1/alpaca/account', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/account', req, res);
+});
+
+app.all('/v1/alpaca/positions', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/positions', req, res);
+});
+
+app.all('/v1/alpaca/orders', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/orders', req, res);
+});
+
+app.all('/v1/alpaca/orders/:id', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, `/api/alpaca/orders/${req.params.id}`, req, res);
+});
+
+// ============================================
+// AI Screener Routes -> TradeBot
+// ============================================
+
+app.all('/v1/ai-screener/status', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/ai-screener/status', req, res);
+});
+
+app.all('/v1/ai-screener/scan', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/ai-screener/scan', req, res);
+});
+
+app.all('/v1/ai-screener/top-movers', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/ai-screener/top-movers', req, res);
+});
+
+app.all('/v1/ai-screener/analyze', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/ai-screener/analyze', req, res);
 });
 
 // Catch-all for unknown routes

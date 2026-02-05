@@ -4,8 +4,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import GlassCard, { GradientText } from '@/components/ui/GlassCard';
-
-const TRADEBOT_URL = 'http://localhost:3010';
+import { api } from '@/lib/api';
 
 interface Signal {
   symbol: string;
@@ -310,32 +309,22 @@ export default function ScreenerPage() {
     }, 500);
 
     try {
-      const response = await fetch(`${TRADEBOT_URL}/api/ai-screener/scan`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(settings),
-      });
+      const data = await api.runAIScreener(settings);
       
       clearInterval(progressInterval);
       
-      if (!response.ok) {
-        throw new Error('Scan failed');
-      }
-      
-      const data = await response.json();
-      
-      if (data.success && data.data.signals) {
+      if (data.success && data.data?.signals) {
         setSignals(data.data.signals);
-        setLastScan(data.data.scannedAt);
+        setLastScan(new Date().toISOString());
         setScanStatus(s => ({ 
           ...s, 
           scanning: false, 
           progress: 100, 
           scannedCount: s.totalCount,
-          foundSignals: data.data.signals.length 
+          foundSignals: data.data!.signals.length 
         }));
       } else {
-        throw new Error(data.error || 'Unknown error');
+        throw new Error(data.error?.message || 'Unknown error');
       }
     } catch (err) {
       clearInterval(progressInterval);

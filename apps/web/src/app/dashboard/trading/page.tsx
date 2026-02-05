@@ -19,6 +19,7 @@ import {
   Play,
   Square,
 } from 'lucide-react';
+import { api } from '@/lib/api';
 
 // Types
 interface AlpacaAccount {
@@ -65,8 +66,7 @@ interface MarketQuote {
   volume: number;
 }
 
-const TRADEBOT_URL = 'http://localhost:3010';
-const MARKETDATA_URL = 'http://localhost:3020';
+// Use API client for production/dev switching
 
 export default function TradingDashboard() {
   const [account, setAccount] = useState<AlpacaAccount | null>(null);
@@ -89,8 +89,7 @@ export default function TradingDashboard() {
   const loadAlpacaData = useCallback(async () => {
     try {
       // Check if Alpaca is enabled
-      const statusRes = await fetch(`${TRADEBOT_URL}/api/alpaca/status`);
-      const statusData = await statusRes.json();
+      const statusData = await api.getAlpacaStatus();
       setAlpacaEnabled(statusData.data?.enabled || false);
 
       if (!statusData.data?.enabled) {
@@ -99,23 +98,20 @@ export default function TradingDashboard() {
       }
 
       // Load account
-      const accountRes = await fetch(`${TRADEBOT_URL}/api/alpaca/account`);
-      const accountData = await accountRes.json();
-      if (accountData.success) {
+      const accountData = await api.getAlpacaAccount();
+      if (accountData.success && accountData.data) {
         setAccount(accountData.data.account);
       }
 
       // Load positions
-      const positionsRes = await fetch(`${TRADEBOT_URL}/api/alpaca/positions`);
-      const positionsData = await positionsRes.json();
-      if (positionsData.success) {
+      const positionsData = await api.getAlpacaPositions();
+      if (positionsData.success && positionsData.data) {
         setPositions(positionsData.data.positions);
       }
 
       // Load recent orders
-      const ordersRes = await fetch(`${TRADEBOT_URL}/api/alpaca/orders?status=all`);
-      const ordersData = await ordersRes.json();
-      if (ordersData.success) {
+      const ordersData = await api.getAlpacaOrders('all');
+      if (ordersData.success && ordersData.data) {
         setOrders(ordersData.data.orders.slice(0, 10));
       }
 
@@ -126,31 +122,15 @@ export default function TradingDashboard() {
   }, []);
 
   const loadMarketData = useCallback(async () => {
-    try {
-      const quotes = await Promise.all(
-        watchlistSymbols.map(async (symbol) => {
-          try {
-            const res = await fetch(`${MARKETDATA_URL}/v1/market/quote/${symbol}`);
-            const data = await res.json();
-            if (data.success && data.data?.quote) {
-              return data.data.quote;
-            }
-          } catch {
-            // Return stub data if API fails
-          }
-          return {
-            symbol,
-            price: 100 + Math.random() * 200,
-            change: (Math.random() - 0.5) * 10,
-            changePercent: (Math.random() - 0.5) * 5,
-            volume: Math.floor(Math.random() * 10000000),
-          };
-        })
-      );
-      setWatchlistQuotes(quotes);
-    } catch (error) {
-      console.error('Failed to load market data:', error);
-    }
+    // Simulated market quotes - would come from market data service
+    const quotes = watchlistSymbols.map((symbol) => ({
+      symbol,
+      price: symbol === 'NVDA' ? 875.50 : symbol === 'AAPL' ? 182.30 : symbol === 'MSFT' ? 415.20 : 100 + Math.random() * 200,
+      change: (Math.random() - 0.5) * 10,
+      changePercent: (Math.random() - 0.5) * 5,
+      volume: Math.floor(Math.random() * 10000000),
+    }));
+    setWatchlistQuotes(quotes);
   }, []);
 
   const loadAll = useCallback(async () => {
@@ -173,19 +153,12 @@ export default function TradingDashboard() {
     setOrderMessage(null);
 
     try {
-      const res = await fetch(`${TRADEBOT_URL}/api/alpaca/orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          symbol: orderSymbol.toUpperCase(),
-          qty: parseInt(orderQty),
-          side: orderSide,
-          type: 'market',
-          time_in_force: 'day',
-        }),
+      const data = await api.placeAlpacaOrder({
+        symbol: orderSymbol.toUpperCase(),
+        qty: parseInt(orderQty),
+        side: orderSide,
+        type: 'market',
       });
-
-      const data = await res.json();
 
       if (data.success) {
         setOrderMessage({ type: 'success', text: `Order placed: ${orderSide.toUpperCase()} ${orderQty} ${orderSymbol}` });
@@ -194,7 +167,7 @@ export default function TradingDashboard() {
         // Refresh data
         setTimeout(loadAll, 1000);
       } else {
-        setOrderMessage({ type: 'error', text: data.error || 'Failed to place order' });
+        setOrderMessage({ type: 'error', text: data.error?.message || 'Failed to place order' });
       }
     } catch (error) {
       setOrderMessage({ type: 'error', text: 'Network error placing order' });

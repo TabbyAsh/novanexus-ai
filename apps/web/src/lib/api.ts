@@ -1,5 +1,10 @@
 const API_BASE = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 
+// In production, all requests go through gateway. In dev, tradebot can be called directly.
+const isProduction = typeof window !== 'undefined' && window.location.hostname !== 'localhost';
+const TRADEBOT_URL = isProduction ? API_BASE : 'http://localhost:3010';
+const TRADEBOT_PREFIX = isProduction ? '/v1' : '/api';
+
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -542,6 +547,111 @@ class ApiClient {
       '/v1/tasks',
       { goalId, type, assignedToBot, input }
     );
+  }
+
+  // ==========================================================================
+  // Tradebot Direct Endpoints
+  // ==========================================================================
+
+  private async tradebotRequest<T>(
+    method: string,
+    path: string,
+    body?: unknown
+  ): Promise<ApiResponse<T>> {
+    try {
+      // In production, convert /api/* to /v1/* for gateway
+      const finalPath = isProduction ? path.replace('/api/', '/v1/').replace('/api', '/v1') : path;
+      const response = await fetch(`${TRADEBOT_URL}${finalPath}`, {
+        method,
+        headers: { 'Content-Type': 'application/json' },
+        body: body ? JSON.stringify(body) : undefined,
+      });
+      return await response.json();
+    } catch (error) {
+      console.error('Tradebot request failed:', error);
+      return { success: false, error: { code: 'NETWORK_ERROR', message: 'Network request failed' } };
+    }
+  }
+
+  // Alpaca Trading
+  async getAlpacaStatus() {
+    return this.tradebotRequest<{ enabled: boolean; mode: string }>('GET', '/api/alpaca/status');
+  }
+
+  async getAlpacaAccount() {
+    return this.tradebotRequest<{ account: any }>('GET', '/api/alpaca/account');
+  }
+
+  async getAlpacaPositions() {
+    return this.tradebotRequest<{ positions: any[] }>('GET', '/api/alpaca/positions');
+  }
+
+  async getAlpacaOrders(status: 'open' | 'closed' | 'all' = 'all') {
+    return this.tradebotRequest<{ orders: any[] }>('GET', `/api/alpaca/orders?status=${status}`);
+  }
+
+  async placeAlpacaOrder(params: { symbol: string; qty: number; side: 'buy' | 'sell'; type?: string }) {
+    return this.tradebotRequest<{ order: any }>('POST', '/api/alpaca/orders', {
+      ...params,
+      type: params.type || 'market',
+      time_in_force: 'day',
+    });
+  }
+
+  // Market Scanner
+  async scanMarket(watchlistId: string = 'default', filters?: any) {
+    return this.tradebotRequest<{ results: any[]; scannedAt: string }>('POST', '/api/scan', { watchlistId, filters });
+  }
+
+  async getWatchlists() {
+    return this.tradebotRequest<{ watchlists: any[] }>('GET', '/api/watchlists');
+  }
+
+  // AI Screener
+  async getAIScreenerStatus() {
+    return this.tradebotRequest<{ ready: boolean; openai: boolean; polygon: boolean }>('GET', '/api/ai-screener/status');
+  }
+
+  async runAIScreener(params?: { maxStocks?: number; minConfidence?: number; signalType?: string }) {
+    return this.tradebotRequest<{ signals: any[]; count: number }>('POST', '/api/ai-screener/scan', params || {});
+  }
+
+  async analyzeStockWithAI(symbol: string) {
+    return this.tradebotRequest<{ stock: any; indicators: any; signal: any }>('POST', '/api/ai-screener/analyze', { symbol });
+  }
+
+  // Nova Nexus AI
+  async getNexusStatus() {
+    return this.tradebotRequest<{ status: any }>('GET', '/api/nexus/status');
+  }
+
+  async initializeNexus() {
+    return this.tradebotRequest<{ message: string; status: any }>('POST', '/api/nexus/initialize');
+  }
+
+  async analyzeTradeWithNexus(params: { symbol: string; signal: string; price: number; indicators?: any; confidence?: number }) {
+    return this.tradebotRequest<{ decision: any; message: string }>('POST', '/api/nexus/analyze', params);
+  }
+
+  async executeNexusTrade(params: { symbol: string; signal: string; price: number; autoExecute?: boolean }) {
+    return this.tradebotRequest<{ result: any; message: string }>('POST', '/api/nexus/execute', params);
+  }
+
+  async runAutonomousScan(params?: { watchlistId?: string; maxTrades?: number }) {
+    return this.tradebotRequest<{ scanned: number; opportunities: number; executions: any[] }>('POST', '/api/nexus/autonomous-scan', params || {});
+  }
+
+  async getNexusLedger(limit: number = 50) {
+    return this.tradebotRequest<{ ledger: any[] }>('GET', `/api/nexus/ledger?limit=${limit}`);
+  }
+
+  // Thesis Generation
+  async generateThesis(symbol: string) {
+    return this.tradebotRequest<{ thesis: any }>('POST', '/api/thesis/generate', { symbol });
+  }
+
+  async getActiveTheses() {
+    return this.tradebotRequest<{ theses: any[] }>('GET', '/api/theses');
   }
 }
 
