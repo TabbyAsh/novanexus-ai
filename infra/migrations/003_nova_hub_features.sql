@@ -278,22 +278,27 @@ CREATE TABLE IF NOT EXISTS user_streaks (
 -- Triggers
 -- ============================================
 
+DROP TRIGGER IF EXISTS update_journal_entries_updated_at ON journal_entries;
 CREATE TRIGGER update_journal_entries_updated_at 
     BEFORE UPDATE ON journal_entries 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_trade_theses_updated_at ON trade_theses;
 CREATE TRIGGER update_trade_theses_updated_at 
     BEFORE UPDATE ON trade_theses 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_user_portfolios_updated_at ON user_portfolios;
 CREATE TRIGGER update_user_portfolios_updated_at 
     BEFORE UPDATE ON user_portfolios 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_plan_configs_updated_at ON plan_configs;
 CREATE TRIGGER update_plan_configs_updated_at 
     BEFORE UPDATE ON plan_configs 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_usage_tracking_updated_at ON usage_tracking;
 CREATE TRIGGER update_usage_tracking_updated_at 
     BEFORE UPDATE ON usage_tracking 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
