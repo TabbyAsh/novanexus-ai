@@ -55,8 +55,31 @@ CREATE TABLE IF NOT EXISTS products (
     UNIQUE(org_id, sku)
 );
 
-CREATE INDEX idx_products_org_status ON products(org_id, status);
-CREATE INDEX idx_products_category ON products(org_id, category);
+-- Ensure legacy products table has required columns before indexes
+ALTER TABLE products ADD COLUMN IF NOT EXISTS description TEXT;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS category VARCHAR(100);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS brand VARCHAR(100);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS cost_price DECIMAL(12,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS retail_price DECIMAL(12,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS min_price DECIMAL(12,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS max_price DECIMAL(12,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS current_margin DECIMAL(5,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS quantity_on_hand INTEGER DEFAULT 0;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS quantity_reserved INTEGER DEFAULT 0;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS reorder_point INTEGER DEFAULT 10;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS reorder_quantity INTEGER DEFAULT 50;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier_id UUID;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier_sku VARCHAR(100);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS supplier_cost DECIMAL(12,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS lead_time_days INTEGER;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS listed_on JSONB DEFAULT '[]'::jsonb;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS total_sold INTEGER DEFAULT 0;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS total_revenue DECIMAL(14,2) DEFAULT 0;
+ALTER TABLE products ADD COLUMN IF NOT EXISTS avg_days_to_sell DECIMAL(8,2);
+ALTER TABLE products ADD COLUMN IF NOT EXISTS velocity_score DECIMAL(5,2);
+
+CREATE INDEX IF NOT EXISTS idx_products_org_status ON products(org_id, status);
+CREATE INDEX IF NOT EXISTS idx_products_category ON products(org_id, category);
 
 -- ============================================
 -- E-COMMERCE: Suppliers
@@ -145,8 +168,33 @@ CREATE TABLE IF NOT EXISTS orders (
     UNIQUE(org_id, order_number)
 );
 
-CREATE INDEX idx_orders_org_status ON orders(org_id, status);
-CREATE INDEX idx_orders_date ON orders(org_id, order_date DESC);
+-- Ensure legacy orders table has required columns before indexes
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_number VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS marketplace VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS marketplace_order_id VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_name VARCHAR(255);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS customer_email VARCHAR(255);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_address JSONB;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS subtotal DECIMAL(12,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_cost DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS tax_amount DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS discount_amount DECIMAL(10,2) DEFAULT 0;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS total_amount DECIMAL(12,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS product_cost DECIMAL(12,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipping_paid DECIMAL(10,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS marketplace_fees DECIMAL(10,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS profit DECIMAL(12,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS profit_margin DECIMAL(5,2);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS payment_status VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS fulfillment_status VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS carrier VARCHAR(50);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS tracking_number VARCHAR(100);
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS shipped_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS delivered_at TIMESTAMPTZ;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS order_date TIMESTAMPTZ DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_orders_org_status ON orders(org_id, status);
+CREATE INDEX IF NOT EXISTS idx_orders_date ON orders(org_id, order_date DESC);
 
 -- ============================================
 -- E-COMMERCE: Order Items

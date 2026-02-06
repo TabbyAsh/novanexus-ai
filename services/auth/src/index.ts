@@ -104,8 +104,7 @@ async function emitEvent(
 // Auth Routes
 // ============================================
 
-// POST /v1/auth/register - Register new user
-app.post('/v1/auth/register', async (req: Request, res: Response) => {
+async function handleRegister(req: Request, res: Response) {
   const requestId = req.headers['x-request-id'] as string;
 
   try {
@@ -215,7 +214,13 @@ app.post('/v1/auth/register', async (req: Request, res: Response) => {
       error: { code: ERROR_CODES.INVALID_INPUT, message: 'Registration failed' },
     });
   }
-});
+}
+
+// POST /v1/auth/register - Register new user
+app.post('/v1/auth/register', handleRegister);
+
+// POST /v1/auth/signup - Alias for register
+app.post('/v1/auth/signup', handleRegister);
 
 // POST /v1/auth/login - Login user
 app.post('/v1/auth/login', async (req: Request, res: Response) => {

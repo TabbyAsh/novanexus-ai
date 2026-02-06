@@ -102,6 +102,19 @@ module.exports = {
       listen_timeout: 10000,
     },
     {
+      name: 'storebot',
+      script: './services/storebot/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3011,
+        ORCHESTRATOR_URL: 'http://localhost:3002',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
       name: 'nova-hub',
       script: './services/nova-hub/dist/index.js',
       instances: 1,

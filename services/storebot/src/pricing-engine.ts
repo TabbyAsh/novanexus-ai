@@ -114,11 +114,14 @@ export class PricingEngine {
    */
   async analyzeAllProducts(): Promise<PriceRecommendation[]> {
     const products = await this.getProducts();
+    if (products.length === 0) {
+      return [];
+    }
     const recommendations: PriceRecommendation[] = [];
 
     for (const product of products) {
       const marketData = await this.getMarketAnalysis(product.category);
-      const recommendation = await this.analyzeProduct(product, marketData);
+      const recommendation = await this.analyzeProduct(product, marketData || undefined);
       recommendations.push(recommendation);
     }
 
@@ -336,17 +339,31 @@ export class PricingEngine {
    */
   async getProducts(): Promise<Product[]> {
     if (!this.pool) {
-      return this.getStubProducts();
+      throw new Error('DATABASE_URL not configured');
     }
 
     try {
       const result = await this.pool.query(
-        'SELECT * FROM products WHERE is_active = true ORDER BY category, name'
+        `SELECT 
+          id,
+          sku,
+          title AS name,
+          COALESCE(description, '') AS description,
+          COALESCE(category, 'Uncategorized') AS category,
+          COALESCE(cost_price, 0) AS base_cost,
+          COALESCE(retail_price, 0) AS current_price,
+          COALESCE(min_price, 0) AS min_price,
+          COALESCE(max_price, 0) AS max_price,
+          COALESCE(quantity_on_hand, 0) AS stock_quantity,
+          COALESCE(reorder_point, 0) AS reorder_point
+         FROM products
+         WHERE status IS NULL OR status NOT IN ('ARCHIVED')
+         ORDER BY category, title`
       );
-      return result.rows;
+      return result.rows as Product[];
     } catch (error) {
       console.error('Failed to get products:', error);
-      return this.getStubProducts();
+      return [];
     }
   }
 
@@ -355,33 +372,57 @@ export class PricingEngine {
    */
   async getActiveRules(): Promise<PricingRule[]> {
     if (!this.pool) {
-      return this.getStubRules();
+      return [];
     }
 
     try {
       const result = await this.pool.query(
-        'SELECT * FROM pricing_rules WHERE is_active = true ORDER BY priority DESC'
+        `SELECT id, name, min_margin_percent, target_margin_percent, max_margin_percent, 
+                match_competitor, competitor_offset_percent, increase_price_low_stock, 
+                decrease_price_overstock, is_active, priority
+         FROM pricing_rules WHERE is_active = true ORDER BY priority DESC`
       );
-      return result.rows;
+
+      const rules: PricingRule[] = [];
+
+      for (const row of result.rows) {
+        const targetMargin = Number(row.target_margin_percent ?? 35) / 100;
+        rules.push({
+          id: row.id,
+          name: row.name,
+          rule_type: 'margin',
+          conditions: { target_margin: targetMargin },
+          adjustments: {},
+          priority: row.priority ?? 0,
+          is_active: row.is_active,
+        });
+
+        if (row.increase_price_low_stock || row.decrease_price_overstock) {
+          rules.push({
+            id: `${row.id}-inventory`,
+            name: `${row.name} (Inventory)`,
+            rule_type: 'inventory',
+            conditions: {},
+            adjustments: {},
+            priority: row.priority ?? 0,
+            is_active: row.is_active,
+          });
+        }
+      }
+
+      return rules;
     } catch (error) {
       console.error('Failed to get pricing rules:', error);
-      return this.getStubRules();
+      return [];
     }
   }
 
   /**
    * Get market analysis for a category
    */
-  async getMarketAnalysis(category: string): Promise<MarketAnalysis> {
-    // In production, this would pull from market data APIs
-    // For now, return simulated data
-    return {
-      category,
-      avg_market_price: 50 + Math.random() * 100,
-      price_trend: ['rising', 'falling', 'stable'][Math.floor(Math.random() * 3)] as 'rising' | 'falling' | 'stable',
-      demand_level: ['high', 'medium', 'low'][Math.floor(Math.random() * 3)] as 'high' | 'medium' | 'low',
-      competition_intensity: ['high', 'medium', 'low'][Math.floor(Math.random() * 3)] as 'high' | 'medium' | 'low',
-    };
+  async getMarketAnalysis(_category: string): Promise<MarketAnalysis | null> {
+    // Market analysis requires external data sources. If not configured, return null.
+    return null;
   }
 
   /**
@@ -397,7 +438,7 @@ export class PricingEngine {
 
     try {
       await this.pool.query(
-        `INSERT INTO price_history (product_id, old_price, new_price, change_reason, changed_at)
+        `INSERT INTO price_history (product_id, old_price, new_price, change_reason, created_at)
          VALUES ($1, $2, $3, $4, NOW())`,
         [productId, oldPrice, newPrice, reason]
       );
@@ -415,17 +456,17 @@ export class PricingEngine {
     try {
       // Get current price
       const current = await this.pool.query(
-        'SELECT current_price FROM products WHERE id = $1',
+        'SELECT retail_price FROM products WHERE id = $1',
         [productId]
       );
 
       if (current.rows.length === 0) return false;
 
-      const oldPrice = current.rows[0].current_price;
+      const oldPrice = current.rows[0].retail_price;
 
       // Update price
       await this.pool.query(
-        'UPDATE products SET current_price = $1, updated_at = NOW() WHERE id = $2',
+        'UPDATE products SET retail_price = $1, updated_at = NOW() WHERE id = $2',
         [newPrice, productId]
       );
 
@@ -438,122 +479,6 @@ export class PricingEngine {
       return false;
     }
   }
-
-  /**
-   * Stub products for testing
-   */
-  private getStubProducts(): Product[] {
-    return [
-      {
-        id: '1',
-        sku: 'NOVA-001',
-        name: 'Nova Smart Hub Pro',
-        description: 'AI-powered home automation hub',
-        category: 'Electronics',
-        base_cost: 75,
-        current_price: 149.99,
-        min_price: 99.99,
-        max_price: 199.99,
-        stock_quantity: 150,
-        reorder_point: 50,
-      },
-      {
-        id: '2',
-        sku: 'NOVA-002',
-        name: 'Nova Wireless Earbuds',
-        description: 'Premium noise-cancelling earbuds',
-        category: 'Electronics',
-        base_cost: 35,
-        current_price: 79.99,
-        min_price: 59.99,
-        max_price: 99.99,
-        stock_quantity: 300,
-        reorder_point: 100,
-      },
-      {
-        id: '3',
-        sku: 'NOVA-003',
-        name: 'Nova Fitness Tracker',
-        description: 'Advanced health monitoring wearable',
-        category: 'Wearables',
-        base_cost: 45,
-        current_price: 129.99,
-        min_price: 89.99,
-        max_price: 149.99,
-        stock_quantity: 25,
-        reorder_point: 75,
-      },
-      {
-        id: '4',
-        sku: 'NOVA-004',
-        name: 'Nova Portable Charger 20K',
-        description: '20000mAh fast charging power bank',
-        category: 'Accessories',
-        base_cost: 20,
-        current_price: 49.99,
-        min_price: 34.99,
-        max_price: 69.99,
-        stock_quantity: 500,
-        reorder_point: 150,
-      },
-      {
-        id: '5',
-        sku: 'NOVA-005',
-        name: 'Nova USB-C Hub 7-in-1',
-        description: 'Premium aluminum multiport adapter',
-        category: 'Accessories',
-        base_cost: 25,
-        current_price: 59.99,
-        min_price: 44.99,
-        max_price: 79.99,
-        stock_quantity: 200,
-        reorder_point: 80,
-      },
-    ];
-  }
-
-  /**
-   * Stub pricing rules for testing
-   */
-  private getStubRules(): PricingRule[] {
-    return [
-      {
-        id: '1',
-        name: 'Target Margin Rule',
-        rule_type: 'margin',
-        conditions: { target_margin: 0.35 },
-        adjustments: {},
-        priority: 100,
-        is_active: true,
-      },
-      {
-        id: '2',
-        name: 'Inventory Management',
-        rule_type: 'inventory',
-        conditions: {},
-        adjustments: {},
-        priority: 90,
-        is_active: true,
-      },
-      {
-        id: '3',
-        name: 'Demand Pricing',
-        rule_type: 'demand',
-        conditions: {},
-        adjustments: {},
-        priority: 80,
-        is_active: true,
-      },
-      {
-        id: '4',
-        name: 'Time-Based Pricing',
-        rule_type: 'time_based',
-        conditions: {},
-        adjustments: {},
-        priority: 70,
-        is_active: true,
-      },
-    ];
   }
 }
 

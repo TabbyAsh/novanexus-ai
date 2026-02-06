@@ -8,7 +8,7 @@ import {
   TaskContext,
   TaskResult,
 } from '@nova/bot-sdk';
-import { generateId, nowTimestamp } from '@nova/shared';
+import { generateId, nowTimestamp, HTTP_STATUS } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { PricingEngine, Product as PricingProduct, PriceRecommendation } from './pricing-engine';
 import { searchProducts, appraiseProduct, batchAppraise, ScrapedProduct, ProductAppraisal } from './product-scraper';
@@ -28,27 +28,6 @@ const pricingEngine = new PricingEngine(process.env.DATABASE_URL);
 // Types
 // ============================================================================
 
-interface Product {
-  id: string;
-  sku: string;
-  title: string;
-  status: string;
-  meta: Record<string, unknown>;
-  createdAt: string;
-}
-
-interface PricingRecommendation {
-  id: string;
-  productId: string;
-  sku: string;
-  title: string;
-  currentPrice: number;
-  recommendedPrice: number;
-  reason: string;
-  confidence: number;
-  createdAt: string;
-}
-
 interface InventoryAlert {
   id: string;
   productId: string;
@@ -58,36 +37,6 @@ interface InventoryAlert {
   message: string;
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
   createdAt: string;
-}
-
-// ============================================================================
-// Stub Data
-// ============================================================================
-
-const products: Product[] = [
-  { id: 'p1', sku: 'WIDGET-001', title: 'Premium Widget', status: 'ACTIVE', meta: { price: 29.99, inventory: 150, category: 'Widgets' }, createdAt: nowTimestamp() },
-  { id: 'p2', sku: 'GADGET-002', title: 'Smart Gadget', status: 'ACTIVE', meta: { price: 89.99, inventory: 25, category: 'Electronics' }, createdAt: nowTimestamp() },
-  { id: 'p3', sku: 'TOOL-003', title: 'Pro Tool Set', status: 'OUT_OF_STOCK', meta: { price: 149.99, inventory: 0, category: 'Tools' }, createdAt: nowTimestamp() },
-  { id: 'p4', sku: 'SUPPLY-004', title: 'Office Supplies', status: 'ACTIVE', meta: { price: 19.99, inventory: 500, category: 'Office' }, createdAt: nowTimestamp() },
-  { id: 'p5', sku: 'TECH-005', title: 'Wireless Charger', status: 'DRAFT', meta: { price: 39.99, inventory: 75, category: 'Electronics' }, createdAt: nowTimestamp() },
-];
-
-// ============================================================================
-// Business Logic
-// ============================================================================
-
-function checkInventory(): InventoryAlert[] {
-  return [
-    { id: 'ia1', productId: 'p3', sku: 'TOOL-003', title: 'Pro Tool Set', alertType: 'OUT_OF_STOCK', message: 'Product is out of stock - urgent reorder needed', severity: 'HIGH', createdAt: nowTimestamp() },
-    { id: 'ia2', productId: 'p2', sku: 'GADGET-002', title: 'Smart Gadget', alertType: 'LOW_STOCK', message: 'Only 25 units remaining, below minimum threshold of 30', severity: 'MEDIUM', createdAt: nowTimestamp() },
-  ];
-}
-
-function analyzePricing(): PricingRecommendation[] {
-  return [
-    { id: 'pr1', productId: 'p1', sku: 'WIDGET-001', title: 'Premium Widget', currentPrice: 29.99, recommendedPrice: 34.99, reason: 'Strong demand and healthy inventory - opportunity to increase margin', confidence: 85, createdAt: nowTimestamp() },
-    { id: 'pr2', productId: 'p4', sku: 'SUPPLY-004', title: 'Office Supplies', currentPrice: 19.99, recommendedPrice: 17.99, reason: 'High inventory levels - promotional pricing recommended', confidence: 72, createdAt: nowTimestamp() },
-  ];
 }
 
 // ============================================================================
@@ -140,16 +89,90 @@ app.get('/health', healthRoutes.healthHandler);
 app.get('/ready', healthRoutes.readyHandler);
 app.get('/metrics', healthRoutes.metricsHandler);
 
-app.get('/api/products', (_req: Request, res: Response) => {
-  res.json({ success: true, data: { products } });
+app.get('/api/products', async (_req: Request, res: Response) => {
+  try {
+    const products = await pricingEngine.getProducts();
+    if (!products.length) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: { code: 'PRODUCTS_UNAVAILABLE', message: 'Products unavailable' },
+      });
+    }
+    res.json({ success: true, data: { products } });
+  } catch (err) {
+    logger.error('Failed to load products', err as Error);
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'PRODUCTS_UNAVAILABLE', message: 'Products unavailable' },
+    });
+  }
 });
 
-app.get('/api/inventory/alerts', (_req: Request, res: Response) => {
-  res.json({ success: true, data: { alerts: checkInventory() } });
+app.get('/api/inventory/alerts', async (_req: Request, res: Response) => {
+  try {
+    const products = await pricingEngine.getProducts();
+    if (!products.length) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: { code: 'INVENTORY_UNAVAILABLE', message: 'Inventory unavailable' },
+      });
+    }
+
+    const alerts: InventoryAlert[] = [];
+
+    for (const product of products) {
+      if (product.stock_quantity <= 0) {
+        alerts.push({
+          id: generateId(),
+          productId: product.id,
+          sku: product.sku,
+          title: product.name,
+          alertType: 'OUT_OF_STOCK',
+          message: 'Product is out of stock',
+          severity: 'HIGH',
+          createdAt: nowTimestamp(),
+        });
+      } else if (product.reorder_point > 0 && product.stock_quantity <= product.reorder_point) {
+        alerts.push({
+          id: generateId(),
+          productId: product.id,
+          sku: product.sku,
+          title: product.name,
+          alertType: 'LOW_STOCK',
+          message: `Low stock (${product.stock_quantity} units)`,
+          severity: 'MEDIUM',
+          createdAt: nowTimestamp(),
+        });
+      }
+    }
+
+    res.json({ success: true, data: { alerts } });
+  } catch (err) {
+    logger.error('Inventory check failed', err as Error);
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'INVENTORY_UNAVAILABLE', message: 'Inventory unavailable' },
+    });
+  }
 });
 
-app.get('/api/pricing/recommendations', (_req: Request, res: Response) => {
-  res.json({ success: true, data: { recommendations: analyzePricing() } });
+app.get('/api/pricing/recommendations', async (_req: Request, res: Response) => {
+  try {
+    const recommendations = await pricingEngine.analyzeAllProducts();
+    if (!recommendations.length) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: { code: 'PRICING_UNAVAILABLE', message: 'Pricing recommendations unavailable' },
+      });
+    }
+    res.json({ success: true, data: { recommendations } });
+  } catch (err) {
+    logger.error('Pricing recommendations failed', err as Error);
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'PRICING_UNAVAILABLE', message: 'Pricing recommendations unavailable' },
+    });
+  }
 });
 
 // Advanced Pricing Engine API
@@ -215,7 +238,10 @@ app.post('/api/products/appraise', async (req: Request, res: Response) => {
     res.json({ success: true, data: { appraisal } });
   } catch (err) {
     logger.error('Product appraisal failed', err as Error);
-    res.status(500).json({ success: false, error: 'Appraisal failed' });
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: 'Appraisal unavailable',
+    });
   }
 });
 

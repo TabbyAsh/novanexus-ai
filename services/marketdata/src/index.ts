@@ -60,12 +60,14 @@ class SimpleCache {
 const quoteCache = new SimpleCache();
 const candleCache = new SimpleCache();
 const indicatorCache = new SimpleCache();
+const symbolCache = new SimpleCache();
 
 const CACHE_TTL = {
   QUOTE: 5,        // 5 seconds for real-time quotes
   CANDLES: 60,     // 1 minute for candles
   INDICATORS: 30,  // 30 seconds for indicators
   FUNDAMENTALS: 3600, // 1 hour for fundamentals
+  SYMBOLS: 86400,  // 24 hours for symbol universe
 };
 
 // ============================================
@@ -590,6 +592,48 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   next();
 });
+// ============================================
+// Symbol Universe Endpoint
+// ============================================
+
+app.get('/v1/market/symbols', async (_req: Request, res: Response) => {
+  const cacheKey = 'symbols:us';
+  const cached = symbolCache.get<SymbolInfo[]>(cacheKey);
+  if (cached) {
+    return res.json({ success: true, data: { symbols: cached }, cached: true });
+  }
+
+  if (!USE_POLYGON && !USE_FINNHUB) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_NOT_CONFIGURED',
+        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY.',
+      },
+    });
+  }
+
+  let symbols: SymbolInfo[] | null = null;
+
+  // Finnhub supports full US symbol universe
+  if (USE_FINNHUB) {
+    symbols = await fetchFinnhubSymbols();
+  }
+
+  if (!symbols) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_UNAVAILABLE',
+        message: 'Symbol universe unavailable from configured providers.',
+        details: { providers: { polygon: USE_POLYGON, finnhub: USE_FINNHUB } },
+      },
+    });
+  }
+
+  symbolCache.set(cacheKey, symbols, CACHE_TTL.SYMBOLS);
+  res.json({ success: true, data: { symbols }, cached: false });
+});
 
 // ============================================
 // Health Check
@@ -775,6 +819,31 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
 // Indicators Endpoint (Calculated from candles)
 // ============================================
 
+
+// ============================================
+// Symbol Universe
+// ============================================
+
+type SymbolInfo = {
+  symbol: string;
+  description: string;
+  exchange: string;
+  type: string;
+  currency: string;
+};
+
+async function fetchFinnhubSymbols(): Promise<SymbolInfo[] | null> {
+  if (!USE_FINNHUB) return null;
+  const data = await finnhubRequest<SymbolInfo[]>('/stock/symbol?exchange=US');
+  if (!Array.isArray(data) || data.length === 0) return null;
+  return data.map((s) => ({
+    symbol: s.symbol,
+    description: s.description,
+    exchange: s.exchange,
+    type: s.type,
+    currency: s.currency,
+  }));
+}
 app.get('/v1/market/indicators/:symbol', async (req: Request, res: Response) => {
   const { symbol } = req.params;
   const cacheKey = `indicators:${symbol.toUpperCase()}`;

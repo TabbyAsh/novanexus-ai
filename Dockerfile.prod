@@ -17,6 +17,8 @@ COPY package.json package-lock.json turbo.json ./
 # Copy only backend workspaces (not apps/web)
 COPY libs ./libs
 COPY services ./services
+COPY infra ./infra
+COPY scripts ./scripts
 
 # Install all dependencies (need devDeps for build)
 ENV NODE_ENV=development
@@ -39,6 +41,8 @@ COPY --from=builder /app/package-lock.json ./
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/libs ./libs
 COPY --from=builder /app/services ./services
+COPY --from=builder /app/infra ./infra
+COPY --from=builder /app/scripts ./scripts
 
 # Copy PM2 ecosystem file
 COPY ecosystem.config.js ./

@@ -138,78 +138,10 @@ async function searchGoogleShopping(query: string): Promise<ScrapedProduct[]> {
     return [];
   }
 
-  try {
-    // Google Shopping doesn't have a public RSS feed
-    // In production, you'd use the Shopping Content API or SerpAPI
-    // For now, we generate estimates based on product keywords
-    
-    const products: ScrapedProduct[] = [];
-    const keywords = query.toLowerCase();
-    
-    // Generate realistic price estimates based on product category
-    let basePrice = 50;
-    let variance = 0.3;
-    
-    if (keywords.includes('laptop') || keywords.includes('computer')) {
-      basePrice = 800;
-      variance = 0.4;
-    } else if (keywords.includes('phone') || keywords.includes('iphone') || keywords.includes('samsung')) {
-      basePrice = 600;
-      variance = 0.35;
-    } else if (keywords.includes('headphone') || keywords.includes('airpod')) {
-      basePrice = 150;
-      variance = 0.3;
-    } else if (keywords.includes('watch') || keywords.includes('smartwatch')) {
-      basePrice = 250;
-      variance = 0.35;
-    } else if (keywords.includes('tablet') || keywords.includes('ipad')) {
-      basePrice = 450;
-      variance = 0.3;
-    } else if (keywords.includes('camera')) {
-      basePrice = 500;
-      variance = 0.4;
-    } else if (keywords.includes('shoe') || keywords.includes('sneaker')) {
-      basePrice = 120;
-      variance = 0.35;
-    } else if (keywords.includes('jacket') || keywords.includes('coat')) {
-      basePrice = 80;
-      variance = 0.4;
-    } else if (keywords.includes('game') || keywords.includes('console')) {
-      basePrice = 60;
-      variance = 0.25;
-    }
-    
-    // Generate multiple price points
-    const priceVariants = [
-      basePrice * 0.85,
-      basePrice * 0.95,
-      basePrice,
-      basePrice * 1.05,
-      basePrice * 1.15,
-    ];
-    
-    const retailers = ['Amazon', 'Best Buy', 'Walmart', 'Target', 'NewEgg'];
-    
-    for (let i = 0; i < 5; i++) {
-      products.push({
-        title: query,
-        price: Math.round(priceVariants[i] * 100) / 100,
-        currency: 'USD',
-        source: retailers[i].toLowerCase().replace(' ', '-'),
-        url: `https://${retailers[i].toLowerCase().replace(' ', '')}.com/search?q=${encodeURIComponent(query)}`,
-        rating: 3.5 + Math.random() * 1.5,
-        reviewCount: Math.floor(100 + Math.random() * 2000),
-        availability: 'in_stock',
-        condition: 'new',
-        scrapedAt: new Date().toISOString(),
-      });
-    }
-    
-    return products;
-  } catch (error) {
-    logger.error('Google Shopping search failed', error as Error);
-    return [];
-  }
+  // Google Shopping does not provide a public free API.
+  // To avoid mock data, return empty unless a real integration is configured.
+  logger.warn('Google Shopping search unavailable (no API integration configured)', { query });
+  return [];
 }
 
 /**
@@ -256,20 +188,7 @@ export async function appraiseProduct(query: string): Promise<ProductAppraisal> 
   const products = searchResult.products;
   
   if (products.length === 0) {
-    // No data found - return estimate
-    return {
-      query,
-      avgPrice: 0,
-      minPrice: 0,
-      maxPrice: 0,
-      medianPrice: 0,
-      priceRange: 'unknown',
-      recommendedPrice: 0,
-      marketDemand: 'low',
-      confidence: 0,
-      sources: [],
-      appraisedAt: new Date().toISOString(),
-    };
+    throw new Error('No pricing data available for this product');
   }
   
   // Calculate statistics
