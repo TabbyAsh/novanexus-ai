@@ -201,7 +201,8 @@ INSERT INTO plan_configs (plan, display_name, limits_json, features_json) VALUES
     "csv_export": true,
     "pdf_reports": true,
     "api_access": true
-}', '["scanner", "reports", "alerts", "watchlists", "paper_trading", "thesis_cards", "csv_export", "pdf_export", "api_access", "priority_support", "journal_full", "advanced_analytics"]');
+}', '["scanner", "reports", "alerts", "watchlists", "paper_trading", "thesis_cards", "csv_export", "pdf_export", "api_access", "priority_support", "journal_full", "advanced_analytics"]')
+ON CONFLICT (plan) DO NOTHING;
 
 CREATE TABLE usage_tracking (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),

@@ -88,5 +88,7 @@ CREATE TABLE IF NOT EXISTS scanner_reports (
 CREATE INDEX idx_scanner_reports_user_id ON scanner_reports(user_id);
 
 -- Triggers for updated_at
+DROP TRIGGER IF EXISTS update_watchlists_updated_at ON watchlists;
+DROP TRIGGER IF EXISTS update_alerts_updated_at ON alerts;
 CREATE TRIGGER update_watchlists_updated_at BEFORE UPDATE ON watchlists FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 CREATE TRIGGER update_alerts_updated_at BEFORE UPDATE ON alerts FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
