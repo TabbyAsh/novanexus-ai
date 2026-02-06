@@ -14,17 +14,16 @@ RUN apk add --no-cache python3 make g++
 # Copy package files first for better caching
 COPY package.json package-lock.json turbo.json ./
 
-# Copy all workspaces
+# Copy only backend workspaces (not apps/web)
 COPY libs ./libs
 COPY services ./services
-COPY apps ./apps
 
 # Install all dependencies (need devDeps for build)
 ENV NODE_ENV=development
-RUN npm ci --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --ignore-scripts || npm install --legacy-peer-deps
 
-# Build all services
-RUN npm run build
+# Build only backend services (skip frontend)
+RUN npx turbo run build --filter='./services/*' --filter='./libs/*'
 
 # ─────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
