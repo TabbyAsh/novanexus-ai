@@ -14,7 +14,13 @@ CREATE TABLE IF NOT EXISTS watchlists (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_watchlists_user_id ON watchlists(user_id);
+-- Ensure legacy watchlists table has required columns
+ALTER TABLE watchlists ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE watchlists ADD COLUMN IF NOT EXISTS symbols JSONB DEFAULT '[]';
+ALTER TABLE watchlists ADD COLUMN IF NOT EXISTS is_default BOOLEAN DEFAULT FALSE;
+ALTER TABLE watchlists ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_watchlists_user_id ON watchlists(user_id);
 
 -- Alerts table for price/score notifications
 CREATE TABLE IF NOT EXISTS alerts (
@@ -30,9 +36,19 @@ CREATE TABLE IF NOT EXISTS alerts (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_alerts_user_id ON alerts(user_id);
-CREATE INDEX idx_alerts_symbol ON alerts(symbol);
-CREATE INDEX idx_alerts_active ON alerts(is_active) WHERE is_active = TRUE;
+-- Ensure legacy alerts table has required columns
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS symbol VARCHAR(20);
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS alert_type VARCHAR(20);
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS threshold DECIMAL(12,4);
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS is_triggered BOOLEAN DEFAULT FALSE;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS triggered_at TIMESTAMPTZ;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS is_active BOOLEAN DEFAULT TRUE;
+ALTER TABLE alerts ADD COLUMN IF NOT EXISTS updated_at TIMESTAMPTZ DEFAULT NOW();
+
+CREATE INDEX IF NOT EXISTS idx_alerts_user_id ON alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_symbol ON alerts(symbol);
+CREATE INDEX IF NOT EXISTS idx_alerts_active ON alerts(is_active) WHERE is_active = TRUE;
 
 -- Paper trades history
 CREATE TABLE IF NOT EXISTS paper_trades (
@@ -52,8 +68,18 @@ CREATE TABLE IF NOT EXISTS paper_trades (
     closed_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_paper_trades_user_id ON paper_trades(user_id);
-CREATE INDEX idx_paper_trades_status ON paper_trades(status);
+-- Ensure legacy paper_trades table has required columns
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS user_id UUID;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS thesis_id UUID;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS quantity INTEGER;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS current_price DECIMAL(12,4);
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS status VARCHAR(20);
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS pnl_percent DECIMAL(8,4);
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS opened_at TIMESTAMPTZ;
+ALTER TABLE paper_trades ADD COLUMN IF NOT EXISTS closed_at TIMESTAMPTZ;
+
+CREATE INDEX IF NOT EXISTS idx_paper_trades_user_id ON paper_trades(user_id);
+CREATE INDEX IF NOT EXISTS idx_paper_trades_status ON paper_trades(status);
 
 -- Thesis cards history
 CREATE TABLE IF NOT EXISTS thesis_cards (
@@ -72,8 +98,8 @@ CREATE TABLE IF NOT EXISTS thesis_cards (
     expires_at TIMESTAMPTZ
 );
 
-CREATE INDEX idx_thesis_cards_user_id ON thesis_cards(user_id);
-CREATE INDEX idx_thesis_cards_symbol ON thesis_cards(symbol);
+CREATE INDEX IF NOT EXISTS idx_thesis_cards_user_id ON thesis_cards(user_id);
+CREATE INDEX IF NOT EXISTS idx_thesis_cards_symbol ON thesis_cards(symbol);
 
 -- Scanner reports (saved scans)
 CREATE TABLE IF NOT EXISTS scanner_reports (
@@ -85,7 +111,7 @@ CREATE TABLE IF NOT EXISTS scanner_reports (
     scanned_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_scanner_reports_user_id ON scanner_reports(user_id);
+CREATE INDEX IF NOT EXISTS idx_scanner_reports_user_id ON scanner_reports(user_id);
 
 -- Triggers for updated_at
 DROP TRIGGER IF EXISTS update_watchlists_updated_at ON watchlists;
