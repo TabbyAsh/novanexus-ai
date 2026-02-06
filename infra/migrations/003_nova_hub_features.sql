@@ -7,7 +7,7 @@
 -- Trading Journal
 -- ============================================
 
-CREATE TABLE journal_entries (
+CREATE TABLE IF NOT EXISTS journal_entries (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -31,17 +31,17 @@ CREATE TABLE journal_entries (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_journal_entries_user ON journal_entries(user_id);
-CREATE INDEX idx_journal_entries_org ON journal_entries(org_id);
-CREATE INDEX idx_journal_entries_symbol ON journal_entries(symbol);
-CREATE INDEX idx_journal_entries_date ON journal_entries(entry_date DESC);
-CREATE INDEX idx_journal_entries_status ON journal_entries(status);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_user ON journal_entries(user_id);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_org ON journal_entries(org_id);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_symbol ON journal_entries(symbol);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_date ON journal_entries(entry_date DESC);
+CREATE INDEX IF NOT EXISTS idx_journal_entries_status ON journal_entries(status);
 
 -- ============================================
 -- Backtesting
 -- ============================================
 
-CREATE TABLE backtest_results (
+CREATE TABLE IF NOT EXISTS backtest_results (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -72,15 +72,15 @@ CREATE TABLE backtest_results (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_backtest_results_user ON backtest_results(user_id);
-CREATE INDEX idx_backtest_results_org ON backtest_results(org_id);
-CREATE INDEX idx_backtest_results_created ON backtest_results(created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_backtest_results_user ON backtest_results(user_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_results_org ON backtest_results(org_id);
+CREATE INDEX IF NOT EXISTS idx_backtest_results_created ON backtest_results(created_at DESC);
 
 -- ============================================
 -- User Alerts
 -- ============================================
 
-CREATE TABLE user_alerts (
+CREATE TABLE IF NOT EXISTS user_alerts (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -97,15 +97,15 @@ CREATE TABLE user_alerts (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_user_alerts_user ON user_alerts(user_id);
-CREATE INDEX idx_user_alerts_active ON user_alerts(is_active, user_id);
-CREATE INDEX idx_user_alerts_unread ON user_alerts(is_read, user_id);
+CREATE INDEX IF NOT EXISTS idx_user_alerts_user ON user_alerts(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_alerts_active ON user_alerts(is_active, user_id);
+CREATE INDEX IF NOT EXISTS idx_user_alerts_unread ON user_alerts(is_read, user_id);
 
 -- ============================================
 -- Trade Theses (AI-generated trade plans)
 -- ============================================
 
-CREATE TABLE trade_theses (
+CREATE TABLE IF NOT EXISTS trade_theses (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -129,15 +129,15 @@ CREATE TABLE trade_theses (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_trade_theses_user ON trade_theses(user_id);
-CREATE INDEX idx_trade_theses_status ON trade_theses(status);
-CREATE INDEX idx_trade_theses_symbol ON trade_theses(symbol);
+CREATE INDEX IF NOT EXISTS idx_trade_theses_user ON trade_theses(user_id);
+CREATE INDEX IF NOT EXISTS idx_trade_theses_status ON trade_theses(status);
+CREATE INDEX IF NOT EXISTS idx_trade_theses_symbol ON trade_theses(symbol);
 
 -- ============================================
 -- User Portfolios (Virtual Trading)
 -- ============================================
 
-CREATE TABLE user_portfolios (
+CREATE TABLE IF NOT EXISTS user_portfolios (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
@@ -153,13 +153,13 @@ CREATE TABLE user_portfolios (
     UNIQUE(user_id, name)
 );
 
-CREATE INDEX idx_user_portfolios_user ON user_portfolios(user_id);
+CREATE INDEX IF NOT EXISTS idx_user_portfolios_user ON user_portfolios(user_id);
 
 -- ============================================
 -- Plan Quotas and Usage Tracking
 -- ============================================
 
-CREATE TABLE plan_configs (
+CREATE TABLE IF NOT EXISTS plan_configs (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     plan VARCHAR(20) NOT NULL UNIQUE CHECK (plan IN ('FREE', 'LITE', 'PRO')),
     display_name VARCHAR(100) NOT NULL,
@@ -204,7 +204,7 @@ INSERT INTO plan_configs (plan, display_name, limits_json, features_json) VALUES
 }', '["scanner", "reports", "alerts", "watchlists", "paper_trading", "thesis_cards", "csv_export", "pdf_export", "api_access", "priority_support", "journal_full", "advanced_analytics"]')
 ON CONFLICT (plan) DO NOTHING;
 
-CREATE TABLE usage_tracking (
+CREATE TABLE IF NOT EXISTS usage_tracking (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     org_id UUID REFERENCES orgs(id) ON DELETE CASCADE,
@@ -218,7 +218,7 @@ CREATE TABLE usage_tracking (
     UNIQUE(user_id, usage_date)
 );
 
-CREATE INDEX idx_usage_tracking_user_date ON usage_tracking(user_id, usage_date);
+CREATE INDEX IF NOT EXISTS idx_usage_tracking_user_date ON usage_tracking(user_id, usage_date);
 
 -- ============================================
 -- Audit Logs (for billing and admin)
@@ -264,7 +264,7 @@ CREATE INDEX IF NOT EXISTS idx_entitlements_stripe ON entitlements(stripe_custom
 -- User Streaks (gamification)
 -- ============================================
 
-CREATE TABLE user_streaks (
+CREATE TABLE IF NOT EXISTS user_streaks (
     id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE UNIQUE,
     journal_streak INTEGER DEFAULT 0,
