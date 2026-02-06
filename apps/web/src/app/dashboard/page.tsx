@@ -4,7 +4,6 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
-import StatCard from '@/components/dashboard/StatCard';
 import GlassCard, { GradientText } from '@/components/ui/GlassCard';
 import { api } from '@/lib/api';
 
@@ -18,8 +17,8 @@ interface QuickAction {
 
 interface MarketQuote {
   symbol: string;
-  price: number;
-  change: number;
+  price: number | null;
+  change: number | null; // percent
 }
 
 interface ActivityItem {
@@ -29,12 +28,6 @@ interface ActivityItem {
   type: 'signal' | 'simulation' | 'scan' | 'system';
 }
 
-interface PortfolioStats {
-  portfolioValue: number;
-  totalPnl: number;
-  winRate: number;
-  openTrades: number;
-}
 
 const quickActions: QuickAction[] = [
   {
@@ -47,7 +40,7 @@ const quickActions: QuickAction[] = [
   {
     name: 'Trading',
     description: 'Manage your portfolio',
-    href: '/trading',
+    href: '/dashboard/trading',
     icon: '📈',
     color: 'green',
   },
@@ -68,24 +61,8 @@ const quickActions: QuickAction[] = [
 ];
 
 export default function DashboardPage() {
-  const [marketData, setMarketData] = useState<MarketQuote[]>([
-    { symbol: 'SPY', price: 502.34, change: 0.85 },
-    { symbol: 'QQQ', price: 438.67, change: 1.49 },
-    { symbol: 'NVDA', price: 875.43, change: 2.34 },
-    { symbol: 'AAPL', price: 185.50, change: -0.67 },
-  ]);
-  const [activities, setActivities] = useState<ActivityItem[]>([
-    { action: 'AI Signal Generated', target: 'NVDA - Bullish', time: '2m ago', type: 'signal' },
-    { action: 'Backtest Complete', target: 'RSI Strategy', time: '15m ago', type: 'simulation' },
-    { action: 'Market Scan', target: '47 opportunities found', time: '1h ago', type: 'scan' },
-    { action: 'System Update', target: 'New patterns added', time: '3h ago', type: 'system' },
-  ]);
-  const [stats, setStats] = useState<PortfolioStats>({
-    portfolioValue: 100000,
-    totalPnl: 0,
-    winRate: 0,
-    openTrades: 0,
-  });
+  const [marketData, setMarketData] = useState<MarketQuote[]>([]);
+  const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
@@ -94,10 +71,13 @@ export default function DashboardPage() {
       const quotesPromises = ['SPY', 'QQQ', 'NVDA', 'AAPL'].map(async (symbol) => {
         const result = await api.getMarketQuote(symbol);
         if (result.success && result.data?.quote) {
+          const price = result.data.quote.price;
+          const change = result.data.quote.changePercent;
+
           return {
             symbol,
-            price: result.data.quote.price,
-            change: result.data.quote.changePercent,
+            price: Number.isFinite(price) ? price : null,
+            change: typeof change === 'number' && Number.isFinite(change) ? change : null,
           };
         }
         return null;
@@ -106,17 +86,6 @@ export default function DashboardPage() {
       const quotes = (await Promise.all(quotesPromises)).filter((q): q is MarketQuote => q !== null);
       if (quotes.length > 0) {
         setMarketData(quotes);
-      }
-
-      // Fetch paper trading stats
-      const tradesResult = await api.getPaperTrades();
-      if (tradesResult.success && tradesResult.data) {
-        setStats({
-          portfolioValue: tradesResult.data.stats.portfolioValue,
-          totalPnl: tradesResult.data.stats.totalPnl,
-          winRate: tradesResult.data.stats.winRate,
-          openTrades: tradesResult.data.stats.openTrades,
-        });
       }
 
       // Fetch recent events
@@ -182,42 +151,6 @@ export default function DashboardPage() {
           </p>
         </motion.div>
         
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-          <StatCard
-            title="Portfolio Value"
-            value={`$${stats.portfolioValue.toLocaleString()}`}
-            change={{ value: stats.totalPnl, label: stats.totalPnl >= 0 ? 'profit' : 'loss' }}
-            icon={<span className="text-lg">💰</span>}
-            color="green"
-            delay={0}
-          />
-          <StatCard
-            title="Open Trades"
-            value={String(stats.openTrades)}
-            change={{ value: 0, label: 'active positions' }}
-            icon={<span className="text-lg">📊</span>}
-            color="cyan"
-            delay={0.1}
-          />
-          <StatCard
-            title="Win Rate"
-            value={`${stats.winRate.toFixed(1)}%`}
-            change={{ value: 0, label: 'historical' }}
-            icon={<span className="text-lg">🎯</span>}
-            color="purple"
-            delay={0.2}
-          />
-          <StatCard
-            title="Total P&L"
-            value={`$${Math.abs(stats.totalPnl).toLocaleString()}`}
-            change={{ value: stats.totalPnl >= 0 ? 1 : -1, label: stats.totalPnl >= 0 ? 'profit' : 'loss' }}
-            icon={<span className="text-lg">💹</span>}
-            color={stats.totalPnl >= 0 ? 'green' : 'pink'}
-            delay={0.3}
-          />
-        </div>
-        
         {/* Quick Actions */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -253,17 +186,37 @@ export default function DashboardPage() {
                 <span className="text-cyan-400">📈</span> Market Overview
               </h3>
               <div className="space-y-3">
-                {marketData.map((item) => (
-                  <div key={item.symbol} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer">
-                    <span className="font-medium text-white">{item.symbol}</span>
-                    <div className="text-right">
-                      <p className="text-white">${item.price.toLocaleString()}</p>
-                      <p className={`text-sm ${item.change >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {item.change >= 0 ? '+' : ''}{item.change.toFixed(2)}%
-                      </p>
-                    </div>
+                {marketData.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-white/5 text-sm text-gray-400">
+                    Market data unavailable.
                   </div>
-                ))}
+                ) : (
+                  marketData.map((item) => (
+                    <div key={item.symbol} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer">
+                      <span className="font-medium text-white">{item.symbol}</span>
+                      <div className="text-right">
+                        <p className="text-white">
+                          {typeof item.price === 'number' && Number.isFinite(item.price)
+                            ? `$${item.price.toLocaleString()}`
+                            : '—'}
+                        </p>
+                        <p
+                          className={`text-sm ${
+                            typeof item.change === 'number' && Number.isFinite(item.change)
+                              ? item.change >= 0
+                                ? 'text-green-400'
+                                : 'text-red-400'
+                              : 'text-gray-400'
+                          }`}
+                        >
+                          {typeof item.change === 'number' && Number.isFinite(item.change)
+                            ? `${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%`
+                            : '—'}
+                        </p>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
               {isLoading && (
                 <div className="mt-2 text-xs text-gray-500 text-center">Updating...</div>
@@ -282,25 +235,31 @@ export default function DashboardPage() {
                 <span className="text-purple-400">⚡</span> Recent Activity
               </h3>
               <div className="space-y-3">
-                {activities.map((item, i) => (
-                  <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/5">
-                    <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
-                      item.type === 'signal' ? 'bg-green-500/20 text-green-400' :
-                      item.type === 'simulation' ? 'bg-purple-500/20 text-purple-400' :
-                      item.type === 'scan' ? 'bg-cyan-500/20 text-cyan-400' :
-                      'bg-gray-500/20 text-gray-400'
-                    }`}>
-                      {item.type === 'signal' ? '📊' :
-                       item.type === 'simulation' ? '🎲' :
-                       item.type === 'scan' ? '🔍' : '⚙️'}
-                    </div>
-                    <div className="flex-1">
-                      <p className="text-white text-sm font-medium">{item.action}</p>
-                      <p className="text-gray-400 text-xs">{item.target}</p>
-                    </div>
-                    <span className="text-gray-500 text-xs">{item.time}</span>
+                {activities.length === 0 ? (
+                  <div className="p-4 rounded-xl bg-white/5 text-sm text-gray-400">
+                    No recent activity.
                   </div>
-                ))}
+                ) : (
+                  activities.map((item, i) => (
+                    <div key={i} className="flex items-start gap-3 p-3 rounded-xl bg-white/5">
+                      <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                        item.type === 'signal' ? 'bg-green-500/20 text-green-400' :
+                        item.type === 'simulation' ? 'bg-purple-500/20 text-purple-400' :
+                        item.type === 'scan' ? 'bg-cyan-500/20 text-cyan-400' :
+                        'bg-gray-500/20 text-gray-400'
+                      }`}>
+                        {item.type === 'signal' ? '📊' :
+                         item.type === 'simulation' ? '🎲' :
+                         item.type === 'scan' ? '🔍' : '⚙️'}
+                      </div>
+                      <div className="flex-1">
+                        <p className="text-white text-sm font-medium">{item.action}</p>
+                        <p className="text-gray-400 text-xs">{item.target}</p>
+                      </div>
+                      <span className="text-gray-500 text-xs">{item.time}</span>
+                    </div>
+                  ))
+                )}
               </div>
             </GlassCard>
           </motion.div>

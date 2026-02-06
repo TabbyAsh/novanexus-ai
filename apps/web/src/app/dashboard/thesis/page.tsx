@@ -60,14 +60,13 @@ export default function ThesisPage() {
   const loadTheses = async () => {
     setIsLoading(true);
     try {
-      const response = await fetch('/api/nova-hub/thesis', {
-        headers: { Authorization: `Bearer ${api.getAccessToken()}` },
-      });
-      const data = await response.json();
-      if (data.success) {
-        setTheses(data.data.theses || []);
+      const result = await api.getTradeIdeas();
+      if (result.success && result.data) {
+        setTheses((result.data.theses || []) as Thesis[]);
+      } else {
+        setTheses([]);
       }
-    } catch (err) {
+    } catch {
       setTheses([]);
     }
     setIsLoading(false);
@@ -79,23 +78,14 @@ export default function ThesisPage() {
     setError(null);
 
     try {
-      const response = await fetch('/api/nova-hub/thesis/generate', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${api.getAccessToken()}`,
-        },
-        body: JSON.stringify({ symbol: generateSymbol.toUpperCase() }),
-      });
+      const result = await api.generateThesis(generateSymbol.toUpperCase());
 
-      const data = await response.json();
-
-      if (data.success) {
+      if (result.success && result.data) {
         loadTheses();
         setGenerateSymbol('');
-        setSelectedThesis(data.data.thesis);
+        setSelectedThesis((result.data as any).thesis ?? null);
       } else {
-        setError(data.error?.message || 'Failed to generate thesis');
+        setError(result.error?.message || 'Failed to generate thesis');
       }
     } catch (err) {
       setError('Failed to generate thesis');
@@ -108,29 +98,22 @@ export default function ThesisPage() {
     setError(null);
 
     try {
-      const response = await fetch('/api/nova-hub/thesis', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${api.getAccessToken()}`,
-        },
-        body: JSON.stringify({
-          ...formData,
-          entryPrice: parseFloat(formData.entryPrice),
-          targetPrice: formData.targetPrice ? parseFloat(formData.targetPrice) : undefined,
-          stopLoss: formData.stopLoss ? parseFloat(formData.stopLoss) : undefined,
-          reasoning: formData.reasoning.split('\n').filter(r => r.trim()),
-        }),
+      const result = await api.createTradeIdea({
+        symbol: formData.symbol,
+        direction: formData.direction as 'LONG' | 'SHORT',
+        entryPrice: parseFloat(formData.entryPrice),
+        targetPrice: formData.targetPrice ? parseFloat(formData.targetPrice) : undefined,
+        stopLoss: formData.stopLoss ? parseFloat(formData.stopLoss) : undefined,
+        thesisText: formData.thesisText,
+        reasoning: formData.reasoning.split('\n').filter(r => r.trim()),
       });
 
-      const data = await response.json();
-
-      if (data.success) {
+      if (result.success) {
         setShowForm(false);
         loadTheses();
         setFormData({ symbol: '', direction: 'LONG', entryPrice: '', targetPrice: '', stopLoss: '', thesisText: '', reasoning: '' });
       } else {
-        setError(data.error?.message || 'Failed to create thesis');
+        setError(result.error?.message || 'Failed to create thesis');
       }
     } catch (err) {
       setError('Failed to create thesis');

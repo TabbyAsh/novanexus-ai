@@ -25,7 +25,11 @@ function shortHash(hash: string | undefined | null, n: number = 12) {
 
 export default function NexusDashboardPage() {
   const [status, setStatus] = useState<NexusStatusPayload | null>(null);
-  const [ledger, setLedger] = useState<NexusDecisionRecord[]>([]);
+  const [statusError, setStatusError] = useState<string | null>(null);
+
+  const [ledger, setLedger] = useState<NexusDecisionRecord[] | null>(null);
+  const [ledgerError, setLedgerError] = useState<string | null>(null);
+
   const [card, setCard] = useState<NexusDecisionCard | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -35,14 +39,18 @@ export default function NexusDashboardPage() {
 
   const [error, setError] = useState<string | null>(null);
 
-  const [symbol, setSymbol] = useState('AAPL');
+  const topError = error ?? statusError ?? ledgerError;
+
+  const [symbol, setSymbol] = useState('');
   const [signal, setSignal] = useState<'BUY' | 'SELL' | 'HOLD'>('BUY');
-  const [price, setPrice] = useState('180');
-  const [confidence, setConfidence] = useState('0.65');
+  const [price, setPrice] = useState('');
+  const [confidence, setConfidence] = useState('');
 
   const load = useCallback(async (opts?: { silent?: boolean }) => {
     if (!opts?.silent) setIsRefreshing(true);
     setError(null);
+    setStatusError(null);
+    setLedgerError(null);
 
     try {
       const [statusRes, ledgerRes] = await Promise.all([
@@ -52,17 +60,25 @@ export default function NexusDashboardPage() {
 
       if (statusRes.success) {
         setStatus(statusRes.data?.status ?? null);
+        setStatusError(null);
       } else {
-        setError(statusRes.error?.message ?? 'Failed to load Nexus status');
+        setStatus(null);
+        setStatusError(statusRes.error?.message ?? 'Failed to load Nexus status');
       }
 
       if (ledgerRes.success) {
         setLedger(ledgerRes.data?.ledger ?? []);
+        setLedgerError(null);
       } else {
-        setError(ledgerRes.error?.message ?? 'Failed to load Nexus ledger');
+        setLedger(null);
+        setLedgerError(ledgerRes.error?.message ?? 'Failed to load Nexus ledger');
       }
     } catch (err) {
-      setError((err as Error).message);
+      const message = (err as Error).message;
+      setStatus(null);
+      setLedger(null);
+      setStatusError(message);
+      setLedgerError(message);
     } finally {
       setIsLoading(false);
       if (!opts?.silent) setIsRefreshing(false);
@@ -81,36 +97,45 @@ export default function NexusDashboardPage() {
   const inactionCount = status?.nexus?.inaction?.totalArtifacts as number | undefined;
 
   const riskAvoidance = useMemo(() => {
-    const inaction = status?.nexus?.inaction ?? {};
-    const risk = status?.nexus?.risk ?? {};
+    const inaction = status?.nexus?.inaction as any | undefined;
+    const risk = status?.nexus?.risk as any | undefined;
 
-    const cards = (ledger ?? [])
-      .map((r: any) => r?.card)
-      .filter(Boolean);
+    const cards = Array.isArray(ledger)
+      ? ledger.map((r: any) => r?.card).filter(Boolean)
+      : null;
 
-    const artifacts = cards
-      .map((c: any) => c?.inaction?.artifact)
-      .filter(Boolean);
+    const artifacts = Array.isArray(cards)
+      ? cards.map((c: any) => c?.inaction?.artifact).filter(Boolean)
+      : null;
 
-    const riskVetoes = cards.filter((c: any) => c?.risk?.check && c.risk.check.approved === false).length;
-    const riskAbstentions = artifacts.filter((a: any) => a?.type === 'RISK_ABSTENTION').length;
+    const riskVetoes = Array.isArray(cards)
+      ? cards.filter((c: any) => c?.risk?.check && c.risk.check.approved === false).length
+      : null;
 
-    const billableArtifacts = artifacts.filter((a: any) => a?.billable).length;
-    const billableValueFromArtifacts = artifacts.reduce((sum: number, a: any) => {
-      const v = typeof a?.billableValue === 'number' ? a.billableValue : 0;
-      return sum + v;
-    }, 0);
+    const riskAbstentions = Array.isArray(artifacts)
+      ? artifacts.filter((a: any) => a?.type === 'RISK_ABSTENTION').length
+      : null;
 
-    const rejections = (ledger ?? []).filter((r: any) => r?.decision?.approved === false).length;
+    const billableArtifacts = Array.isArray(artifacts)
+      ? artifacts.filter((a: any) => a?.billable).length
+      : null;
+
+    const billableValueFromArtifacts = Array.isArray(artifacts)
+      ? artifacts.reduce((sum: number, a: any) => sum + (typeof a?.billableValue === 'number' ? a.billableValue : 0), 0)
+      : null;
+
+    const rejections = Array.isArray(ledger)
+      ? ledger.filter((r: any) => r?.decision?.approved === false).length
+      : null;
 
     return {
       // InactionEngine stats (system-of-record)
-      totalArtifacts: typeof inaction.totalArtifacts === 'number' ? inaction.totalArtifacts : 0,
-      pendingOutcomes: typeof inaction.pendingOutcomes === 'number' ? inaction.pendingOutcomes : 0,
-      totalAvoidedLoss: typeof inaction.totalAvoidedLoss === 'number' ? inaction.totalAvoidedLoss : 0,
-      totalBillableValue: typeof inaction.totalBillableValue === 'number' ? inaction.totalBillableValue : 0,
-      restraintRate: typeof inaction.restraintRate === 'number' ? inaction.restraintRate : 0,
-      emotionalTradesBlocked: typeof inaction.emotionalTradesBlocked === 'number' ? inaction.emotionalTradesBlocked : 0,
+      totalArtifacts: typeof inaction?.totalArtifacts === 'number' ? inaction.totalArtifacts : null,
+      pendingOutcomes: typeof inaction?.pendingOutcomes === 'number' ? inaction.pendingOutcomes : null,
+      totalAvoidedLoss: typeof inaction?.totalAvoidedLoss === 'number' ? inaction.totalAvoidedLoss : null,
+      totalBillableValue: typeof inaction?.totalBillableValue === 'number' ? inaction.totalBillableValue : null,
+      restraintRate: typeof inaction?.restraintRate === 'number' ? inaction.restraintRate : null,
+      emotionalTradesBlocked: typeof inaction?.emotionalTradesBlocked === 'number' ? inaction.emotionalTradesBlocked : null,
 
       // Derived (from recent decision cards)
       riskVetoes,
@@ -120,8 +145,8 @@ export default function NexusDashboardPage() {
       rejections,
 
       // Risk context
-      isHalted: Boolean(risk.isHalted),
-      recentTriggers: typeof risk.recentTriggers === 'number' ? risk.recentTriggers : 0,
+      isHalted: Boolean(risk?.isHalted),
+      recentTriggers: typeof risk?.recentTriggers === 'number' ? risk.recentTriggers : null,
     };
   }, [ledger, status?.nexus?.inaction, status?.nexus?.risk]);
 
@@ -135,14 +160,33 @@ export default function NexusDashboardPage() {
     setError(null);
 
     try {
+      const sym = symbol.trim().toUpperCase();
+      if (!sym) {
+        setError('Symbol is required');
+        return;
+      }
+
       const p = parseFloat(price);
-      const c = parseFloat(confidence);
+      if (!Number.isFinite(p)) {
+        setError('Price is required');
+        return;
+      }
+
+      let c: number | undefined;
+      if (confidence.trim() !== '') {
+        const parsed = parseFloat(confidence);
+        if (!Number.isFinite(parsed) || parsed < 0 || parsed > 1) {
+          setError('Confidence must be a number between 0 and 1');
+          return;
+        }
+        c = parsed;
+      }
 
       const res = await api.analyzeTradeWithNexus({
-        symbol: symbol.trim().toUpperCase(),
+        symbol: sym,
         signal,
-        price: Number.isFinite(p) ? p : 0,
-        confidence: Number.isFinite(c) ? c : 0.5,
+        price: p,
+        ...(typeof c === 'number' ? { confidence: c } : {}),
       });
 
       if (!res.success) {
@@ -217,10 +261,10 @@ export default function NexusDashboardPage() {
           </div>
         </div>
 
-        {error && (
+        {topError && (
           <div className="p-4 bg-red-500/10 border border-red-500/40 rounded-xl text-red-300 flex items-center gap-3">
             <AlertTriangle className="w-5 h-5" />
-            <span>{error}</span>
+            <span>{topError}</span>
           </div>
         )}
 
@@ -285,7 +329,9 @@ export default function NexusDashboardPage() {
             <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Total Avoided Loss</p>
               <p className="text-2xl font-bold text-green-300 mt-2">
-                ${riskAvoidance.totalAvoidedLoss.toFixed(0)}
+                {typeof riskAvoidance.totalAvoidedLoss === 'number'
+                  ? `$${riskAvoidance.totalAvoidedLoss.toFixed(0)}`
+                  : '—'}
               </p>
               <p className="text-xs text-gray-600 mt-1">Requires outcome tracking</p>
             </div>
@@ -293,7 +339,9 @@ export default function NexusDashboardPage() {
             <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Total Restraint Value</p>
               <p className="text-2xl font-bold text-pink-300 mt-2">
-                ${riskAvoidance.totalBillableValue.toFixed(0)}
+                {typeof riskAvoidance.totalBillableValue === 'number'
+                  ? `$${riskAvoidance.totalBillableValue.toFixed(0)}`
+                  : '—'}
               </p>
               <p className="text-xs text-gray-600 mt-1">Billable inaction value</p>
             </div>
@@ -301,7 +349,9 @@ export default function NexusDashboardPage() {
             <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Restraint Rate</p>
               <p className="text-2xl font-bold text-white mt-2">
-                {riskAvoidance.restraintRate.toFixed(2)}
+                {typeof riskAvoidance.restraintRate === 'number'
+                  ? riskAvoidance.restraintRate.toFixed(2)
+                  : '—'}
               </p>
               <p className="text-xs text-gray-600 mt-1">Artifacts/day (last 30d)</p>
             </div>
@@ -309,7 +359,7 @@ export default function NexusDashboardPage() {
             <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Risk Abstentions</p>
               <p className="text-2xl font-bold text-yellow-300 mt-2">
-                {riskAvoidance.riskAbstentions}
+                {typeof riskAvoidance.riskAbstentions === 'number' ? riskAvoidance.riskAbstentions : '—'}
               </p>
               <p className="text-xs text-gray-600 mt-1">From recent decision cards</p>
             </div>
@@ -317,7 +367,7 @@ export default function NexusDashboardPage() {
             <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Risk Engine Vetoes</p>
               <p className="text-2xl font-bold text-red-300 mt-2">
-                {riskAvoidance.riskVetoes}
+                {typeof riskAvoidance.riskVetoes === 'number' ? riskAvoidance.riskVetoes : '—'}
               </p>
               <p className="text-xs text-gray-600 mt-1">Survivability constraints</p>
             </div>
@@ -325,14 +375,14 @@ export default function NexusDashboardPage() {
             <div className="bg-gray-950 border border-gray-800 rounded-xl p-4">
               <p className="text-xs text-gray-500">Recent Risk Triggers</p>
               <p className="text-2xl font-bold text-white mt-2">
-                {riskAvoidance.recentTriggers}
+                {typeof riskAvoidance.recentTriggers === 'number' ? riskAvoidance.recentTriggers : '—'}
               </p>
               <p className="text-xs text-gray-600 mt-1">Last 24h</p>
             </div>
           </div>
 
           <div className="mt-4 text-xs text-gray-500">
-            Recent cards: {ledger.length} • Rejections: {riskAvoidance.rejections} • Billable artifacts (recent): {riskAvoidance.billableArtifacts} • Billable value (recent): ${riskAvoidance.billableValueFromArtifacts.toFixed(0)}
+            Recent cards: {Array.isArray(ledger) ? ledger.length : '—'} • Rejections: {typeof riskAvoidance.rejections === 'number' ? riskAvoidance.rejections : '—'} • Billable artifacts (recent): {typeof riskAvoidance.billableArtifacts === 'number' ? riskAvoidance.billableArtifacts : '—'} • Billable value (recent): {typeof riskAvoidance.billableValueFromArtifacts === 'number' ? `$${riskAvoidance.billableValueFromArtifacts.toFixed(0)}` : '—'}
           </div>
         </div>
 
@@ -548,12 +598,14 @@ export default function NexusDashboardPage() {
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
           <div className="flex items-center justify-between mb-4">
             <h2 className="text-lg font-semibold text-white">Recent Decisions</h2>
-            <span className="text-xs text-gray-500">Showing last {ledger.length}</span>
+            <span className="text-xs text-gray-500">Showing last {Array.isArray(ledger) ? ledger.length : '—'}</span>
           </div>
 
           {isLoading ? (
             <div className="text-gray-500 text-sm">Loading…</div>
-          ) : ledger.length === 0 ? (
+          ) : ledgerError ? (
+            <div className="text-gray-500 text-sm">Ledger unavailable: {ledgerError}</div>
+          ) : !ledger || ledger.length === 0 ? (
             <div className="text-gray-500 text-sm">No decisions yet.</div>
           ) : (
             <div className="overflow-x-auto">

@@ -33,6 +33,23 @@ function extractAuth(req: Request): JWTPayload | null {
   return verifyToken(authHeader.substring(7));
 }
 
+function parseJsonOptional<T>(value: unknown): T | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return undefined;
+    }
+  }
+  return value as T;
+}
+
+function parseJsonValue<T>(value: unknown, fallback: T): T {
+  const parsed = parseJsonOptional<T>(value);
+  return parsed === undefined ? fallback : parsed;
+}
+
 // Health check
 app.get('/health', async (_req: Request, res: Response) => {
   try {
@@ -115,7 +132,7 @@ app.post('/v1/events', async (req: Request, res: Response) => {
         actorId: row.actor_id,
         type: row.type,
         ts: row.ts,
-        payload: JSON.parse(row.payload_json),
+        payload: parseJsonValue<Record<string, unknown>>(row.payload_json, {}),
         prevHash: row.prev_hash,
         hash: row.hash,
       };
@@ -225,7 +242,7 @@ app.post('/v1/events/query', async (req: Request, res: Response) => {
       actorId: row.actor_id,
       type: row.type,
       ts: row.ts,
-      payload: JSON.parse(row.payload_json),
+      payload: parseJsonValue<Record<string, unknown>>(row.payload_json, {}),
       prevHash: row.prev_hash,
       hash: row.hash,
     }));
@@ -282,7 +299,7 @@ app.get('/v1/events/recent', async (req: Request, res: Response) => {
       actorId: row.actor_id,
       type: row.type,
       ts: row.ts,
-      payload: JSON.parse(row.payload_json),
+      payload: parseJsonValue<Record<string, unknown>>(row.payload_json, {}),
       prevHash: row.prev_hash,
       hash: row.hash,
     }));
@@ -337,7 +354,7 @@ app.get('/v1/events/:id', async (req: Request, res: Response) => {
       actorId: result.actor_id,
       type: result.type,
       ts: result.ts,
-      payload: JSON.parse(result.payload_json),
+      payload: parseJsonValue<Record<string, unknown>>(result.payload_json, {}),
       prevHash: result.prev_hash,
       hash: result.hash,
     };
@@ -396,7 +413,7 @@ app.get('/v1/events/chain/verify', async (req: Request, res: Response) => {
       }
 
       // Verify hash computation
-      const payload = JSON.parse(event.payload_json);
+      const payload = parseJsonValue<Record<string, unknown>>(event.payload_json, {});
       const computedHash = computeEventHash(
         event.prev_hash,
         payload,

@@ -97,43 +97,78 @@ function getSentimentIcon(sentiment: string) {
 
 export default function SocialPage() {
   const [activeTab, setActiveTab] = useState<'posts' | 'sentiment' | 'engagement' | 'alerts'>('posts');
-  const [posts, setPosts] = useState<Post[]>([]);
+
+  const [posts, setPosts] = useState<Post[] | null>(null);
+  const [postsError, setPostsError] = useState<string | null>(null);
+
   const [sentiment, setSentiment] = useState<SentimentAnalysis | null>(null);
+  const [sentimentError, setSentimentError] = useState<string | null>(null);
+
   const [engagement, setEngagement] = useState<EngagementMetrics | null>(null);
-  const [alerts, setAlerts] = useState<SocialAlert[]>([]);
+  const [engagementError, setEngagementError] = useState<string | null>(null);
+
+  const [alerts, setAlerts] = useState<SocialAlert[] | null>(null);
+  const [alertsError, setAlertsError] = useState<string | null>(null);
+
   const [isLoading, setIsLoading] = useState(true);
 
   const loadPosts = useCallback(async () => {
     const result = await api.getPosts();
-    if (result.success && result.data?.posts) {
-      setPosts(result.data.posts);
+    if (result.success) {
+      setPosts(result.data?.posts ?? []);
+      setPostsError(null);
+      return;
     }
+
+    setPosts(null);
+    setPostsError(result.error?.message ?? 'Posts unavailable');
   }, []);
 
   const loadSentiment = useCallback(async () => {
     const result = await api.getSentimentAnalysis();
-    if (result.success && result.data?.analysis) {
-      setSentiment(result.data.analysis);
+    if (result.success) {
+      setSentiment(result.data?.analysis ?? null);
+      setSentimentError(null);
+      return;
     }
+
+    setSentiment(null);
+    setSentimentError(result.error?.message ?? 'Sentiment unavailable');
   }, []);
 
   const loadEngagement = useCallback(async () => {
     const result = await api.getEngagementMetrics();
-    if (result.success && result.data?.metrics) {
-      setEngagement(result.data.metrics);
+    if (result.success) {
+      setEngagement(result.data?.metrics ?? null);
+      setEngagementError(null);
+      return;
     }
+
+    setEngagement(null);
+    setEngagementError(result.error?.message ?? 'Engagement unavailable');
   }, []);
 
   const loadAlerts = useCallback(async () => {
     const result = await api.getSocialAlerts();
-    if (result.success && result.data?.alerts) {
-      setAlerts(result.data.alerts);
+    if (result.success) {
+      setAlerts(result.data?.alerts ?? []);
+      setAlertsError(null);
+      return;
     }
+
+    setAlerts(null);
+    setAlertsError(result.error?.message ?? 'Alerts unavailable');
   }, []);
 
   const loadAll = useCallback(async () => {
     setIsLoading(true);
+    setPostsError(null);
+    setSentimentError(null);
+    setEngagementError(null);
+    setAlertsError(null);
+
     await Promise.all([loadPosts(), loadSentiment(), loadEngagement(), loadAlerts()]);
+
     setIsLoading(false);
   }, [loadPosts, loadSentiment, loadEngagement, loadAlerts]);
 
@@ -147,8 +182,9 @@ export default function SocialPage() {
     return num.toString();
   };
 
-  const publishedPosts = posts.filter(p => p.status === 'PUBLISHED').length;
-  const scheduledPosts = posts.filter(p => p.status === 'SCHEDULED').length;
+  const publishedPosts = posts ? posts.filter(p => p.status === 'PUBLISHED').length : null;
+  const scheduledPosts = posts ? posts.filter(p => p.status === 'SCHEDULED').length : null;
+  const topError = postsError ?? sentimentError ?? engagementError ?? alertsError;
 
   return (
     <div className="p-8">
@@ -167,6 +203,13 @@ export default function SocialPage() {
         </button>
       </div>
 
+      {topError && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-300 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          <span>{topError}</span>
+        </div>
+      )}
+
       {/* Stats */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
@@ -175,7 +218,7 @@ export default function SocialPage() {
               <FileText className="w-5 h-5 text-blue-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-white">{posts.length}</p>
+              <p className="text-2xl font-bold text-white">{posts === null ? '—' : posts.length}</p>
               <p className="text-sm text-gray-400">Total Posts</p>
             </div>
           </div>
@@ -187,7 +230,7 @@ export default function SocialPage() {
               <CheckCircle className="w-5 h-5 text-green-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-green-400">{publishedPosts}</p>
+              <p className="text-2xl font-bold text-green-400">{publishedPosts === null ? '—' : publishedPosts}</p>
               <p className="text-sm text-gray-400">Published</p>
             </div>
           </div>
@@ -199,7 +242,7 @@ export default function SocialPage() {
               <Calendar className="w-5 h-5 text-yellow-400" />
             </div>
             <div>
-              <p className="text-2xl font-bold text-yellow-400">{scheduledPosts}</p>
+              <p className="text-2xl font-bold text-yellow-400">{scheduledPosts === null ? '—' : scheduledPosts}</p>
               <p className="text-sm text-gray-400">Scheduled</p>
             </div>
           </div>
@@ -212,7 +255,9 @@ export default function SocialPage() {
             </div>
             <div>
               <p className="text-2xl font-bold text-purple-400">
-                {engagement?.averageEngagementRate?.toFixed(1) || '0'}%
+                {typeof engagement?.averageEngagementRate === 'number'
+                  ? `${engagement.averageEngagementRate.toFixed(1)}%`
+                  : '—'}
               </p>
               <p className="text-sm text-gray-400">Avg Engagement</p>
             </div>
@@ -229,7 +274,7 @@ export default function SocialPage() {
           }`}
         >
           <FileText className="w-4 h-4" />
-          Posts ({posts.length})
+          Posts ({posts === null ? '—' : posts.length})
         </button>
         <button
           onClick={() => setActiveTab('sentiment')}
@@ -256,7 +301,7 @@ export default function SocialPage() {
           }`}
         >
           <AlertTriangle className="w-4 h-4" />
-          Alerts ({alerts.length})
+          Alerts ({alerts === null ? '—' : alerts.length})
         </button>
       </div>
 
@@ -267,7 +312,19 @@ export default function SocialPage() {
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
               Loading posts...
             </div>
-          ) : posts.length === 0 ? (
+          ) : postsError ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Posts unavailable</p>
+              <p className="text-sm mt-1">{postsError}</p>
+              <button
+                onClick={loadAll}
+                className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !posts || posts.length === 0 ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
               <FileText className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>No posts yet</p>
@@ -315,7 +372,23 @@ export default function SocialPage() {
 
       {activeTab === 'sentiment' && (
         <div>
-          {!sentiment ? (
+          {isLoading ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              Loading sentiment...
+            </div>
+          ) : sentimentError ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Sentiment unavailable</p>
+              <p className="text-sm mt-1">{sentimentError}</p>
+              <button
+                onClick={loadAll}
+                className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !sentiment ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
               <Heart className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>No sentiment data available</p>
@@ -380,7 +453,23 @@ export default function SocialPage() {
 
       {activeTab === 'engagement' && (
         <div>
-          {!engagement ? (
+          {isLoading ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              Loading engagement...
+            </div>
+          ) : engagementError ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Engagement unavailable</p>
+              <p className="text-sm mt-1">{engagementError}</p>
+              <button
+                onClick={loadAll}
+                className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !engagement ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
               <TrendingUp className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>No engagement data available</p>
@@ -442,7 +531,23 @@ export default function SocialPage() {
 
       {activeTab === 'alerts' && (
         <div>
-          {alerts.length === 0 ? (
+          {isLoading ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              Loading alerts...
+            </div>
+          ) : alertsError ? (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+              <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+              <p>Alerts unavailable</p>
+              <p className="text-sm mt-1">{alertsError}</p>
+              <button
+                onClick={loadAll}
+                className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+              >
+                Retry
+              </button>
+            </div>
+          ) : !alerts || alerts.length === 0 ? (
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
               <CheckCircle className="w-12 h-12 mx-auto mb-4 opacity-50" />
               <p>No social alerts</p>

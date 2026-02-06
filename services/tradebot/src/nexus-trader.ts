@@ -181,7 +181,7 @@ export class NexusTrader {
     
     // Set up execution callbacks
     this.nexus.executor.setCallbacks({
-      onExecute: async (command) => {
+      onExecute: async (command: any) => {
         // This would connect to actual broker API
         logger.info('Executing command', { type: command.type, params: command.parameters });
         return { success: true, data: { orderId: `sim-${Date.now()}` } };

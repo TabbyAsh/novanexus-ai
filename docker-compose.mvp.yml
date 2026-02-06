@@ -39,6 +39,7 @@ services:
       - NODE_ENV=production
       - PORT=3003
       - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
       - REDIS_URL=redis://redis:6379
     depends_on:
       postgres:
@@ -62,7 +63,7 @@ services:
       - NODE_ENV=production
       - PORT=3001
       - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
-      - JWT_SECRET=nova_jwt_secret_change_in_prod_32chars
+      - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
       - REDIS_URL=redis://redis:6379
       - EVENTBUS_URL=http://eventbus:3003
     depends_on:
@@ -89,6 +90,7 @@ services:
       - NODE_ENV=production
       - PORT=3002
       - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
       - REDIS_URL=redis://redis:6379
       - EVENTBUS_URL=http://eventbus:3003
     depends_on:
@@ -141,6 +143,11 @@ services:
       - ORCHESTRATOR_URL=http://orchestrator:3002
       - EVENTBUS_URL=http://eventbus:3003
       - BILLING_URL=http://billing:3006
+      - TRADEBOT_URL=http://tradebot:3010
+      - MARKETDATA_URL=http://marketdata:3020
+      - NOVA_HUB_URL=http://nova-hub:3030
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
       - REDIS_URL=redis://redis:6379
     depends_on:
       auth:
@@ -150,6 +157,12 @@ services:
       eventbus:
         condition: service_healthy
       billing:
+        condition: service_healthy
+      tradebot:
+        condition: service_healthy
+      marketdata:
+        condition: service_healthy
+      nova-hub:
         condition: service_healthy
     healthcheck:
       test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/health"]
@@ -196,6 +209,7 @@ services:
       - MARKETDATA_URL=http://marketdata:3020
       - EVENTBUS_URL=http://eventbus:3003
       - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
       - REDIS_URL=redis://redis:6379
       - POLYGON_API_KEY=${POLYGON_API_KEY:-}
       - FINNHUB_API_KEY=${FINNHUB_API_KEY:-}
@@ -214,6 +228,39 @@ services:
       timeout: 5s
       retries: 5
 
+  nova-hub:
+    build:
+      context: .
+      dockerfile: Dockerfile.ws
+      args:
+        WORKSPACE: "@nova/nova-hub"
+    container_name: nova-nova-hub
+    ports:
+      - "3030:3030"
+    environment:
+      - NODE_ENV=production
+      - PORT=3030
+      - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
+      - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
+      - REDIS_URL=redis://redis:6379
+      - MARKETDATA_URL=http://marketdata:3020
+      - BILLING_URL=http://billing:3006
+      - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      marketdata:
+        condition: service_healthy
+      billing:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3030/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   web:
     build:
       context: .
@@ -228,6 +275,8 @@ services:
       gateway:
         condition: service_healthy
       tradebot:
+        condition: service_healthy
+      nova-hub:
         condition: service_healthy
 
 volumes:

@@ -1,6 +1,12 @@
 {
   "extends": "./tsconfig.json",
   "compilerOptions": {
-    "paths": {}
+    "baseUrl": "../..",
+    "paths": {
+      "@nova/shared": ["libs/shared/dist"],
+      "@nova/telemetry": ["libs/telemetry/dist"],
+      "@nova/bot-sdk": ["libs/bot-sdk/dist"],
+      "@nova/nexus-core": ["libs/nexus-core/dist"]
+    }
   }
 }

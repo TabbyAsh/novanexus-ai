@@ -27,6 +27,7 @@ const SERVICE_URLS = {
   researchbot: process.env.RESEARCHBOT_URL || 'http://localhost:3013',
   opsbot: process.env.OPSBOT_URL || 'http://localhost:3014',
   marketdata: process.env.MARKETDATA_URL || 'http://localhost:3020',
+  novaHub: process.env.NOVA_HUB_URL || 'http://localhost:3030',
 };
 
 // Route to required scopes mapping
@@ -78,7 +79,9 @@ const PREMIUM_FEATURES: Record<string, string> = {
   '/v1/trade/paper-trades': 'paper_trading',
   '/v1/watchlists': 'watchlists',
   '/v1/signals': 'alerts',
-  '/v1/market/': 'scanner',
+  // NOTE: Basic market data (quotes/candles) must remain available after login.
+  // Paywall specific advanced features instead of the entire /v1/market/* surface.
+  '/v1/market/indicators': 'scanner',
 };
 
 // Routes that don't require Stripe webhook auth
@@ -103,12 +106,24 @@ app.use(express.json({ limit: '1mb' })); // Limit payload size
 // SECURITY HEADERS MIDDLEWARE
 // ==========================================================================
 const ALLOWED_ORIGINS = [
+  // Local dev (explicit)
   'http://localhost:3000',
   'http://localhost:3100',
+
+  // Production
   'https://novanexus-ai.com',
   'https://www.novanexus-ai.com',
   'https://novanexus-ai.vercel.app',
 ];
+
+function isLocalhostOrigin(origin: string): boolean {
+  try {
+    const u = new URL(origin);
+    return u.hostname === 'localhost' || u.hostname === '127.0.0.1';
+  } catch {
+    return false;
+  }
+}
 
 app.use((req: Request, res: Response, next: NextFunction) => {
   // Security headers
@@ -129,7 +144,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
     "script-src 'self' 'unsafe-inline' 'unsafe-eval'; " +
     "style-src 'self' 'unsafe-inline'; " +
     "img-src 'self' data: https:; " +
-    "connect-src 'self' https://api.novanexus-ai.com https://api.alpaca.markets wss:; " +
+    "connect-src 'self' https://*.railway.app https://*.up.railway.app https://api.alpaca.markets wss:; " +
     "frame-ancestors 'none';"
   );
   
@@ -139,9 +154,12 @@ app.use((req: Request, res: Response, next: NextFunction) => {
 // CORS middleware with origin validation
 app.use((req: Request, res: Response, next: NextFunction) => {
   const origin = req.headers.origin;
+
+  // NOTE: When we reflect Origin dynamically, ensure caches don't mix origins.
+  res.setHeader('Vary', 'Origin');
   
   // Check if origin is allowed
-  if (origin && (ALLOWED_ORIGINS.includes(origin) || origin.includes('vercel.app'))) {
+  if (origin && (isLocalhostOrigin(origin) || ALLOWED_ORIGINS.includes(origin) || origin.includes('vercel.app'))) {
     res.setHeader('Access-Control-Allow-Origin', origin);
   } else if (!origin) {
     // Allow requests without origin (server-to-server, curl, etc)
@@ -442,6 +460,11 @@ async function proxyRequestRewrite(targetUrl: string, targetPath: string, req: R
       res.setHeader('Content-Type', contentType);
     }
 
+    const contentDisposition = response.headers.get('content-disposition');
+    if (contentDisposition) {
+      res.setHeader('Content-Disposition', contentDisposition);
+    }
+
     if (contentType?.includes('application/json')) {
       const data = await response.json();
       res.status(response.status).json(data);
@@ -488,6 +511,11 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
     const contentType = response.headers.get('content-type');
     if (contentType) {
       res.setHeader('Content-Type', contentType);
+    }
+
+    const contentDisposition = response.headers.get('content-disposition');
+    if (contentDisposition) {
+      res.setHeader('Content-Disposition', contentDisposition);
     }
 
     if (contentType?.includes('application/json')) {
@@ -679,6 +707,31 @@ app.all('/v1/proposals*', requireScopes(['research.read']), (req: Request, res: 
 // Ops routes -> OpsBot
 app.all('/v1/ops/*', requireScopes(['ops.read']), (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.opsbot, req, res);
+});
+
+// Nova Hub routes -> Nova Hub service (Journal / Backtests / Thesis / Portfolio)
+app.all('/v1/journal*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/backtest*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/thesis*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/portfolio*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/alerts*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/dashboard/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
 // Market data routes -> MarketData service

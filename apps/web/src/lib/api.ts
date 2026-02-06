@@ -7,38 +7,17 @@
 // 3. We need to detect the actual runtime environment
 
 function getApiBase(): string {
-  // Explicit env var always wins
+  // NEXT_PUBLIC_API_URL is the ONLY source of truth for production.
+  // Do NOT auto-detect api.novanexus-ai.com - that domain uses Cloudflare Tunnel
+  // which is unreliable. Production must use Railway/Render URL set in Vercel env vars.
   if (process.env.NEXT_PUBLIC_API_URL) {
     return process.env.NEXT_PUBLIC_API_URL;
   }
   
-  // Client-side: detect from current URL
-  if (typeof window !== 'undefined') {
-    const hostname = window.location.hostname;
-    
-    // Production domains
-    if (hostname === 'novanexus-ai.com' || 
-        hostname === 'www.novanexus-ai.com' ||
-        hostname.endsWith('.vercel.app')) {
-      return 'https://api.novanexus-ai.com';
-    }
-  }
-  
-  // Development fallback
+  // Development fallback only
   return 'http://localhost:3000';
 }
 
-function isProductionEnv(): boolean {
-  if (typeof window === 'undefined') return false;
-  const hostname = window.location.hostname;
-  return hostname === 'novanexus-ai.com' || 
-         hostname === 'www.novanexus-ai.com' ||
-         hostname.endsWith('.vercel.app');
-}
-
-function getTradebotUrl(): string {
-  return isProductionEnv() ? getApiBase() : 'http://localhost:3010';
-}
 
 interface ApiResponse<T> {
   success: boolean;
@@ -106,18 +85,49 @@ class ApiClient {
         body: body ? JSON.stringify(body) : undefined,
       });
 
-      const data = await response.json();
-
-      // Handle token expiry
+      // Handle token expiry (retry once after refresh)
       if (response.status === 401 && this.refreshToken && !options?.skipAuth) {
         const refreshed = await this.refreshAccessToken();
         if (refreshed) {
-          // Retry the request with new token
           return this.request(method, path, body, options);
         }
       }
 
-      return data;
+      const contentType = response.headers.get('content-type') || '';
+      let data: unknown = null;
+
+      if (contentType.includes('application/json')) {
+        data = await response.json().catch(() => null);
+      } else {
+        const text = await response.text().catch(() => '');
+        try {
+          data = JSON.parse(text);
+        } catch {
+          data = null;
+        }
+
+        if (!data) {
+          return {
+            success: false,
+            error: {
+              code: 'BAD_RESPONSE',
+              message: `Unexpected response from API (HTTP ${response.status})`,
+            },
+          };
+        }
+      }
+
+      if (!data || typeof data !== 'object' || typeof (data as any).success !== 'boolean') {
+        return {
+          success: false,
+          error: {
+            code: 'BAD_RESPONSE',
+            message: `Invalid API response shape (HTTP ${response.status})`,
+          },
+        };
+      }
+
+      return data as ApiResponse<T>;
     } catch (error) {
       console.error('API request failed:', error);
       return {
@@ -136,9 +146,12 @@ class ApiClient {
         body: JSON.stringify({ refreshToken: this.refreshToken }),
       });
 
-      const data = await response.json();
+      const contentType = response.headers.get('content-type') || '';
+      const data: any = contentType.includes('application/json')
+        ? await response.json().catch(() => null)
+        : null;
 
-      if (data.success && data.data) {
+      if (data?.success && data?.data?.accessToken && data?.data?.refreshToken) {
         this.setTokens(data.data.accessToken, data.data.refreshToken);
         return true;
       }
@@ -184,6 +197,22 @@ class ApiClient {
       role: string;
       scopes: string[];
     }>('GET', '/v1/me');
+  }
+
+  // Billing endpoints
+  async getBillingEntitlement() {
+    return this.request<{
+      entitlement: {
+        plan: 'FREE' | 'LITE' | 'PRO';
+        status: 'ACTIVE' | 'CANCELED' | 'PAST_DUE' | 'TRIALING';
+        currentPeriodEnd: string | null;
+        features: string[];
+      };
+    }>('GET', '/v1/billing/entitlement');
+  }
+
+  async createBillingPortalSession() {
+    return this.request<{ url: string }>('POST', '/v1/billing/portal');
   }
 
   // Orchestrator endpoints
@@ -396,11 +425,11 @@ class ApiClient {
       quote: {
         symbol: string;
         price: number;
-        change: number;
-        changePercent: number;
-        volume: number;
-        bid: number;
-        ask: number;
+        change: number | null;
+        changePercent: number | null;
+        volume: number | null;
+        bid: number | null;
+        ask: number | null;
         timestamp: string;
         source: string;
       };
@@ -412,11 +441,13 @@ class ApiClient {
       quotes: Array<{
         symbol: string;
         price: number;
-        change: number;
-        changePercent: number;
-        volume: number;
+        change: number | null;
+        changePercent: number | null;
+        volume: number | null;
         timestamp: string;
+        source?: string;
       }>;
+      unavailableSymbols?: string[];
     }>('POST', '/v1/market/quotes', { symbols });
   }
 
@@ -424,68 +455,184 @@ class ApiClient {
     return this.request<{
       indicators: {
         symbol: string;
-        rsi: number;
-        sma20: number;
-        sma50: number;
-        sma200: number;
-        macd: { value: number; signal: number; histogram: number };
-        vwap: number;
+        rsi: number | null;
+        adx?: number | null;
+        plusDI?: number | null;
+        minusDI?: number | null;
+        sma20: number | null;
+        sma50: number | null;
+        sma200: number | null;
+        macd: { value: number; signal: number; histogram: number } | null;
+        vwap: number | null;
+        asOf?: string | null;
+        computedAt?: string;
+        provider?: string;
       };
     }>('GET', `/v1/market/indicators/${symbol}`);
   }
 
+  // ==========================================================================
+  // Nova Hub (Journal / Backtests / Trade Ideas)
+  // ==========================================================================
+
+  async getJournal(params?: {
+    symbol?: string;
+    status?: string;
+    strategy?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const qs = new URLSearchParams();
+    if (params?.symbol) qs.set('symbol', params.symbol);
+    if (params?.status) qs.set('status', params.status);
+    if (params?.strategy) qs.set('strategy', params.strategy);
+    if (typeof params?.limit === 'number') qs.set('limit', String(params.limit));
+    if (typeof params?.offset === 'number') qs.set('offset', String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+
+    return this.request<{
+      entries: Array<{
+        id: string;
+        symbol: string;
+        direction: string;
+        entryPrice: number;
+        exitPrice: number | null;
+        positionSize: number;
+        entryDate: string;
+        exitDate: string | null;
+        status: string;
+        thesis: string | null;
+        notes: string | null;
+        strategyTag: string | null;
+        pnl: number | null;
+        pnlPercent: number | null;
+        createdAt: string;
+      }>;
+      metrics: {
+        totalTrades: number;
+        winningTrades: number;
+        winRate: number;
+        totalPnl: number;
+        avgPnlPercent: number;
+      };
+    }>('GET', `/v1/journal${query}`);
+  }
+
+  async createJournalEntry(entry: {
+    symbol: string;
+    direction: string;
+    entryPrice: number;
+    exitPrice?: number | null;
+    positionSize: number;
+    entryDate: string;
+    exitDate?: string | null;
+    thesis?: string | null;
+    notes?: string | null;
+    strategyTag?: string | null;
+    paperTradeId?: string | null;
+  }) {
+    return this.request<{ entry: unknown }>('POST', '/v1/journal', entry);
+  }
+
+  async getJournalStreak() {
+    return this.request<{ currentStreak: number; longestStreak: number; totalDays: number }>('GET', '/v1/journal/streak');
+  }
+
+  async getBacktests() {
+    return this.request<{
+      results: Array<{
+        id: string;
+        name: string;
+        symbol: string;
+        strategyType: string;
+        totalReturnPct: number;
+        winRate: number;
+        sharpeRatio: number;
+        totalTrades: number;
+        createdAt: string;
+      }>;
+    }>('GET', '/v1/backtest');
+  }
+
+  async runBacktest(params: {
+    symbol: string;
+    strategyType: string;
+    startDate: string;
+    endDate: string;
+    initialCapital?: number;
+    params?: Record<string, number>;
+    name?: string;
+  }) {
+    return this.request<{ result: unknown; disclaimer?: string }>('POST', '/v1/backtest', params);
+  }
+
+  async getTradeIdeas(status?: string) {
+    const query = status ? `?status=${encodeURIComponent(status)}` : '';
+    return this.request<{ theses: any[] }>('GET', `/v1/thesis${query}`);
+  }
+
+  async createTradeIdea(params: {
+    symbol: string;
+    direction: 'LONG' | 'SHORT';
+    entryPrice: number;
+    targetPrice?: number;
+    stopLoss?: number;
+    thesisText: string;
+    reasoning?: string[];
+  }) {
+    return this.request<{ thesis: any }>('POST', '/v1/thesis', params);
+  }
+
+  // Watchlists (Tradebot)
   async getWatchlistQuotes(watchlistId: string = 'default') {
-    return this.tradebotRequest<{
+    return this.request<{
       watchlist: { id: string; name: string; symbols: string[] };
       quotes: Array<{
         symbol: string;
         price: number;
-        change: number;
-        changePercent: number;
-        volume: number;
+        change: number | null;
+        changePercent: number | null;
+        volume: number | null;
+        timestamp?: string;
+        source?: string;
       }>;
-    }>('GET', `/api/watchlists/${watchlistId}/quotes`);
+    }>('GET', `/v1/watchlists/${watchlistId}/quotes`);
   }
 
-  // Watchlist management
+  // Watchlist management (via gateway)
   async addToWatchlist(watchlistId: string, symbol: string) {
-    return this.tradebotRequest<{ watchlist: any }>(
-      'POST',
-      `/api/watchlists/${watchlistId}/symbols`,
-      { symbol }
-    );
+    return this.request<{ watchlist: any }>('POST', `/v1/watchlists/${watchlistId}/symbols`, { symbol });
   }
 
   async removeFromWatchlist(watchlistId: string, symbol: string) {
-    return this.tradebotRequest<{ watchlist: any }>(
-      'DELETE',
-      `/api/watchlists/${watchlistId}/symbols/${symbol}`
-    );
+    return this.request<{ watchlist: any }>('DELETE', `/v1/watchlists/${watchlistId}/symbols/${symbol}`);
   }
 
-  // Create paper trade from signal directly
-  async createPaperTradeFromSignal(signal: {
-    symbol: string;
-    type: 'bullish' | 'bearish';
-    entry: number;
-    target: number;
-    stopLoss: number;
-  }, quantity: number = 10) {
-    // First create a thesis
-    const thesisResult = await this.tradebotRequest<{ thesis: any }>(
-      'POST',
-      '/api/theses',
-      { symbol: signal.symbol }
-    );
+  // Create paper trade from signal directly (via gateway trade endpoints)
+  async createPaperTradeFromSignal(
+    signal: {
+      symbol: string;
+      type: 'bullish' | 'bearish';
+      entry: number;
+      target: number;
+      stopLoss: number;
+    },
+    quantity: number = 10
+  ) {
+    // First create a thesis card
+    const thesisResult = await this.createThesis(signal.symbol);
     if (!thesisResult.success || !thesisResult.data?.thesis) {
-      return { success: false, error: { code: 'THESIS_FAILED', message: 'Failed to create thesis' } };
+      return {
+        success: false,
+        error: {
+          code: 'THESIS_FAILED',
+          message: thesisResult.error?.message || 'Failed to create thesis',
+        },
+      };
     }
+
     // Then open a paper trade
-    return this.tradebotRequest<{ trade: any }>(
-      'POST',
-      '/api/trades',
-      { thesisId: thesisResult.data.thesis.id, quantity }
-    );
+    return this.createPaperTrade(thesisResult.data.thesis.id, quantity);
   }
 
   // Trade endpoints
@@ -496,7 +643,13 @@ class ApiClient {
         signal: string;
         score: number;
         indicators: Record<string, unknown>;
-        quote: { symbol: string; price: number; change: number; changePercent: number; volume: number };
+        quote: {
+          symbol: string;
+          price: number;
+          change: number | null;
+          changePercent: number | null;
+          volume: number | null;
+        };
       }>;
       scannedAt: string;
     }>('POST', '/v1/trade/scan', { watchlistId, filters });
@@ -558,7 +711,7 @@ class ApiClient {
         closedTrades: number;
         winRate: number;
         totalPnl: number;
-        portfolioValue: number;
+        portfolioValue: number | null;
       };
       portfolio: { cash: number; positions: Record<string, number> };
     }>('GET', '/v1/trade/paper-trades');
@@ -819,50 +972,29 @@ class ApiClient {
   }
 
   // ==========================================================================
-  // Tradebot Direct Endpoints
+  // Trade / Nexus / Alpaca / AI Screener (via Gateway)
   // ==========================================================================
-
-  private async tradebotRequest<T>(
-    method: string,
-    path: string,
-    body?: unknown
-  ): Promise<ApiResponse<T>> {
-    try {
-      const isProd = isProductionEnv();
-      const baseUrl = getTradebotUrl();
-      // In production, convert /api/* to /v1/* for gateway
-      const finalPath = isProd ? path.replace('/api/', '/v1/').replace('/api', '/v1') : path;
-      const response = await fetch(`${baseUrl}${finalPath}`, {
-        method,
-        headers: { 'Content-Type': 'application/json' },
-        body: body ? JSON.stringify(body) : undefined,
-      });
-      return await response.json();
-    } catch (error) {
-      console.error('Tradebot request failed:', error);
-      return { success: false, error: { code: 'NETWORK_ERROR', message: 'Network request failed' } };
-    }
-  }
+  // NOTE: Client traffic must go through NEXT_PUBLIC_API_URL (gateway). Do not call service ports directly.
 
   // Alpaca Trading
   async getAlpacaStatus() {
-    return this.tradebotRequest<{ enabled: boolean; mode: string }>('GET', '/api/alpaca/status');
+    return this.request<{ enabled: boolean; endpoint: string }>('GET', '/v1/alpaca/status');
   }
 
   async getAlpacaAccount() {
-    return this.tradebotRequest<{ account: any }>('GET', '/api/alpaca/account');
+    return this.request<{ account: any }>('GET', '/v1/alpaca/account');
   }
 
   async getAlpacaPositions() {
-    return this.tradebotRequest<{ positions: any[] }>('GET', '/api/alpaca/positions');
+    return this.request<{ positions: any[] }>('GET', '/v1/alpaca/positions');
   }
 
   async getAlpacaOrders(status: 'open' | 'closed' | 'all' = 'all') {
-    return this.tradebotRequest<{ orders: any[] }>('GET', `/api/alpaca/orders?status=${status}`);
+    return this.request<{ orders: any[] }>('GET', `/v1/alpaca/orders?status=${status}`);
   }
 
   async placeAlpacaOrder(params: { symbol: string; qty: number; side: 'buy' | 'sell'; type?: string }) {
-    return this.tradebotRequest<{ order: any }>('POST', '/api/alpaca/orders', {
+    return this.request<{ order: any }>('POST', '/v1/alpaca/orders', {
       ...params,
       type: params.type || 'market',
       time_in_force: 'day',
@@ -871,58 +1003,64 @@ class ApiClient {
 
   // Market Scanner
   async scanMarket(watchlistId: string = 'default', filters?: any) {
-    return this.tradebotRequest<{ results: any[]; scannedAt: string }>('POST', '/api/scan', { watchlistId, filters });
+    return this.request<{ results: any[]; scannedAt: string }>('POST', '/v1/trade/scan', { watchlistId, filters });
   }
 
+  // Watchlists
   async getWatchlists() {
-    return this.tradebotRequest<{ watchlists: any[] }>('GET', '/api/watchlists');
+    return this.request<{ watchlists: any[] }>('GET', '/v1/watchlists');
   }
 
   // AI Screener
   async getAIScreenerStatus() {
-    return this.tradebotRequest<{ ready: boolean; openai: boolean; polygon: boolean }>('GET', '/api/ai-screener/status');
+    return this.request<{ ready: boolean; openai: boolean; polygon: boolean }>('GET', '/v1/ai-screener/status');
   }
 
   async runAIScreener(params?: { maxStocks?: number; minConfidence?: number; signalType?: string }) {
-    return this.tradebotRequest<{ signals: any[]; count: number }>('POST', '/api/ai-screener/scan', params || {});
+    return this.request<{ signals: any[]; count: number }>('POST', '/v1/ai-screener/scan', params || {});
   }
 
   async analyzeStockWithAI(symbol: string) {
-    return this.tradebotRequest<{ stock: any; indicators: any; signal: any }>('POST', '/api/ai-screener/analyze', { symbol });
+    return this.request<{ stock: any; indicators: any; signal: any }>('POST', '/v1/ai-screener/analyze', { symbol });
   }
 
   // Nova Nexus AI
   async getNexusStatus() {
-    return this.tradebotRequest<{ status: any }>('GET', '/api/nexus/status');
+    return this.request<{ status: any }>('GET', '/v1/nexus/status');
   }
 
   async initializeNexus() {
-    return this.tradebotRequest<{ message: string; status: any }>('POST', '/api/nexus/initialize');
+    return this.request<{ message: string; status: any }>('POST', '/v1/nexus/initialize');
   }
 
   async analyzeTradeWithNexus(params: { symbol: string; signal: string; price: number; indicators?: any; confidence?: number }) {
-    return this.tradebotRequest<{ decision: any; card: any; message: string }>('POST', '/api/nexus/analyze', params);
+    return this.request<{ decision: any; card: any; message: string }>('POST', '/v1/nexus/analyze', params);
   }
 
   async executeNexusTrade(params: { symbol: string; signal: string; price: number; autoExecute?: boolean }) {
-    return this.tradebotRequest<{ result: any; message: string }>('POST', '/api/nexus/execute', params);
+    return this.request<{ result: any; message: string }>('POST', '/v1/nexus/execute', params);
   }
 
   async runAutonomousScan(params?: { watchlistId?: string; maxTrades?: number }) {
-    return this.tradebotRequest<{ scanned: number; opportunities: number; executions: any[] }>('POST', '/api/nexus/autonomous-scan', params || {});
+    return this.request<{ scanned: number; opportunities: number; executions: any[] }>(
+      'POST',
+      '/v1/nexus/autonomous-scan',
+      params || {}
+    );
   }
 
   async getNexusLedger(limit: number = 50) {
-    return this.tradebotRequest<{ ledger: any[] }>('GET', `/api/nexus/ledger?limit=${limit}`);
+    return this.request<{ ledger: any[] }>('GET', `/v1/nexus/ledger?limit=${limit}`);
   }
 
-  // Thesis Generation
-  async generateThesis(symbol: string) {
-    return this.tradebotRequest<{ thesis: any }>('POST', '/api/thesis/generate', { symbol });
+  // Nova Hub thesis generation (server-side; uses real market data)
+  async generateThesis(symbol: string, context?: string) {
+    return this.request<{ thesis: any; disclaimer?: string }>('POST', '/v1/thesis/generate', { symbol, context });
   }
 
+  // TradeBot thesis cards (scanner-generated)
   async getActiveTheses() {
-    return this.tradebotRequest<{ theses: any[] }>('GET', '/api/theses');
+    return this.request<{ theses: any[] }>('GET', '/v1/trade/theses');
   }
 }
 

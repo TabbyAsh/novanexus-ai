@@ -1,18 +1,19 @@
-# Nova Hub Lite Operations Runbook
+# NovaNexus AI - Runbook
+
+> Local development setup, troubleshooting, and smoke testing.
 
 ## Quick Reference
 
 | Action | Command |
 |--------|--------|
-| Start Nova Hub Lite | `npm run nova:up` |
-| Stop Nova Hub Lite | `npm run nova:down` |
+| Start Full Stack | `docker compose up -d` |
+| Start MVP Only | `npm run nova:mvp:up` |
+| Stop Services | `docker compose down` |
+| Stop + Delete Data | `docker compose down -v` |
+| View Logs | `docker compose logs -f` |
 | Smoke Test | `npm run nova:smoke` |
-| Run All Tests | `npm test` |
-| View logs | `docker-compose -f docker-compose.mvp.yml logs -f` |
-| Run migrations | `npm run db:migrate` |
-| Health check | `curl http://localhost:3000/health` |
+| Health Check | `curl http://localhost:3000/health` |
 | Metrics | `curl http://localhost:3000/metrics` |
-| Verify event chain | `curl http://localhost:3000/v1/events/chain/verify` |
 
 ## Required Environment Variables
 
@@ -280,6 +281,153 @@ curl -X POST http://localhost:3000/v1/ops/demo/reset \
 ### Emergency Contacts
 - System Owner: [Configure in .env]
 - On-Call: [Configure in .env]
+
+## Smoke Test Checklist
+
+Run this after setup to verify everything works end-to-end:
+
+### 1. Health Checks
+
+```bash
+# All should return {"status": "healthy", ...}
+curl http://localhost:3000/health  # Gateway
+curl http://localhost:3001/health  # Auth
+curl http://localhost:3020/health  # MarketData
+curl http://localhost:3030/health  # Nova Hub
+curl http://localhost:3006/health  # Billing
+```
+
+### 2. User Registration
+
+```bash
+curl -X POST http://localhost:3000/v1/auth/register \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"TestPass123!","orgName":"Test Org"}'
+```
+
+Expected: `{"success":true,"data":{"user":{...},"accessToken":"..."}}`
+
+### 3. User Login
+
+```bash
+curl -X POST http://localhost:3000/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"test@example.com","password":"TestPass123!"}'
+```
+
+Expected: `{"success":true,"data":{"accessToken":"...","refreshToken":"..."}}`
+
+### 4. Get Current User
+
+```bash
+# Replace TOKEN with accessToken from login
+curl http://localhost:3000/v1/me \
+  -H "Authorization: Bearer TOKEN"
+```
+
+Expected: `{"success":true,"data":{"user":{...},"org":{...}}}`
+
+### 5. Market Quote (requires API key)
+
+```bash
+curl http://localhost:3000/v1/market/quote/AAPL \
+  -H "Authorization: Bearer TOKEN"
+```
+
+Expected (with API key): `{"success":true,"data":{"quote":{"symbol":"AAPL","price":...}}}`
+
+Expected (without): `{"success":false,"error":{"code":"MARKETDATA_NOT_CONFIGURED",...}}`
+
+### 6. Create Journal Entry
+
+```bash
+curl -X POST http://localhost:3000/v1/journal \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol":"AAPL",
+    "direction":"BUY",
+    "entryPrice":185.50,
+    "positionSize":10,
+    "entryDate":"2026-02-06T10:00:00Z",
+    "thesis":"Testing the journal feature"
+  }'
+```
+
+Expected: `{"success":true,"data":{"entry":{...}}}`
+
+### 7. Run Backtest
+
+```bash
+curl -X POST http://localhost:3000/v1/backtest \
+  -H "Authorization: Bearer TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "symbol":"SPY",
+    "strategyType":"sma_crossover",
+    "startDate":"2025-01-01",
+    "endDate":"2025-12-31",
+    "name":"Test Backtest"
+  }'
+```
+
+Expected: `{"success":true,"data":{"result":{...},"disclaimer":"..."}}`
+
+### 8. Pricing Plans
+
+```bash
+curl http://localhost:3000/v1/billing/pricing
+```
+
+Expected: `{"success":true,"data":{"plans":[...]}}`
+
+### 9. Logout
+
+```bash
+curl -X POST http://localhost:3000/v1/auth/logout \
+  -H "Authorization: Bearer TOKEN"
+```
+
+Expected: `{"success":true,"data":{"message":"Logged out successfully"}}`
+
+### Automated Smoke Test
+
+```bash
+npm run nova:smoke
+# Or with wait for services:
+npm run nova:smoke:wait
+```
+
+### Frontend Verification
+
+1. Open http://localhost:8080 (or :3100 for dev mode)
+2. Click "Login" or "Sign Up"
+3. Register a new account
+4. Verify redirect to dashboard
+5. Check that "Systems Online" appears in header
+6. Navigate to Journal, Backtest, Settings
+7. Verify no JavaScript errors in console
+
+## Production Smoke Test
+
+Repeat the same tests against production:
+
+```bash
+# Replace with production URL
+API_URL=https://api.novanexus-ai.com
+
+curl $API_URL/health
+curl -X POST $API_URL/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"your@email.com","password":"YourPass123!"}'
+```
+
+Verify:
+- No "Network request failed" errors
+- Real market data displays (not mock)
+- Journal entries persist after refresh
+- Backtest uses real historical data
+- No 404s on any pages
 
 ## Version History
 

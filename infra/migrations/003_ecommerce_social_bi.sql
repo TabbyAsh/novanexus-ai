@@ -1,6 +1,10 @@
 -- Nova Enterprises: E-Commerce, Social, and Business Intelligence Schema
 -- Migration 003
 
+-- Enable required extensions
+-- gen_random_uuid() is provided by pgcrypto
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
+
 -- ============================================
 -- E-COMMERCE: Products & Inventory
 -- ============================================

@@ -33,27 +33,6 @@ const features = [
   },
 ];
 
-const stats = [
-  { value: '$200K+', label: 'Trading Capital', suffix: '' },
-  { value: '24/7', label: 'Market Monitoring', suffix: '' },
-  { value: '100+', label: 'Trading Signals Daily', suffix: '' },
-  { value: '99.9%', label: 'Uptime', suffix: '' },
-];
-
-function AnimatedCounter({ value }: { value: string }) {
-  return (
-    <motion.span
-      initial={{ opacity: 0, scale: 0.5 }}
-      whileInView={{ opacity: 1, scale: 1 }}
-      transition={{ duration: 0.5, type: 'spring' }}
-      viewport={{ once: true }}
-      className="text-4xl md:text-5xl font-bold"
-    >
-      <GradientText>{value}</GradientText>
-    </motion.span>
-  );
-}
-
 function Navbar() {
   return (
     <motion.nav
@@ -179,32 +158,6 @@ function HeroSection() {
             </svg>
           </motion.div>
         </motion.div>
-      </div>
-    </section>
-  );
-}
-
-function StatsSection() {
-  return (
-    <section className="relative py-20 px-6">
-      <div className="max-w-6xl mx-auto">
-        <GlassCard hover={false} className="!p-8 md:!p-12">
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-8">
-            {stats.map((stat, i) => (
-              <motion.div
-                key={stat.label}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: i * 0.1 }}
-                viewport={{ once: true }}
-                className="text-center"
-              >
-                <AnimatedCounter value={stat.value} />
-                <p className="text-gray-400 mt-2">{stat.label}</p>
-              </motion.div>
-            ))}
-          </div>
-        </GlassCard>
       </div>
     </section>
   );
@@ -351,7 +304,6 @@ export default function HomePage() {
       <ParticleField />
       <Navbar />
       <HeroSection />
-      <StatsSection />
       <FeaturesSection />
       <MissionSection />
       <CTASection />

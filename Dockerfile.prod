@@ -1,0 +1,55 @@
+# Production Dockerfile for NovaNexus Backend
+# Runs all backend services in a single container using PM2
+#
+# Build: docker build -f Dockerfile.prod -t nova-backend .
+# Run:   docker run -p 3000:3000 --env-file .env nova-backend
+
+FROM node:20-alpine AS builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apk add --no-cache python3 make g++
+
+# Copy package files first for better caching
+COPY package.json package-lock.json turbo.json ./
+
+# Copy all workspaces
+COPY libs ./libs
+COPY services ./services
+COPY apps ./apps
+
+# Install all dependencies (need devDeps for build)
+ENV NODE_ENV=development
+RUN npm ci --legacy-peer-deps
+
+# Build all services
+RUN npm run build
+
+# ─────────────────────────────────────────────────────────────────
+FROM node:20-alpine AS runner
+
+WORKDIR /app
+
+# Install PM2 globally for process management
+RUN npm install -g pm2
+
+# Copy built artifacts
+COPY --from=builder /app/package.json ./
+COPY --from=builder /app/package-lock.json ./
+COPY --from=builder /app/node_modules ./node_modules
+COPY --from=builder /app/libs ./libs
+COPY --from=builder /app/services ./services
+
+# Copy PM2 ecosystem file
+COPY ecosystem.config.js ./
+
+ENV NODE_ENV=production
+EXPOSE 3000
+
+# Health check on gateway
+HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
+  CMD wget --spider -q http://localhost:3000/health || exit 1
+
+# Start all services with PM2
+CMD ["pm2-runtime", "ecosystem.config.js"]

@@ -26,9 +26,9 @@ interface ScanResult {
   quote: {
     symbol: string;
     price: number;
-    change: number;
-    changePercent: number;
-    volume: number;
+    change: number | null;
+    changePercent: number | null;
+    volume: number | null;
   };
 }
 
@@ -68,7 +68,7 @@ interface TradeStats {
   closedTrades: number;
   winRate: number;
   totalPnl: number;
-  portfolioValue: number;
+  portfolioValue: number | null;
 }
 
 export default function TradePage() {
@@ -279,9 +279,13 @@ export default function TradePage() {
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-400">Change</span>
-                      <span className={result.quote.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}>
-                        {result.quote.changePercent >= 0 ? '+' : ''}{result.quote.changePercent.toFixed(2)}%
-                      </span>
+                      {typeof result.quote.changePercent === 'number' && Number.isFinite(result.quote.changePercent) ? (
+                        <span className={result.quote.changePercent >= 0 ? 'text-green-400' : 'text-red-400'}>
+                          {result.quote.changePercent >= 0 ? '+' : ''}{result.quote.changePercent.toFixed(2)}%
+                        </span>
+                      ) : (
+                        <span className="text-gray-400">—</span>
+                      )}
                     </div>
                     <div className="flex justify-between text-sm">
                       <span className="text-gray-400">Score</span>

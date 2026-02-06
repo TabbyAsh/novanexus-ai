@@ -63,6 +63,23 @@ function extractAuth(req: Request): JWTPayload | null {
   return verifyToken(authHeader.substring(7));
 }
 
+function parseJsonOptional<T>(value: unknown): T | undefined {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return undefined;
+    }
+  }
+  return value as T;
+}
+
+function parseJsonValue<T>(value: unknown, fallback: T): T {
+  const parsed = parseJsonOptional<T>(value);
+  return parsed === undefined ? fallback : parsed;
+}
+
 // Event emission helper
 async function emitEvent(
   orgId: string,
@@ -92,11 +109,11 @@ async function emitEvent(
 
 // Kill switch helper
 async function getKillSwitchState(): Promise<KillSwitchState> {
-  const result = await queryOne<{ value_json: string }>(
+  const result = await queryOne<{ value_json: unknown }>(
     "SELECT value_json FROM system_state WHERE key = 'kill_switch'"
   );
   if (!result) return { enabled: false };
-  return JSON.parse(result.value_json);
+  return parseJsonValue<KillSwitchState>(result.value_json, { enabled: false });
 }
 
 async function setKillSwitchState(state: KillSwitchState): Promise<void> {
@@ -177,7 +194,7 @@ app.post('/v1/goals', async (req: Request, res: Response) => {
       createdBy: result.created_by,
       title: result.title,
       intent: result.intent,
-      constraints: JSON.parse(result.constraints_json || '{}'),
+      constraints: parseJsonValue<Record<string, unknown>>(result.constraints_json, {}),
       status: result.status as GoalStatus,
       createdAt: result.created_at,
       updatedAt: result.updated_at,
@@ -229,7 +246,7 @@ app.get('/v1/goals/:id', async (req: Request, res: Response) => {
       createdBy: result.created_by,
       title: result.title,
       intent: result.intent,
-      constraints: JSON.parse(result.constraints_json || '{}'),
+      constraints: parseJsonValue<Record<string, unknown>>(result.constraints_json, {}),
       status: result.status,
       createdAt: result.created_at,
       updatedAt: result.updated_at,
@@ -275,7 +292,7 @@ app.get('/v1/goals', async (req: Request, res: Response) => {
       createdBy: row.created_by,
       title: row.title,
       intent: row.intent,
-      constraints: JSON.parse(row.constraints_json || '{}'),
+      constraints: parseJsonValue<Record<string, unknown>>(row.constraints_json, {}),
       status: row.status,
       createdAt: row.created_at,
       updatedAt: row.updated_at,
@@ -394,8 +411,8 @@ app.post('/v1/tasks', async (req: Request, res: Response) => {
       assignedToBot: result.assigned_to_bot,
       type: result.type,
       status: result.status,
-      input: JSON.parse(result.input_json || '{}'),
-      output: result.output_json ? JSON.parse(result.output_json) : undefined,
+      input: parseJsonValue<Record<string, unknown>>(result.input_json, {}),
+      output: parseJsonOptional<Record<string, unknown>>(result.output_json),
       createdAt: result.created_at,
       updatedAt: result.updated_at,
     };
@@ -457,8 +474,8 @@ app.get('/v1/tasks', async (req: Request, res: Response) => {
       assignedToBot: row.assigned_to_bot,
       type: row.type,
       status: row.status,
-      input: JSON.parse(row.input_json || '{}'),
-      output: row.output_json ? JSON.parse(row.output_json) : undefined,
+      input: parseJsonValue<Record<string, unknown>>(row.input_json, {}),
+      output: parseJsonOptional<Record<string, unknown>>(row.output_json),
       createdAt: row.created_at,
       updatedAt: row.updated_at,
     }));
@@ -583,7 +600,7 @@ app.get('/v1/approvals', async (req: Request, res: Response) => {
       status: row.status,
       requestedAt: row.requested_at,
       resolvedAt: row.resolved_at,
-      resolution: row.resolution_json ? JSON.parse(row.resolution_json) : undefined,
+      resolution: parseJsonOptional<Record<string, unknown>>(row.resolution_json),
     }));
 
     res.json({ success: true, data: { approvals } });
@@ -876,8 +893,8 @@ app.post('/v1/bots/register', async (req: Request, res: Response) => {
       botType: result.bot_type,
       instanceId: result.instance_id,
       status: result.status,
-      capabilities: JSON.parse(result.capabilities_json || '[]'),
-      permissions: JSON.parse(result.permissions_json || '[]'),
+      capabilities: parseJsonValue<string[]>(result.capabilities_json, []),
+      permissions: parseJsonValue<string[]>(result.permissions_json, []),
       lastHeartbeat: result.last_heartbeat,
       registeredAt: result.registered_at,
     };
@@ -919,8 +936,8 @@ app.get('/v1/bots', async (req: Request, res: Response) => {
       botType: row.bot_type,
       instanceId: row.instance_id,
       status: row.status,
-      capabilities: JSON.parse(row.capabilities_json || '[]'),
-      permissions: JSON.parse(row.permissions_json || '[]'),
+      capabilities: parseJsonValue<string[]>(row.capabilities_json, []),
+      permissions: parseJsonValue<string[]>(row.permissions_json, []),
       lastHeartbeat: row.last_heartbeat,
       registeredAt: row.registered_at,
     }));
@@ -1017,7 +1034,7 @@ app.get('/v1/bots/:id/tasks', async (req: Request, res: Response) => {
       type: row.type,
       priority: row.priority || 0,
       status: row.status,
-      inputJson: JSON.parse(row.input_json || '{}'),
+      inputJson: parseJsonValue<Record<string, unknown>>(row.input_json, {}),
       createdAt: row.created_at,
       startedAt: row.started_at,
     }));
@@ -1239,8 +1256,8 @@ app.get('/v1/tasks/:id', async (req: Request, res: Response) => {
       assignedToBot: result.assigned_to_bot,
       type: result.type,
       status: result.status,
-      input: JSON.parse(result.input_json || '{}'),
-      output: result.output_json ? JSON.parse(result.output_json) : undefined,
+      input: parseJsonValue<Record<string, unknown>>(result.input_json, {}),
+      output: parseJsonOptional<Record<string, unknown>>(result.output_json),
       createdAt: result.created_at,
       updatedAt: result.updated_at,
     };

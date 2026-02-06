@@ -4,7 +4,6 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import GlassCard, { GradientText } from '@/components/ui/GlassCard';
-import StatCard from '@/components/dashboard/StatCard';
 
 interface BacktestResult {
   totalTrades: number;
@@ -28,35 +27,14 @@ interface MonteCarloResult {
   expectedValue: number;
 }
 
-const mockBacktestResult: BacktestResult = {
-  totalTrades: 247,
-  winRate: 62.3,
-  avgWin: 342.50,
-  avgLoss: -198.75,
-  profitFactor: 1.87,
-  maxDrawdown: 8.4,
-  sharpeRatio: 1.92,
-  netProfit: 34250,
-  netProfitPercent: 34.25,
-};
-
-const mockMonteCarloResult: MonteCarloResult = {
-  percentile5: -12.5,
-  percentile25: 8.2,
-  percentile50: 22.4,
-  percentile75: 38.7,
-  percentile95: 68.3,
-  probabilityProfit: 78.4,
-  expectedValue: 24.6,
-};
 
 function StrategyBuilder() {
   const [strategy, setStrategy] = useState({
-    entryConditions: ['RSI < 30', 'Price > 50 SMA'],
-    exitConditions: ['RSI > 70', 'Price < 20 SMA'],
-    stopLoss: 5,
-    takeProfit: 15,
-    positionSize: 10,
+    entryConditions: [] as string[],
+    exitConditions: [] as string[],
+    stopLoss: '',
+    takeProfit: '',
+    positionSize: '',
   });
 
   return (
@@ -68,25 +46,33 @@ function StrategyBuilder() {
       <div className="space-y-4">
         <div>
           <label className="text-gray-400 text-sm mb-2 block">Entry Conditions</label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {strategy.entryConditions.map((condition, i) => (
-              <span key={i} className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm border border-green-500/30">
-                {condition}
-              </span>
-            ))}
-          </div>
+          {strategy.entryConditions.length === 0 ? (
+            <p className="text-gray-500 text-sm mb-2">No entry conditions set.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {strategy.entryConditions.map((condition, i) => (
+                <span key={i} className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm border border-green-500/30">
+                  {condition}
+                </span>
+              ))}
+            </div>
+          )}
           <button className="text-cyan-400 text-sm hover:text-cyan-300">+ Add condition</button>
         </div>
         
         <div>
           <label className="text-gray-400 text-sm mb-2 block">Exit Conditions</label>
-          <div className="flex flex-wrap gap-2 mb-2">
-            {strategy.exitConditions.map((condition, i) => (
-              <span key={i} className="px-3 py-1 rounded-full bg-red-500/20 text-red-400 text-sm border border-red-500/30">
-                {condition}
-              </span>
-            ))}
-          </div>
+          {strategy.exitConditions.length === 0 ? (
+            <p className="text-gray-500 text-sm mb-2">No exit conditions set.</p>
+          ) : (
+            <div className="flex flex-wrap gap-2 mb-2">
+              {strategy.exitConditions.map((condition, i) => (
+                <span key={i} className="px-3 py-1 rounded-full bg-red-500/20 text-red-400 text-sm border border-red-500/30">
+                  {condition}
+                </span>
+              ))}
+            </div>
+          )}
           <button className="text-cyan-400 text-sm hover:text-cyan-300">+ Add condition</button>
         </div>
         
@@ -96,7 +82,8 @@ function StrategyBuilder() {
             <input
               type="number"
               value={strategy.stopLoss}
-              onChange={(e) => setStrategy({ ...strategy, stopLoss: Number(e.target.value) })}
+              onChange={(e) => setStrategy({ ...strategy, stopLoss: e.target.value })}
+              placeholder="e.g., 5"
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
             />
           </div>
@@ -105,7 +92,8 @@ function StrategyBuilder() {
             <input
               type="number"
               value={strategy.takeProfit}
-              onChange={(e) => setStrategy({ ...strategy, takeProfit: Number(e.target.value) })}
+              onChange={(e) => setStrategy({ ...strategy, takeProfit: e.target.value })}
+              placeholder="e.g., 15"
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
             />
           </div>
@@ -114,7 +102,8 @@ function StrategyBuilder() {
             <input
               type="number"
               value={strategy.positionSize}
-              onChange={(e) => setStrategy({ ...strategy, positionSize: Number(e.target.value) })}
+              onChange={(e) => setStrategy({ ...strategy, positionSize: e.target.value })}
+              placeholder="e.g., 10"
               className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
             />
           </div>
@@ -191,7 +180,6 @@ function MonteCarloResults({ result }: { result: MonteCarloResult }) {
     <GlassCard hover={false} glowColor="pink">
       <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
         <span className="text-pink-400">🎲</span> Monte Carlo Simulation
-        <span className="text-gray-500 text-xs font-normal">(10,000 runs)</span>
       </h3>
       
       <div className="mb-6">
@@ -263,55 +251,27 @@ function MonteCarloResults({ result }: { result: MonteCarloResult }) {
   );
 }
 
-function EquityCurve() {
-  // Mock equity curve data points
-  const dataPoints = [
-    100, 102, 98, 105, 108, 103, 110, 115, 112, 118,
-    122, 119, 125, 130, 128, 134, 138, 135, 142, 148
-  ];
-  
-  const max = Math.max(...dataPoints);
-  const min = Math.min(...dataPoints);
-  const range = max - min;
-  
-  return (
-    <GlassCard hover={false} glowColor="green">
-      <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-        <span className="text-green-400">📈</span> Equity Curve
-      </h3>
-      
-      <div className="h-48 flex items-end gap-1">
-        {dataPoints.map((point, i) => {
-          const height = ((point - min) / range) * 100 + 20;
-          const isUp = i > 0 && point >= dataPoints[i - 1];
-          return (
-            <motion.div
-              key={i}
-              initial={{ height: 0 }}
-              animate={{ height: `${height}%` }}
-              transition={{ duration: 0.5, delay: i * 0.05 }}
-              className={`flex-1 rounded-t ${isUp ? 'bg-green-500' : 'bg-red-500'}`}
-            />
-          );
-        })}
-      </div>
-      
-      <div className="flex items-center justify-between mt-4 text-sm">
-        <span className="text-gray-400">Jan 2025</span>
-        <span className="text-gray-400">Present</span>
-      </div>
-    </GlassCard>
-  );
-}
 
 export default function SimulatorPage() {
   const [running, setRunning] = useState(false);
-  
-  const runSimulation = () => {
+  const [error, setError] = useState<string | null>(null);
+  const [backtest, setBacktest] = useState<BacktestResult | null>(null);
+  const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
+
+  const runSimulation = async () => {
     setRunning(true);
-    setTimeout(() => setRunning(false), 3000);
+    setError(null);
+
+    try {
+      // TODO: Wire to a seeded, reproducible simulation backend.
+      setBacktest(null);
+      setMonteCarlo(null);
+      setError('Simulation unavailable — backend not connected. No placeholder results are shown.');
+    } finally {
+      setRunning(false);
+    }
   };
-  
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
@@ -329,14 +289,14 @@ export default function SimulatorPage() {
               Backtest strategies and run Monte Carlo simulations to understand risk
             </p>
           </div>
-          
+
           <button
             onClick={runSimulation}
             disabled={running}
             className={`
               px-6 py-3 rounded-xl font-medium transition-all
-              ${running 
-                ? 'bg-purple-500/30 text-purple-300 cursor-not-allowed' 
+              ${running
+                ? 'bg-purple-500/30 text-purple-300 cursor-not-allowed'
                 : 'bg-gradient-to-r from-purple-500 to-pink-600 text-white hover:shadow-lg hover:shadow-purple-500/25'
               }
             `}
@@ -344,8 +304,19 @@ export default function SimulatorPage() {
             {running ? (
               <span className="flex items-center gap-2">
                 <svg className="w-5 h-5 animate-spin" fill="none" viewBox="0 0 24 24">
-                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
-                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  <circle
+                    className="opacity-25"
+                    cx="12"
+                    cy="12"
+                    r="10"
+                    stroke="currentColor"
+                    strokeWidth="4"
+                  ></circle>
+                  <path
+                    className="opacity-75"
+                    fill="currentColor"
+                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
+                  ></path>
                 </svg>
                 Running Simulation...
               </span>
@@ -354,7 +325,13 @@ export default function SimulatorPage() {
             )}
           </button>
         </motion.div>
-        
+
+        {error && (
+          <div className="backdrop-blur-xl bg-red-500/10 border border-red-500/30 rounded-xl p-4 text-red-200 text-sm">
+            {error}
+          </div>
+        )}
+
         {/* Strategy Builder */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -363,7 +340,7 @@ export default function SimulatorPage() {
         >
           <StrategyBuilder />
         </motion.div>
-        
+
         {/* Results Grid */}
         <div className="grid lg:grid-cols-2 gap-6">
           <motion.div
@@ -371,27 +348,40 @@ export default function SimulatorPage() {
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.2 }}
           >
-            <BacktestResults result={mockBacktestResult} />
+            {backtest ? (
+              <BacktestResults result={backtest} />
+            ) : (
+              <GlassCard hover={false} glowColor="purple">
+                <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                  <span className="text-purple-400">📊</span> Backtest Results
+                </h3>
+                <p className="text-gray-400 text-sm">
+                  Unavailable — no seeded backtest results have been produced yet.
+                </p>
+              </GlassCard>
+            )}
           </motion.div>
-          
+
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
             transition={{ delay: 0.3 }}
           >
-            <MonteCarloResults result={mockMonteCarloResult} />
+            {monteCarlo ? (
+              <MonteCarloResults result={monteCarlo} />
+            ) : (
+              <GlassCard hover={false} glowColor="pink">
+                <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                  <span className="text-pink-400">🎲</span> Monte Carlo Simulation
+                </h3>
+                <p className="text-gray-400 text-sm">
+                  Unavailable — simulation backend not connected. Runs must be seeded and reproducible.
+                </p>
+              </GlassCard>
+            )}
           </motion.div>
         </div>
-        
-        {/* Equity Curve */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.4 }}
-        >
-          <EquityCurve />
-        </motion.div>
-        
+
         {/* Tips */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -402,10 +392,10 @@ export default function SimulatorPage() {
           <div className="flex items-start gap-3">
             <span className="text-cyan-400 text-xl">💡</span>
             <div>
-              <p className="text-cyan-400 font-medium text-sm mb-1">Pro Tip</p>
+              <p className="text-cyan-400 font-medium text-sm mb-1">Simulation discipline</p>
               <p className="text-gray-400 text-sm">
-                A strategy with a Sharpe Ratio above 1.5 and win rate above 55% typically indicates a robust edge. 
-                Always consider the maximum drawdown—can you psychologically handle a {mockBacktestResult.maxDrawdown}% drawdown?
+                This page will only display results generated from explicit simulation runs. When unavailable, it shows
+                “Unavailable” states rather than fabricated numbers.
               </p>
             </div>
           </div>

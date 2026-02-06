@@ -1,0 +1,119 @@
+// PM2 Ecosystem Configuration for NovaNexus Production
+// Runs all backend services in a single container
+// Reference: https://pm2.keymetrics.io/docs/usage/application-declaration/
+
+module.exports = {
+  apps: [
+    {
+      name: 'gateway',
+      script: './services/gateway/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3000,
+        // Internal service URLs (same container, localhost)
+        AUTH_SERVICE_URL: 'http://localhost:3001',
+        ORCHESTRATOR_URL: 'http://localhost:3002',
+        EVENTBUS_URL: 'http://localhost:3003',
+        BILLING_URL: 'http://localhost:3006',
+        TRADEBOT_URL: 'http://localhost:3010',
+        MARKETDATA_URL: 'http://localhost:3020',
+        NOVA_HUB_URL: 'http://localhost:3030',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'auth',
+      script: './services/auth/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3001,
+        EVENTBUS_URL: 'http://localhost:3003',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'orchestrator',
+      script: './services/orchestrator/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3002,
+        EVENTBUS_URL: 'http://localhost:3003',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'eventbus',
+      script: './services/eventbus/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3003,
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'billing',
+      script: './services/billing/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3006,
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'tradebot',
+      script: './services/tradebot/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3010,
+        ORCHESTRATOR_URL: 'http://localhost:3002',
+        MARKETDATA_URL: 'http://localhost:3020',
+        EVENTBUS_URL: 'http://localhost:3003',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'marketdata',
+      script: './services/marketdata/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3020,
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'nova-hub',
+      script: './services/nova-hub/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3030,
+        MARKETDATA_URL: 'http://localhost:3020',
+        BILLING_URL: 'http://localhost:3006',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+  ],
+};

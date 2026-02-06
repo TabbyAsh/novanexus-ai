@@ -285,25 +285,20 @@ function ScanProgress({ status }: { status: ScanStatus }) {
       </div>
       
       <div className="relative h-4 bg-white/10 rounded-full overflow-hidden">
-        <motion.div
-          className="absolute inset-y-0 left-0 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 rounded-full"
-          initial={{ width: '0%' }}
-          animate={{ width: `${status.progress}%` }}
-          transition={{ duration: 0.5 }}
-        />
+        <div className="absolute inset-0 bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 opacity-60 animate-pulse" />
         <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/20 to-transparent animate-shimmer" />
       </div>
-      
+
       <div className="flex justify-between mt-2 text-xs text-gray-400">
-        <span>Scanned: {status.scannedCount}/{status.totalCount}</span>
-        <span>{status.progress.toFixed(0)}% Complete</span>
+        <span>Universe: {status.totalCount} symbols</span>
+        <span>Awaiting results…</span>
       </div>
     </motion.div>
   );
 }
 
 export default function ScreenerPage() {
-  const [signals, setSignals] = useState<Signal[]>([]);
+  const [signals, setSignals] = useState<Signal[] | null>(null);
   const [scanStatus, setScanStatus] = useState<ScanStatus>({
     scanning: false,
     progress: 0,
@@ -322,77 +317,29 @@ export default function ScreenerPage() {
   // Fetch real signals from the backend
   const runScan = useCallback(async () => {
     setScanStatus(s => ({ ...s, scanning: true, progress: 0, scannedCount: 0, foundSignals: 0, totalCount: settings.maxStocks }));
+    setSignals(null);
     setError(null);
     
-    // Simulate progress while scanning
-    const progressInterval = setInterval(() => {
-      setScanStatus(s => {
-        if (s.progress >= 95) return s;
-        const increment = Math.random() * 10;
-        return { 
-          ...s, 
-          progress: Math.min(95, s.progress + increment),
-          scannedCount: Math.floor((s.progress + increment) / 100 * s.totalCount),
-        };
-      });
-    }, 500);
-
     try {
       const data = await api.runAIScreener(settings);
-      
-      clearInterval(progressInterval);
-      
+
       if (data.success && data.data?.signals) {
         setSignals(data.data.signals);
         setLastScan(new Date().toISOString());
-        setScanStatus(s => ({ 
-          ...s, 
-          scanning: false, 
-          progress: 100, 
+        setScanStatus(s => ({
+          ...s,
+          scanning: false,
+          progress: 100,
           scannedCount: s.totalCount,
-          foundSignals: data.data!.signals.length 
+          foundSignals: data.data!.signals.length,
         }));
       } else {
-        throw new Error(data.error?.message || 'Unknown error');
+        throw new Error(data.error?.message || 'Scan failed');
       }
     } catch (err) {
-      clearInterval(progressInterval);
       setError((err as Error).message);
-      setScanStatus(s => ({ ...s, scanning: false, progress: 0 }));
-      
-      // Load demo data on error
-      setSignals([
-        {
-          symbol: 'NVDA',
-          name: 'NVIDIA Corporation',
-          type: 'bullish',
-          pattern: 'Bull Flag Breakout',
-          confidence: 87,
-          entry: 875.50,
-          target: 950.00,
-          stopLoss: 840.00,
-          riskReward: 2.1,
-          reasoning: 'Strong momentum with AI sector tailwinds. Volume confirming breakout above consolidation. RSI showing strength without overbought conditions.',
-          timeframe: '1-2 weeks',
-          indicators: { rsi: 62, sma20: 850, sma50: 820, priceVsSma20: 3.0, priceVsSma50: 6.8 },
-          timestamp: new Date().toISOString(),
-        },
-        {
-          symbol: 'AAPL',
-          name: 'Apple Inc.',
-          type: 'bullish',
-          pattern: 'Cup and Handle',
-          confidence: 72,
-          entry: 182.30,
-          target: 195.00,
-          stopLoss: 175.00,
-          riskReward: 1.74,
-          reasoning: 'Classic cup and handle formation completing. Services revenue growth supporting valuation. Institutional accumulation evident.',
-          timeframe: '2-4 weeks',
-          indicators: { rsi: 55, sma20: 180, sma50: 175, priceVsSma20: 1.3, priceVsSma50: 4.2 },
-          timestamp: new Date().toISOString(),
-        },
-      ]);
+      setSignals(null);
+      setScanStatus(s => ({ ...s, scanning: false, progress: 0, scannedCount: 0, foundSignals: 0 }));
     }
   }, [settings]);
 
@@ -452,7 +399,7 @@ export default function ScreenerPage() {
           
           <div className="flex items-center gap-4">
             {error && (
-              <span className="text-yellow-400 text-sm">⚠️ Demo Mode</span>
+              <span className="text-yellow-400 text-sm">⚠️ Unavailable</span>
             )}
             <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/30">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
@@ -545,7 +492,7 @@ export default function ScreenerPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-white">
-              Signals <span className="text-cyan-400">({signals.length})</span>
+              Signals <span className="text-cyan-400">({signals === null ? '—' : signals.length})</span>
             </h2>
             {lastScan && (
               <span className="text-gray-500 text-sm">
@@ -554,7 +501,28 @@ export default function ScreenerPage() {
             )}
           </div>
           
-          {signals.length === 0 && !scanStatus.scanning ? (
+          {signals === null ? (
+            <div className="text-center py-12 text-gray-400">
+              <p className="text-4xl mb-4">{scanStatus.scanning ? '🔎' : '⚠️'}</p>
+              <p className="mb-4">
+                {scanStatus.scanning
+                  ? 'Scanning…'
+                  : error
+                    ? 'Unavailable — unable to load signals. Please retry.'
+                    : 'Loading…'}
+              </p>
+              {error && !scanStatus.scanning && (
+                <motion.button
+                  onClick={runScan}
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-semibold text-sm"
+                >
+                  Retry Scan
+                </motion.button>
+              )}
+            </div>
+          ) : signals.length === 0 && !scanStatus.scanning ? (
             <div className="text-center py-12 text-gray-400">
               <p className="text-4xl mb-4">🔍</p>
               <p>No signals found. Try adjusting your filters or run a new scan.</p>

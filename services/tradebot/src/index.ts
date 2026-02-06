@@ -220,19 +220,26 @@ const MARKETDATA_URL = process.env.MARKETDATA_URL || 'http://localhost:3020';
 interface MarketQuote {
   symbol: string;
   price: number;
-  change: number;
-  changePercent: number;
-  volume: number;
+  change: number | null;
+  changePercent: number | null;
+  volume: number | null;
   timestamp: string;
+  source?: string;
 }
 
 interface Indicators {
-  rsi?: number;
-  sma20?: number;
-  sma50?: number;
-  ema12?: number;
-  ema26?: number;
-  macd?: { macd: number; signal: number; histogram: number };
+  rsi: number | null;
+  adx: number | null;
+  plusDI: number | null;
+  minusDI: number | null;
+  macd: { value: number; signal: number; histogram: number } | null;
+  vwap: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  asOf?: string | null;
+  computedAt?: string;
+  provider?: string;
 }
 
 interface ScannerResult {
@@ -292,85 +299,116 @@ interface Watchlist {
 
 class MarketDataClient {
   private baseUrl: string;
-  private fallbackQuotes: Record<string, number> = {
-    AAPL: 185.50, GOOGL: 141.25, MSFT: 378.90, AMZN: 178.30, NVDA: 495.75,
-    TSLA: 248.60, META: 505.20, JPM: 195.40, V: 275.80, BRK_B: 365.10,
-  };
 
   constructor(baseUrl: string = MARKETDATA_URL) {
     this.baseUrl = baseUrl;
   }
 
-  async getQuote(symbol: string): Promise<MarketQuote> {
+  async getQuote(symbol: string): Promise<MarketQuote | null> {
+    const sym = symbol.toUpperCase();
+
     try {
-      const res = await fetch(`${this.baseUrl}/v1/quote/${symbol}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { success: boolean; data: any };
-      if (data.success && data.data) {
-        const q = data.data;
-        return {
-          symbol: q.symbol,
-          price: q.price,
-          change: q.change || 0,
-          changePercent: q.changePercent || 0,
-          volume: q.volume || 0,
-          timestamp: q.timestamp || nowTimestamp(),
-        };
-      }
-      throw new Error('Invalid response');
+      const res = await fetch(`${this.baseUrl}/v1/market/quote/${sym}`);
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as {
+        success: boolean;
+        data?: { quote?: Record<string, unknown> };
+        error?: unknown;
+      };
+
+      const q = data.data?.quote as any;
+      if (!data.success || !q) return null;
+
+      const price = q.price;
+      if (typeof price !== 'number' || !Number.isFinite(price)) return null;
+
+      const change = typeof q.change === 'number' && Number.isFinite(q.change) ? q.change : null;
+      const changePercent =
+        typeof q.changePercent === 'number' && Number.isFinite(q.changePercent) ? q.changePercent : null;
+      const volume = typeof q.volume === 'number' && Number.isFinite(q.volume) ? q.volume : null;
+      const timestamp = typeof q.timestamp === 'string' ? q.timestamp : nowTimestamp();
+      const source = typeof q.source === 'string' ? q.source : undefined;
+
+      return {
+        symbol: sym,
+        price,
+        change,
+        changePercent,
+        volume,
+        timestamp,
+        source,
+      };
     } catch (err) {
-      logger.warn('Marketdata service unavailable, using fallback', { symbol, error: (err as Error).message });
-      return this.getFallbackQuote(symbol);
+      logger.warn('Marketdata quote request failed', { symbol: sym, error: (err as Error).message });
+      return null;
     }
   }
 
-  async getIndicators(symbol: string): Promise<Indicators> {
+  async getIndicators(symbol: string): Promise<Indicators | null> {
+    const sym = symbol.toUpperCase();
+
     try {
-      const res = await fetch(`${this.baseUrl}/v1/indicators/${symbol}`);
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = await res.json() as { success: boolean; data: any };
-      if (data.success && data.data) {
-        return data.data;
-      }
-      throw new Error('Invalid response');
+      const res = await fetch(`${this.baseUrl}/v1/market/indicators/${sym}`);
+      if (!res.ok) return null;
+
+      const data = (await res.json()) as {
+        success: boolean;
+        data?: { indicators?: Record<string, unknown> };
+        error?: unknown;
+      };
+
+      const ind = data.data?.indicators as any;
+      if (!data.success || !ind) return null;
+
+      const rsi = typeof ind.rsi === 'number' && Number.isFinite(ind.rsi) ? ind.rsi : null;
+      const adx = typeof ind.adx === 'number' && Number.isFinite(ind.adx) ? ind.adx : null;
+      const plusDI = typeof ind.plusDI === 'number' && Number.isFinite(ind.plusDI) ? ind.plusDI : null;
+      const minusDI = typeof ind.minusDI === 'number' && Number.isFinite(ind.minusDI) ? ind.minusDI : null;
+      const vwap = typeof ind.vwap === 'number' && Number.isFinite(ind.vwap) ? ind.vwap : null;
+      const sma20 = typeof ind.sma20 === 'number' && Number.isFinite(ind.sma20) ? ind.sma20 : null;
+      const sma50 = typeof ind.sma50 === 'number' && Number.isFinite(ind.sma50) ? ind.sma50 : null;
+      const sma200 = typeof ind.sma200 === 'number' && Number.isFinite(ind.sma200) ? ind.sma200 : null;
+
+      const macdRaw = ind.macd;
+      const macd =
+        macdRaw &&
+        typeof macdRaw.value === 'number' &&
+        Number.isFinite(macdRaw.value) &&
+        typeof macdRaw.signal === 'number' &&
+        Number.isFinite(macdRaw.signal) &&
+        typeof macdRaw.histogram === 'number' &&
+        Number.isFinite(macdRaw.histogram)
+          ? { value: macdRaw.value, signal: macdRaw.signal, histogram: macdRaw.histogram }
+          : null;
+
+      const asOf = typeof ind.asOf === 'string' ? ind.asOf : null;
+      const computedAt = typeof ind.computedAt === 'string' ? ind.computedAt : undefined;
+      const provider = typeof ind.provider === 'string' ? ind.provider : undefined;
+
+      return {
+        rsi,
+        adx,
+        plusDI,
+        minusDI,
+        macd,
+        vwap,
+        sma20,
+        sma50,
+        sma200,
+        asOf,
+        computedAt,
+        provider,
+      };
     } catch (err) {
-      logger.warn('Marketdata indicators unavailable, using fallback', { symbol });
-      return this.getFallbackIndicators();
+      logger.warn('Marketdata indicators request failed', { symbol: sym, error: (err as Error).message });
+      return null;
     }
   }
 
   async getQuotes(symbols: string[]): Promise<MarketQuote[]> {
-    return Promise.all(symbols.map((s) => this.getQuote(s)));
-  }
-
-  // Synchronous fallback for backward compatibility
-  getQuoteSync(symbol: string): MarketQuote {
-    return this.getFallbackQuote(symbol);
-  }
-
-  private getFallbackQuote(symbol: string): MarketQuote {
-    const basePrice = this.fallbackQuotes[symbol] || 100 + Math.random() * 200;
-    const change = (Math.random() - 0.5) * 10;
-    const price = basePrice + change;
-    return {
-      symbol,
-      price: Math.round(price * 100) / 100,
-      change: Math.round(change * 100) / 100,
-      changePercent: Math.round((change / basePrice) * 10000) / 100,
-      volume: Math.floor(Math.random() * 10000000) + 100000,
-      timestamp: nowTimestamp(),
-    };
-  }
-
-  private getFallbackIndicators(): Indicators {
-    return {
-      rsi: 30 + Math.random() * 40,
-      sma20: 100 + Math.random() * 50,
-      sma50: 100 + Math.random() * 50,
-      ema12: 100 + Math.random() * 50,
-      ema26: 100 + Math.random() * 50,
-      macd: { macd: (Math.random() - 0.5) * 2, signal: (Math.random() - 0.5) * 1.5, histogram: (Math.random() - 0.5) * 0.5 },
-    };
+    const quotes = await Promise.all(symbols.map((s) => this.getQuote(s)));
+    return quotes.filter((q): q is MarketQuote => q !== null);
   }
 }
 
@@ -389,13 +427,16 @@ class ScannerEngine {
     if (symbols.length === 0) return [];
 
     const clamp = (n: number, min: number, max: number): number => Math.max(min, Math.min(max, n));
-    const mean = (arr: number[]): number => arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : 0;
+    const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
+    const mean = (arr: number[]): number | null => (arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
 
-    const computeSmaCross = (indicators: Indicators): number => {
-      const short = indicators.sma20 ?? indicators.ema12;
-      const long = indicators.sma50 ?? indicators.ema26;
-      if (typeof short !== 'number' || typeof long !== 'number' || !Number.isFinite(short) || !Number.isFinite(long) || long === 0) {
-        return 0;
+    const computeSmaCross = (indicators: Indicators | null): number | null => {
+      if (!indicators) return null;
+
+      const short = indicators.sma20;
+      const long = indicators.sma50;
+      if (!finite(short) || !finite(long) || long === 0) {
+        return null;
       }
 
       // Relative MA spread, scaled so ~5% spread maps to +/-1.
@@ -403,34 +444,60 @@ class ScannerEngine {
       return clamp(raw / 0.05, -1, 1);
     };
 
+    type Sample = {
+      symbol: string;
+      quote: MarketQuote;
+      indicators: Indicators | null;
+      rsi: number | null;
+      macdVal: number | null;
+      momentum: number | null;
+      volumeSpike: boolean;
+      smaCross: number | null;
+    };
+
     // Fetch quotes/indicators first so we can infer a scan-level regime.
-    const samples = await Promise.all(symbols.map(async (symbol) => {
-      const [quote, indicators] = await Promise.all([
-        this.marketData.getQuote(symbol),
-        this.marketData.getIndicators(symbol),
-      ]);
+    const rawSamples = await Promise.all(
+      symbols.map(async (symbol): Promise<Sample | null> => {
+        const [quote, indicators] = await Promise.all([
+          this.marketData.getQuote(symbol),
+          this.marketData.getIndicators(symbol),
+        ]);
 
-      const rsi = indicators.rsi ?? (30 + Math.random() * 40);
-      const macdVal = indicators.macd?.macd ?? (Math.random() - 0.5) * 2;
-      const momentum = indicators.macd?.histogram !== undefined
-        ? indicators.macd.histogram * 20
-        : (Math.random() - 0.5) * 10;
-      const volumeSpike = quote.volume > 5000000;
-      const smaCross = computeSmaCross(indicators);
+        if (!quote) return null;
 
-      return { symbol, quote, indicators, rsi, macdVal, momentum, volumeSpike, smaCross };
-    }));
+        const rsi = finite(indicators?.rsi) ? indicators!.rsi : null;
+        const macdVal = finite(indicators?.macd?.value) ? indicators!.macd!.value : null;
+        const momentum = finite(indicators?.macd?.histogram) ? indicators!.macd!.histogram * 20 : null;
+
+        const volumeSpike = typeof quote.volume === 'number' && quote.volume > 5_000_000;
+        const smaCross = computeSmaCross(indicators);
+
+        return { symbol: quote.symbol, quote, indicators, rsi, macdVal, momentum, volumeSpike, smaCross };
+      })
+    );
+
+    const samples = rawSamples.filter((s): s is Sample => s !== null);
+
+    if (samples.length === 0) {
+      return [];
+    }
 
     // Coarse regime snapshot (trend + volatility) from the scanned universe.
-    const avgRsi = mean(samples.map(s => clamp(s.rsi, 0, 100)));
-    const avgSmaCross = mean(samples.map(s => s.smaCross));
-    const avgTrendStrength = mean(samples.map(s => Math.abs(s.smaCross)));
-    const avgAbsChangePct = mean(samples.map(s => Math.abs(s.quote.changePercent ?? 0)));
+    const avgRsi = mean(samples.map((s) => s.rsi).filter(finite).map((v) => clamp(v, 0, 100)));
+    const avgSmaCross = mean(samples.map((s) => s.smaCross).filter(finite));
+    const avgTrendStrength = mean(samples.map((s) => s.smaCross).filter(finite).map((v) => Math.abs(v)));
+    const avgAbsChangePct = mean(
+      samples
+        .map((s) => s.quote.changePercent)
+        .filter(finite)
+        .map((v) => Math.abs(v))
+    );
 
-    const atrPercentile = clamp(avgAbsChangePct / 5, 0, 1); // 5% avg move ~= 100th percentile proxy
-    const adxApprox = clamp(avgTrendStrength * 100, 0, 50);
+    const atrPercentile =
+      typeof avgAbsChangePct === 'number' ? clamp(avgAbsChangePct / 5, 0, 1) : undefined; // 5% avg move ~= 100th percentile proxy
+    const adxApprox = typeof avgTrendStrength === 'number' ? clamp(avgTrendStrength * 100, 0, 50) : undefined;
 
-    const snapshotConfidence = symbols.length >= 8 ? 0.75 : symbols.length >= 3 ? 0.65 : 0.6;
+    const snapshotConfidence = samples.length >= 8 ? 0.75 : samples.length >= 3 ? 0.65 : 0.6;
 
     let regimePrimary: RegimeType = RegimeType.UNKNOWN;
     let regimeSecondary: RegimeType | undefined;
@@ -438,8 +505,8 @@ class ScannerEngine {
     try {
       // Note: nexusTrader is declared later in the module; this runs only when scan() is invoked.
       const state = nexusTrader.updateRegimeFromMarketSnapshot({
-        rsi: avgRsi,
-        smaCross: avgSmaCross,
+        rsi: avgRsi ?? undefined,
+        smaCross: avgSmaCross ?? undefined,
         adx: adxApprox,
         atrPercentile,
         confidence: snapshotConfidence,
@@ -545,30 +612,41 @@ class ScannerEngine {
       let bear = 0;
 
       // Mean reversion: RSI extremes
-      if (rsi < 35) bull += 15 * rsiWeight;
-      if (rsi > 65) bear += 15 * rsiWeight;
-
-      // Momentum: MACD direction
-      if (macdVal > 0.5) bull += 10 * momentumWeight;
-      if (macdVal < -0.5) bear += 10 * momentumWeight;
-
-      // Momentum: derived momentum proxy (histogram-based)
-      if (momentum > 3) bull += 10 * momentumWeight;
-      if (momentum < -3) bear += 10 * momentumWeight;
-
-      // Trend: short-vs-long MA cross signal
-      if (smaCross > 0.3) bull += 8 * momentumWeight;
-      if (smaCross < -0.3) bear += 8 * momentumWeight;
-
-      // Volume spike as a (directional) confirmation
-      if (volumeSpike) {
-        if ((quote.changePercent ?? 0) >= 0) bull += 5 * momentumWeight;
-        else bear += 5 * momentumWeight;
+      if (typeof rsi === 'number' && Number.isFinite(rsi)) {
+        if (rsi < 35) bull += 15 * rsiWeight;
+        if (rsi > 65) bear += 15 * rsiWeight;
       }
 
-      // Intraday move (directional)
-      if (quote.changePercent > 2) bull += 10 * momentumWeight;
-      if (quote.changePercent < -2) bear += 10 * momentumWeight;
+      // Momentum: MACD direction
+      if (typeof macdVal === 'number' && Number.isFinite(macdVal)) {
+        if (macdVal > 0.5) bull += 10 * momentumWeight;
+        if (macdVal < -0.5) bear += 10 * momentumWeight;
+      }
+
+      // Momentum: derived momentum proxy (histogram-based)
+      if (typeof momentum === 'number' && Number.isFinite(momentum)) {
+        if (momentum > 3) bull += 10 * momentumWeight;
+        if (momentum < -3) bear += 10 * momentumWeight;
+      }
+
+      // Trend: short-vs-long MA cross signal
+      if (typeof smaCross === 'number' && Number.isFinite(smaCross)) {
+        if (smaCross > 0.3) bull += 8 * momentumWeight;
+        if (smaCross < -0.3) bear += 8 * momentumWeight;
+      }
+
+      const changePercent = quote.changePercent;
+      if (typeof changePercent === 'number' && Number.isFinite(changePercent)) {
+        // Volume spike as a (directional) confirmation
+        if (volumeSpike) {
+          if (changePercent >= 0) bull += 5 * momentumWeight;
+          else bear += 5 * momentumWeight;
+        }
+
+        // Intraday move (directional)
+        if (changePercent > 2) bull += 10 * momentumWeight;
+        if (changePercent < -2) bear += 10 * momentumWeight;
+      }
 
       bull *= bullBias;
       bear *= bearBias;
@@ -588,9 +666,9 @@ class ScannerEngine {
         signal,
         score: Math.min(100, Math.max(0, Math.round(score))),
         indicators: {
-          rsi: Math.round(rsi * 10) / 10,
-          macd: macdVal,
-          momentum,
+          ...(typeof rsi === 'number' && Number.isFinite(rsi) ? { rsi: Math.round(rsi * 10) / 10 } : {}),
+          ...(typeof macdVal === 'number' && Number.isFinite(macdVal) ? { macd: macdVal } : {}),
+          ...(typeof momentum === 'number' && Number.isFinite(momentum) ? { momentum } : {}),
           volumeSpike,
         },
         quote,
@@ -615,8 +693,9 @@ class ThesisGenerator {
   generate(scanResult: ScannerResult): ThesisCard {
     const isLong = scanResult.signal === 'BUY';
     const entryPrice = scanResult.quote.price;
-    const targetPercent = isLong ? 0.05 + Math.random() * 0.1 : -(0.05 + Math.random() * 0.1);
-    const stopPercent = isLong ? -(0.02 + Math.random() * 0.03) : 0.02 + Math.random() * 0.03;
+    // Deterministic default risk template (2:1 reward:risk)
+    const targetPercent = isLong ? 0.06 : -0.06;
+    const stopPercent = isLong ? -0.03 : 0.03;
 
     const targetPrice = Math.round(entryPrice * (1 + targetPercent) * 100) / 100;
     const stopLoss = Math.round(entryPrice * (1 + stopPercent) * 100) / 100;
@@ -636,7 +715,7 @@ class ThesisGenerator {
     if (scanResult.indicators.volumeSpike) {
       reasoning.push('Volume spike detected, potential breakout');
     }
-    if (scanResult.quote.changePercent > 2) {
+    if (typeof scanResult.quote.changePercent === 'number' && scanResult.quote.changePercent > 2) {
       reasoning.push('Strong intraday momentum');
     }
     reasoning.push(`Technical score: ${scanResult.score}/100`);
@@ -651,7 +730,7 @@ class ThesisGenerator {
       targetPrice,
       stopLoss,
       riskRewardRatio,
-      confidence: Math.min(100, scanResult.score + Math.random() * 10),
+      confidence: Math.min(100, Math.max(0, Math.round(scanResult.score))),
       reasoning,
       createdAt: nowTimestamp(),
       expiresAt,
@@ -706,7 +785,13 @@ class PaperTradingSimulator {
     if (trade.status !== 'OPEN') throw new Error('Trade already closed');
 
     const quote = await this.marketData.getQuote(trade.symbol);
-    trade.exitPrice = exitPrice ?? quote.price;
+    const resolvedExitPrice = typeof exitPrice === 'number' && Number.isFinite(exitPrice) ? exitPrice : quote?.price;
+
+    if (typeof resolvedExitPrice !== 'number' || !Number.isFinite(resolvedExitPrice)) {
+      throw new Error('Exit price unavailable (market quote unavailable)');
+    }
+
+    trade.exitPrice = resolvedExitPrice;
     trade.currentPrice = trade.exitPrice;
 
     const priceDiff = trade.side === 'BUY' 
@@ -730,6 +815,8 @@ class PaperTradingSimulator {
     if (trade.status !== 'OPEN') return trade;
 
     const quote = await this.marketData.getQuote(trade.symbol);
+    if (!quote) return trade;
+
     trade.currentPrice = quote.price;
 
     // Check stop loss / target if thesis provided
@@ -772,7 +859,7 @@ class PaperTradingSimulator {
     closedTrades: number;
     winRate: number;
     totalPnl: number;
-    portfolioValue: number;
+    portfolioValue: number | null;
   }> {
     const trades = this.getAllTrades();
     const closed = trades.filter((t) => t.status === 'CLOSED');
@@ -780,8 +867,14 @@ class PaperTradingSimulator {
 
     const totalPnl = closed.reduce((sum, t) => sum + (t.pnl || 0), 0);
     let positionsValue = 0;
+    let hasUnknownPositionValue = false;
+
     for (const [symbol, qty] of Object.entries(this.portfolio.positions)) {
       const quote = await this.marketData.getQuote(symbol);
+      if (!quote) {
+        hasUnknownPositionValue = true;
+        continue;
+      }
       positionsValue += quote.price * qty;
     }
 
@@ -791,7 +884,9 @@ class PaperTradingSimulator {
       closedTrades: closed.length,
       winRate: closed.length > 0 ? Math.round((wins.length / closed.length) * 100) : 0,
       totalPnl: Math.round(totalPnl * 100) / 100,
-      portfolioValue: Math.round((this.portfolio.cash + positionsValue) * 100) / 100,
+      portfolioValue: hasUnknownPositionValue
+        ? null
+        : Math.round((this.portfolio.cash + positionsValue) * 100) / 100,
     };
   }
 }
@@ -1216,6 +1311,9 @@ app.post('/api/trades/:id/close', async (req: Request, res: Response) => {
 // Market Data API
 app.get('/api/quotes/:symbol', async (req: Request, res: Response) => {
   const quote = await marketData.getQuote(req.params.symbol);
+  if (!quote) {
+    return res.status(503).json({ success: false, error: 'Market quote unavailable' });
+  }
   res.json({ success: true, data: { quote } });
 });
 
@@ -1412,29 +1510,32 @@ app.post('/api/alerts/check', async (_req: Request, res: Response) => {
     try {
       const quote = await marketData.getQuote(alert.symbol);
       let shouldTrigger = false;
-      
+
       switch (alert.alertType) {
-        case 'PRICE_ABOVE':
-          shouldTrigger = quote.price >= alert.threshold;
+        case 'PRICE_ABOVE': {
+          if (quote) shouldTrigger = quote.price >= alert.threshold;
           break;
-        case 'PRICE_BELOW':
-          shouldTrigger = quote.price <= alert.threshold;
+        }
+        case 'PRICE_BELOW': {
+          if (quote) shouldTrigger = quote.price <= alert.threshold;
           break;
-        case 'SCORE_ABOVE':
+        }
+        case 'SCORE_ABOVE': {
           const results = await scanner.scan([alert.symbol]);
           if (results.length > 0) {
             shouldTrigger = results[0].score >= alert.threshold;
           }
           break;
+        }
         case 'RSI_ABOVE':
-        case 'RSI_BELOW':
+        case 'RSI_BELOW': {
           const indicators = await marketData.getIndicators(alert.symbol);
-          if (indicators.rsi !== undefined) {
-            shouldTrigger = alert.alertType === 'RSI_ABOVE' 
-              ? indicators.rsi >= alert.threshold
-              : indicators.rsi <= alert.threshold;
+          const rsi = indicators?.rsi;
+          if (typeof rsi === 'number' && Number.isFinite(rsi)) {
+            shouldTrigger = alert.alertType === 'RSI_ABOVE' ? rsi >= alert.threshold : rsi <= alert.threshold;
           }
           break;
+        }
       }
       
       if (shouldTrigger) {

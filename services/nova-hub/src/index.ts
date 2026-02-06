@@ -189,65 +189,101 @@ async function incrementUsage(userId: string, quotaType: string): Promise<void> 
 // Market Data Client
 // ============================================
 
-async function getQuote(symbol: string): Promise<{ price: number; change: number; changePercent: number; volume: number }> {
+type HubQuote = {
+  price: number;
+  change: number | null;
+  changePercent: number | null;
+  volume: number | null;
+};
+
+type HistoricalBar = {
+  date: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+};
+
+async function getQuote(symbol: string): Promise<HubQuote | null> {
+  const sym = symbol.toUpperCase();
+
   try {
-    const res = await fetch(`${MARKETDATA_URL}/v1/quote/${symbol}`);
-    if (res.ok) {
-      const data = await res.json() as { success: boolean; data: any };
-      if (data.success) return data.data;
+    const res = await fetch(`${MARKETDATA_URL}/v1/market/quote/${encodeURIComponent(sym)}`);
+    const data = (await res.json().catch(() => null)) as any;
+
+    const quote = data?.data?.quote;
+    if (!res.ok || !data?.success || !quote) {
+      return null;
     }
+
+    if (typeof quote.price !== 'number' || !Number.isFinite(quote.price)) {
+      return null;
+    }
+
+    const change = typeof quote.change === 'number' && Number.isFinite(quote.change) ? quote.change : null;
+    const changePercent =
+      typeof quote.changePercent === 'number' && Number.isFinite(quote.changePercent) ? quote.changePercent : null;
+    const volume = typeof quote.volume === 'number' && Number.isFinite(quote.volume) ? quote.volume : null;
+
+    return {
+      price: quote.price,
+      change,
+      changePercent,
+      volume,
+    };
   } catch (err) {
-    logger.warn('Market data unavailable', { symbol });
+    logger.warn('Market quote unavailable', { symbol: sym, error: (err as Error).message });
+    return null;
   }
-  
-  // Fallback
-  const basePrice = 100 + Math.random() * 200;
-  const change = (Math.random() - 0.5) * 10;
-  return {
-    price: Math.round(basePrice * 100) / 100,
-    change: Math.round(change * 100) / 100,
-    changePercent: Math.round((change / basePrice) * 10000) / 100,
-    volume: Math.floor(Math.random() * 10000000),
-  };
 }
 
-async function getHistoricalData(symbol: string, startDate: string, endDate: string): Promise<Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }>> {
-  try {
-    const res = await fetch(`${MARKETDATA_URL}/v1/history/${symbol}?start=${startDate}&end=${endDate}`);
-    if (res.ok) {
-      const data = await res.json() as { success: boolean; data: any };
-      if (data.success) return data.data;
-    }
-  } catch (err) {
-    logger.warn('Historical data unavailable', { symbol });
-  }
-  
-  // Generate mock data
-  const data: Array<{ date: string; open: number; high: number; low: number; close: number; volume: number }> = [];
+async function getHistoricalData(symbol: string, startDate: string, endDate: string): Promise<HistoricalBar[]> {
+  const sym = symbol.toUpperCase();
+
   const start = new Date(startDate);
   const end = new Date(endDate);
-  let price = 100 + Math.random() * 100;
-  
-  for (let d = new Date(start); d <= end; d.setDate(d.getDate() + 1)) {
-    const change = (Math.random() - 0.48) * 5; // Slight upward bias
-    const open = price;
-    const close = price + change;
-    const high = Math.max(open, close) + Math.random() * 2;
-    const low = Math.min(open, close) - Math.random() * 2;
-    
-    data.push({
-      date: d.toISOString().split('T')[0],
-      open: Math.round(open * 100) / 100,
-      high: Math.round(high * 100) / 100,
-      low: Math.round(low * 100) / 100,
-      close: Math.round(close * 100) / 100,
-      volume: Math.floor(Math.random() * 10000000) + 100000,
-    });
-    
-    price = close;
+
+  if (!Number.isFinite(start.getTime()) || !Number.isFinite(end.getTime()) || start > end) {
+    throw new Error('Invalid start/end date range');
   }
-  
-  return data;
+
+  const msPerDay = 24 * 60 * 60 * 1000;
+  const diffDays = Math.max(1, Math.ceil((end.getTime() - start.getTime()) / msPerDay) + 1);
+
+  // Pull a bit more than requested to account for weekends/holidays.
+  const limit = Math.min(365, Math.max(5, diffDays + 10));
+
+  const url = `${MARKETDATA_URL}/v1/market/candles/${encodeURIComponent(sym)}?interval=1d&limit=${limit}`;
+
+  const res = await fetch(url);
+  const data = (await res.json().catch(() => null)) as any;
+
+  const candles: any[] | undefined = data?.data?.candles;
+  if (!res.ok || !data?.success || !Array.isArray(candles)) {
+    const msg = data?.error?.message || 'Historical market data unavailable';
+    throw new Error(msg);
+  }
+
+  const startKey = startDate;
+  const endKey = endDate;
+
+  return candles
+    .map((c) => {
+      const date = typeof c?.timestamp === 'string' ? new Date(c.timestamp).toISOString().split('T')[0] : null;
+      if (!date) return null;
+
+      return {
+        date,
+        open: Number(c.open),
+        high: Number(c.high),
+        low: Number(c.low),
+        close: Number(c.close),
+        volume: Number(c.volume),
+      } satisfies HistoricalBar;
+    })
+    .filter((b): b is HistoricalBar => !!b)
+    .filter((b) => b.date >= startKey && b.date <= endKey);
 }
 
 // ============================================
@@ -1074,9 +1110,29 @@ app.post('/v1/thesis/generate', authMiddleware, async (req: AuthenticatedRequest
   }
   
   try {
-    // Get market data
+    // Get market data (real only)
     const quote = await getQuote(symbol);
-    
+    if (!quote) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: {
+          code: 'MARKETDATA_UNAVAILABLE',
+          message: 'Market quote unavailable',
+          details: { symbol: String(symbol).toUpperCase() },
+        },
+      });
+    }
+
+    const changePercentText =
+      typeof quote.changePercent === 'number' && Number.isFinite(quote.changePercent)
+        ? `${quote.changePercent}%`
+        : 'Unavailable';
+
+    const volumeText =
+      typeof quote.volume === 'number' && Number.isFinite(quote.volume)
+        ? quote.volume.toLocaleString()
+        : 'Unavailable';
+
     let thesisText = '';
     let reasoning: string[] = [];
     let direction: 'LONG' | 'SHORT' = 'LONG';
@@ -1102,8 +1158,8 @@ app.post('/v1/thesis/generate', authMiddleware, async (req: AuthenticatedRequest
             },
             {
               role: 'user',
-              content: `Generate a trade thesis for ${symbol}. Current price: $${quote.price}. 
-                        Change: ${quote.changePercent}%. Volume: ${quote.volume}.
+              content: `Generate a trade thesis for ${symbol}. Current price: $${quote.price}.
+                        Change: ${changePercentText}. Volume: ${volumeText}.
                         Additional context: ${context || 'None provided'}
                         Consider risk management and position sizing recommendations.`,
             },
@@ -1166,13 +1222,19 @@ app.post('/v1/thesis/generate', authMiddleware, async (req: AuthenticatedRequest
     }
     
     // Fallback: Generate basic thesis without AI
-    direction = quote.changePercent > 0 ? 'LONG' : 'SHORT';
-    confidence = 50 + Math.abs(quote.changePercent) * 5;
-    thesisText = `Based on current market conditions, ${symbol} shows ${direction === 'LONG' ? 'bullish' : 'bearish'} momentum. 
-                  Current price: $${quote.price} with ${quote.changePercent > 0 ? '+' : ''}${quote.changePercent}% change.`;
+    const cp = quote.changePercent;
+
+    direction = typeof cp === 'number' && Number.isFinite(cp) ? (cp > 0 ? 'LONG' : 'SHORT') : 'LONG';
+    confidence = typeof cp === 'number' && Number.isFinite(cp) ? 50 + Math.abs(cp) * 5 : 50;
+
+    thesisText = `Based on current market conditions, ${symbol} shows ${direction === 'LONG' ? 'bullish' : 'bearish'} momentum.
+                  Current price: $${quote.price} with ${typeof cp === 'number' && Number.isFinite(cp) ? `${cp >= 0 ? '+' : ''}${cp}%` : 'unavailable change %'}.`;
+
     reasoning = [
-      `Price ${quote.changePercent > 0 ? 'up' : 'down'} ${Math.abs(quote.changePercent)}%`,
-      `Volume: ${quote.volume.toLocaleString()}`,
+      typeof cp === 'number' && Number.isFinite(cp)
+        ? `Price ${cp > 0 ? 'up' : 'down'} ${Math.abs(cp)}%`
+        : 'Price change percent unavailable',
+      quote.volume !== null ? `Volume: ${quote.volume.toLocaleString()}` : 'Volume: Unavailable',
       'Further analysis recommended before trading',
     ];
     

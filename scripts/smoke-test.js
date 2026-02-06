@@ -20,6 +20,7 @@ const SERVICES = [
   { name: 'storebot', url: 'http://localhost:3011/health' },
   { name: 'socialbot', url: 'http://localhost:3012/health' },
   { name: 'marketdata', url: 'http://localhost:3020/health' },
+  { name: 'nova-hub', url: 'http://localhost:3030/health' },
 ];
 
 // MVP core services (subset for quick check)
@@ -29,6 +30,9 @@ const MVP_SERVICES = [
   { name: 'orchestrator', url: 'http://localhost:3002/health' },
   { name: 'eventbus', url: 'http://localhost:3003/health' },
   { name: 'billing', url: 'http://localhost:3006/health' },
+  { name: 'marketdata', url: 'http://localhost:3020/health' },
+  { name: 'tradebot', url: 'http://localhost:3010/health' },
+  { name: 'nova-hub', url: 'http://localhost:3030/health' },
 ];
 
 const TIMEOUT_MS = 5000;

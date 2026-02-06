@@ -20,6 +20,7 @@ import {
   Send,
   RefreshCw,
   CheckCircle,
+  AlertTriangle,
   Edit3,
   Zap,
 } from 'lucide-react';
@@ -85,10 +86,11 @@ const PLATFORM_COLORS: Record<string, string> = {
 };
 
 export default function SocialHubDashboard() {
-  const [accounts, setAccounts] = useState<SocialAccount[]>([]);
-  const [posts, setPosts] = useState<ContentPost[]>([]);
-  const [suggestions, setSuggestions] = useState<ContentSuggestion[]>([]);
+  const [accounts, setAccounts] = useState<SocialAccount[] | null>(null);
+  const [posts, setPosts] = useState<ContentPost[] | null>(null);
+  const [suggestions, setSuggestions] = useState<ContentSuggestion[] | null>(null);
   const [analytics, setAnalytics] = useState<Analytics | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<'overview' | 'posts' | 'calendar' | 'create'>('overview');
 
@@ -99,6 +101,7 @@ export default function SocialHubDashboard() {
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
 
     const [accountsRes, postsRes, suggestionsRes, analyticsRes] = await Promise.all([
       api.getContentAccounts(),
@@ -107,11 +110,37 @@ export default function SocialHubDashboard() {
       api.getContentAnalytics(30),
     ]);
 
-    if (accountsRes.success && accountsRes.data?.accounts) setAccounts(accountsRes.data.accounts);
-    if (postsRes.success && postsRes.data?.posts) setPosts(postsRes.data.posts);
-    if (suggestionsRes.success && suggestionsRes.data?.suggestions) setSuggestions(suggestionsRes.data.suggestions);
-    if (analyticsRes.success && analyticsRes.data?.analytics) setAnalytics(analyticsRes.data.analytics);
+    const errors: string[] = [];
 
+    if (accountsRes.success) {
+      setAccounts(accountsRes.data?.accounts ?? []);
+    } else {
+      setAccounts(null);
+      errors.push(accountsRes.error?.message ?? 'Accounts unavailable');
+    }
+
+    if (postsRes.success) {
+      setPosts(postsRes.data?.posts ?? []);
+    } else {
+      setPosts(null);
+      errors.push(postsRes.error?.message ?? 'Posts unavailable');
+    }
+
+    if (suggestionsRes.success) {
+      setSuggestions(suggestionsRes.data?.suggestions ?? []);
+    } else {
+      setSuggestions(null);
+      errors.push(suggestionsRes.error?.message ?? 'Suggestions unavailable');
+    }
+
+    if (analyticsRes.success) {
+      setAnalytics(analyticsRes.data?.analytics ?? null);
+    } else {
+      setAnalytics(null);
+      errors.push(analyticsRes.error?.message ?? 'Analytics unavailable');
+    }
+
+    setLoadError(errors[0] ?? null);
     setIsLoading(false);
   }, []);
 
@@ -152,10 +181,10 @@ export default function SocialHubDashboard() {
     return num.toString();
   };
 
-  const totalFollowers = accounts.reduce((sum, acc) => sum + acc.follower_count, 0);
-  const avgEngagement = accounts.length > 0
+  const totalFollowers = accounts ? accounts.reduce((sum, acc) => sum + acc.follower_count, 0) : null;
+  const avgEngagement = accounts && accounts.length > 0
     ? accounts.reduce((sum, acc) => sum + acc.engagement_rate, 0) / accounts.length
-    : 0;
+    : null;
 
   return (
     <div className="p-8 bg-gray-950 min-h-screen">
@@ -177,34 +206,65 @@ export default function SocialHubDashboard() {
         </button>
       </div>
 
+      {loadError && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          <span>{loadError}</span>
+        </div>
+      )}
+
       {/* Account Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-8">
-        {accounts.map((account) => {
-          const Icon = PLATFORM_ICONS[account.platform] || Twitter;
-          return (
-            <div key={account.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-              <div className="flex items-center gap-3 mb-3">
-                <div className={`p-2 ${PLATFORM_COLORS[account.platform]} rounded-lg`}>
-                  <Icon className="w-5 h-5 text-white" />
+        {isLoading ? (
+          <div className="md:col-span-4 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+            Loading accounts...
+          </div>
+        ) : accounts === null ? (
+          <div className="md:col-span-4 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+            <AlertTriangle className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>Accounts unavailable</p>
+            <p className="text-sm mt-1">Connect or configure SocialHub to load accounts.</p>
+            <button
+              onClick={loadData}
+              className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+            >
+              Retry
+            </button>
+          </div>
+        ) : accounts.length === 0 ? (
+          <div className="md:col-span-4 bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500">
+            <Users className="w-12 h-12 mx-auto mb-4 opacity-50" />
+            <p>No social accounts connected</p>
+            <p className="text-sm mt-1">Accounts will appear once configured.</p>
+          </div>
+        ) : (
+          accounts.map((account) => {
+            const Icon = PLATFORM_ICONS[account.platform] || Twitter;
+            return (
+              <div key={account.id} className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                <div className="flex items-center gap-3 mb-3">
+                  <div className={`p-2 ${PLATFORM_COLORS[account.platform]} rounded-lg`}>
+                    <Icon className="w-5 h-5 text-white" />
+                  </div>
+                  <div>
+                    <p className="text-white font-medium">{account.account_name}</p>
+                    <p className="text-gray-500 text-xs capitalize">{account.platform}</p>
+                  </div>
                 </div>
-                <div>
-                  <p className="text-white font-medium">{account.account_name}</p>
-                  <p className="text-gray-500 text-xs capitalize">{account.platform}</p>
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-2xl font-bold text-white">{formatNumber(account.follower_count)}</p>
+                    <p className="text-gray-400 text-xs">Followers</p>
+                  </div>
+                  <div className="text-right">
+                    <p className="text-lg font-semibold text-green-400">{account.engagement_rate.toFixed(1)}%</p>
+                    <p className="text-gray-400 text-xs">Engagement</p>
+                  </div>
                 </div>
               </div>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-2xl font-bold text-white">{formatNumber(account.follower_count)}</p>
-                  <p className="text-gray-400 text-xs">Followers</p>
-                </div>
-                <div className="text-right">
-                  <p className="text-lg font-semibold text-green-400">{account.engagement_rate.toFixed(1)}%</p>
-                  <p className="text-gray-400 text-xs">Engagement</p>
-                </div>
-              </div>
-            </div>
-          );
-        })}
+            );
+          })
+        )}
       </div>
 
       {/* Stats Summary */}
@@ -216,7 +276,7 @@ export default function SocialHubDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Total Followers</span>
           </div>
-          <p className="text-2xl font-bold text-white">{formatNumber(totalFollowers)}</p>
+          <p className="text-2xl font-bold text-white">{totalFollowers === null ? '—' : formatNumber(totalFollowers)}</p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -226,7 +286,9 @@ export default function SocialHubDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Avg Engagement</span>
           </div>
-          <p className="text-2xl font-bold text-green-400">{avgEngagement.toFixed(1)}%</p>
+          <p className="text-2xl font-bold text-green-400">
+            {typeof avgEngagement === 'number' ? `${avgEngagement.toFixed(1)}%` : '—'}
+          </p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -236,7 +298,9 @@ export default function SocialHubDashboard() {
             </div>
             <span className="text-gray-400 text-sm">30-Day Impressions</span>
           </div>
-          <p className="text-2xl font-bold text-white">{formatNumber(analytics?.total_impressions || 0)}</p>
+          <p className="text-2xl font-bold text-white">
+            {typeof analytics?.total_impressions === 'number' ? formatNumber(analytics.total_impressions) : '—'}
+          </p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -246,7 +310,9 @@ export default function SocialHubDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Total Engagement</span>
           </div>
-          <p className="text-2xl font-bold text-white">{formatNumber(analytics?.total_engagement || 0)}</p>
+          <p className="text-2xl font-bold text-white">
+            {typeof analytics?.total_engagement === 'number' ? formatNumber(analytics.total_engagement) : '—'}
+          </p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -256,7 +322,7 @@ export default function SocialHubDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Posts (30 days)</span>
           </div>
-          <p className="text-2xl font-bold text-white">{analytics?.total_posts || 0}</p>
+          <p className="text-2xl font-bold text-white">{typeof analytics?.total_posts === 'number' ? analytics.total_posts : '—'}</p>
         </div>
       </div>
 
@@ -294,49 +360,61 @@ export default function SocialHubDashboard() {
               </h2>
 
               <div className="space-y-4">
-                {suggestions.map((suggestion, idx) => {
-                  const Icon = PLATFORM_ICONS[suggestion.platform] || Twitter;
-                  return (
-                    <div key={idx} className="p-4 bg-gray-800 rounded-lg">
-                      <div className="flex items-start justify-between mb-3">
-                        <div className="flex items-center gap-2">
-                          <div className={`p-1.5 ${PLATFORM_COLORS[suggestion.platform]} rounded`}>
-                            <Icon className="w-4 h-4 text-white" />
+                {isLoading ? (
+                  <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading suggestions...</div>
+                ) : suggestions === null ? (
+                  <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">
+                    Suggestions unavailable.
+                  </div>
+                ) : suggestions.length === 0 ? (
+                  <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">
+                    No suggestions available.
+                  </div>
+                ) : (
+                  suggestions.map((suggestion, idx) => {
+                    const Icon = PLATFORM_ICONS[suggestion.platform] || Twitter;
+                    return (
+                      <div key={idx} className="p-4 bg-gray-800 rounded-lg">
+                        <div className="flex items-start justify-between mb-3">
+                          <div className="flex items-center gap-2">
+                            <div className={`p-1.5 ${PLATFORM_COLORS[suggestion.platform]} rounded`}>
+                              <Icon className="w-4 h-4 text-white" />
+                            </div>
+                            <span className="text-white font-medium capitalize">{suggestion.platform}</span>
+                            <span className="text-gray-500 text-sm">• {suggestion.content_type}</span>
                           </div>
-                          <span className="text-white font-medium capitalize">{suggestion.platform}</span>
-                          <span className="text-gray-500 text-sm">• {suggestion.content_type}</span>
+                          <div className="flex items-center gap-2 text-sm">
+                            <Clock className="w-4 h-4 text-gray-400" />
+                            <span className="text-gray-400">
+                              {new Date(suggestion.optimal_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
                         </div>
-                        <div className="flex items-center gap-2 text-sm">
-                          <Clock className="w-4 h-4 text-gray-400" />
-                          <span className="text-gray-400">
-                            {new Date(suggestion.optimal_time).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
-                          </span>
+
+                        <p className="text-gray-300 text-sm mb-3">{suggestion.suggested_content}</p>
+
+                        <div className="flex flex-wrap gap-2 mb-3">
+                          {suggestion.suggested_hashtags.map((tag, i) => (
+                            <span key={i} className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded">
+                              {tag}
+                            </span>
+                          ))}
+                        </div>
+
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500 text-xs">{suggestion.reasoning}</span>
+                          <button
+                            onClick={() => applySuggestion(suggestion)}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition flex items-center gap-1"
+                          >
+                            <Zap className="w-3 h-3" />
+                            Use This
+                          </button>
                         </div>
                       </div>
-
-                      <p className="text-gray-300 text-sm mb-3">{suggestion.suggested_content}</p>
-
-                      <div className="flex flex-wrap gap-2 mb-3">
-                        {suggestion.suggested_hashtags.map((tag, i) => (
-                          <span key={i} className="px-2 py-0.5 bg-blue-500/20 text-blue-400 text-xs rounded">
-                            {tag}
-                          </span>
-                        ))}
-                      </div>
-
-                      <div className="flex items-center justify-between">
-                        <span className="text-gray-500 text-xs">{suggestion.reasoning}</span>
-                        <button
-                          onClick={() => applySuggestion(suggestion)}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 text-white text-sm rounded-lg transition flex items-center gap-1"
-                        >
-                          <Zap className="w-3 h-3" />
-                          Use This
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })
+                )}
               </div>
             </div>
 
@@ -348,37 +426,45 @@ export default function SocialHubDashboard() {
               </h2>
 
               <div className="space-y-3">
-                {posts.slice(0, 5).map((post) => {
-                  const Icon = PLATFORM_ICONS[post.platform] || Twitter;
-                  return (
-                    <div key={post.id} className="p-3 bg-gray-800 rounded-lg">
-                      <div className="flex items-center gap-2 mb-2">
-                        <Icon className="w-4 h-4 text-gray-400" />
-                        <span className={`px-2 py-0.5 rounded text-xs ${
-                          post.status === 'published' ? 'bg-green-500/20 text-green-400' :
-                          post.status === 'scheduled' ? 'bg-blue-500/20 text-blue-400' :
-                          'bg-gray-500/20 text-gray-400'
-                        }`}>
-                          {post.status}
-                        </span>
-                      </div>
-                      <p className="text-gray-300 text-sm line-clamp-2">{post.content}</p>
-                      {post.performance && (
-                        <div className="flex gap-4 mt-2 text-xs text-gray-500">
-                          <span className="flex items-center gap-1">
-                            <Heart className="w-3 h-3" /> {post.performance.likes}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <MessageCircle className="w-3 h-3" /> {post.performance.comments}
-                          </span>
-                          <span className="flex items-center gap-1">
-                            <Share2 className="w-3 h-3" /> {post.performance.shares}
+                {isLoading ? (
+                  <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading activity...</div>
+                ) : posts === null ? (
+                  <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Activity unavailable.</div>
+                ) : posts.length === 0 ? (
+                  <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No recent activity.</div>
+                ) : (
+                  posts.slice(0, 5).map((post) => {
+                    const Icon = PLATFORM_ICONS[post.platform] || Twitter;
+                    return (
+                      <div key={post.id} className="p-3 bg-gray-800 rounded-lg">
+                        <div className="flex items-center gap-2 mb-2">
+                          <Icon className="w-4 h-4 text-gray-400" />
+                          <span className={`px-2 py-0.5 rounded text-xs ${
+                            post.status === 'published' ? 'bg-green-500/20 text-green-400' :
+                            post.status === 'scheduled' ? 'bg-blue-500/20 text-blue-400' :
+                            'bg-gray-500/20 text-gray-400'
+                          }`}>
+                            {post.status}
                           </span>
                         </div>
-                      )}
-                    </div>
-                  );
-                })}
+                        <p className="text-gray-300 text-sm line-clamp-2">{post.content}</p>
+                        {post.performance && (
+                          <div className="flex gap-4 mt-2 text-xs text-gray-500">
+                            <span className="flex items-center gap-1">
+                              <Heart className="w-3 h-3" /> {post.performance.likes}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <MessageCircle className="w-3 h-3" /> {post.performance.comments}
+                            </span>
+                            <span className="flex items-center gap-1">
+                              <Share2 className="w-3 h-3" /> {post.performance.shares}
+                            </span>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })
+                )}
               </div>
             </div>
           </>
@@ -388,65 +474,81 @@ export default function SocialHubDashboard() {
           <div className="lg:col-span-3 bg-gray-900 border border-gray-800 rounded-xl p-6">
             <h2 className="text-lg font-semibold text-white mb-4">All Posts</h2>
 
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-gray-400 text-sm border-b border-gray-800">
-                    <th className="pb-3">Platform</th>
-                    <th className="pb-3">Content</th>
-                    <th className="pb-3">Status</th>
-                    <th className="pb-3">Date</th>
-                    <th className="pb-3">Performance</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {posts.map((post) => {
-                    const Icon = PLATFORM_ICONS[post.platform] || Twitter;
-                    return (
-                      <tr key={post.id} className="text-white">
-                        <td className="py-3">
-                          <div className="flex items-center gap-2">
-                            <Icon className="w-4 h-4 text-gray-400" />
-                            <span className="capitalize">{post.platform}</span>
-                          </div>
-                        </td>
-                        <td className="py-3 max-w-md">
-                          <p className="text-gray-300 text-sm truncate">{post.content}</p>
-                        </td>
-                        <td className="py-3">
-                          <span className={`px-2 py-1 rounded text-xs ${
-                            post.status === 'published' ? 'bg-green-500/20 text-green-400' :
-                            post.status === 'scheduled' ? 'bg-blue-500/20 text-blue-400' :
-                            post.status === 'draft' ? 'bg-yellow-500/20 text-yellow-400' :
-                            'bg-gray-500/20 text-gray-400'
-                          }`}>
-                            {post.status}
-                          </span>
-                        </td>
-                        <td className="py-3 text-gray-400 text-sm">
-                          {post.published_at
-                            ? new Date(post.published_at).toLocaleDateString()
-                            : post.scheduled_for
-                            ? `Scheduled: ${new Date(post.scheduled_for).toLocaleDateString()}`
-                            : '-'
-                          }
-                        </td>
-                        <td className="py-3">
-                          {post.performance ? (
-                            <div className="flex gap-3 text-sm text-gray-400">
-                              <span>{formatNumber(post.performance.impressions)} views</span>
-                              <span>{post.performance.engagement_rate.toFixed(1)}% eng</span>
+            {isLoading ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading posts...</div>
+            ) : posts === null ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">
+                Posts unavailable.
+                <button
+                  onClick={loadData}
+                  className="ml-3 px-3 py-1 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : posts.length === 0 ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No posts yet.</div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full">
+                  <thead>
+                    <tr className="text-left text-gray-400 text-sm border-b border-gray-800">
+                      <th className="pb-3">Platform</th>
+                      <th className="pb-3">Content</th>
+                      <th className="pb-3">Status</th>
+                      <th className="pb-3">Date</th>
+                      <th className="pb-3">Performance</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-gray-800">
+                    {posts.map((post) => {
+                      const Icon = PLATFORM_ICONS[post.platform] || Twitter;
+                      return (
+                        <tr key={post.id} className="text-white">
+                          <td className="py-3">
+                            <div className="flex items-center gap-2">
+                              <Icon className="w-4 h-4 text-gray-400" />
+                              <span className="capitalize">{post.platform}</span>
                             </div>
-                          ) : (
-                            <span className="text-gray-500 text-sm">-</span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
+                          </td>
+                          <td className="py-3 max-w-md">
+                            <p className="text-gray-300 text-sm truncate">{post.content}</p>
+                          </td>
+                          <td className="py-3">
+                            <span className={`px-2 py-1 rounded text-xs ${
+                              post.status === 'published' ? 'bg-green-500/20 text-green-400' :
+                              post.status === 'scheduled' ? 'bg-blue-500/20 text-blue-400' :
+                              post.status === 'draft' ? 'bg-yellow-500/20 text-yellow-400' :
+                              'bg-gray-500/20 text-gray-400'
+                            }`}>
+                              {post.status}
+                            </span>
+                          </td>
+                          <td className="py-3 text-gray-400 text-sm">
+                            {post.published_at
+                              ? new Date(post.published_at).toLocaleDateString()
+                              : post.scheduled_for
+                              ? `Scheduled: ${new Date(post.scheduled_for).toLocaleDateString()}`
+                              : '-'
+                            }
+                          </td>
+                          <td className="py-3">
+                            {post.performance ? (
+                              <div className="flex gap-3 text-sm text-gray-400">
+                                <span>{formatNumber(post.performance.impressions)} views</span>
+                                <span>{post.performance.engagement_rate.toFixed(1)}% eng</span>
+                              </div>
+                            ) : (
+                              <span className="text-gray-500 text-sm">-</span>
+                            )}
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
           </div>
         )}
 

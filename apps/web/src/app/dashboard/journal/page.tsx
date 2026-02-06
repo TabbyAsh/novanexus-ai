@@ -78,37 +78,43 @@ export default function JournalPage() {
 
   const loadJournal = async () => {
     setIsLoading(true);
+    setError(null);
+
     try {
-      const response = await fetch('/api/nova-hub/journal', {
-        headers: { Authorization: `Bearer ${api.getAccessToken()}` },
+      const result = await api.getJournal({
+        symbol: filter.symbol || undefined,
+        status: filter.status || undefined,
+        strategy: filter.strategy || undefined,
       });
-      const data = await response.json();
-      
-      if (data.success) {
-        setEntries(data.data.entries);
-        setMetrics(data.data.metrics);
+
+      if (result.success && result.data) {
+        setEntries(result.data.entries as JournalEntry[]);
+        setMetrics(result.data.metrics as Metrics);
       } else {
-        setError(data.error?.message || 'Failed to load journal');
+        setEntries([]);
+        setMetrics(null);
+        setError(result.error?.message || 'Failed to load journal');
       }
     } catch (err) {
-      // Fallback to mock data for demo
       setEntries([]);
-      setMetrics({ totalTrades: 0, winningTrades: 0, winRate: 0, totalPnl: 0, avgPnlPercent: 0 });
+      setMetrics(null);
+      setError((err as Error).message || 'Failed to load journal');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const loadStreak = async () => {
     try {
-      const response = await fetch('/api/nova-hub/journal/streak', {
-        headers: { Authorization: `Bearer ${api.getAccessToken()}` },
-      });
-      const data = await response.json();
-      if (data.success) {
-        setStreak(data.data);
+      const result = await api.getJournalStreak();
+
+      if (result.success && result.data) {
+        setStreak(result.data as Streak);
+      } else {
+        setStreak(null);
       }
-    } catch (err) {
-      setStreak({ currentStreak: 0, longestStreak: 0, totalDays: 0 });
+    } catch {
+      setStreak(null);
     }
   };
 
@@ -117,23 +123,24 @@ export default function JournalPage() {
     setError(null);
 
     try {
-      const response = await fetch('/api/nova-hub/journal', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${api.getAccessToken()}`,
-        },
-        body: JSON.stringify({
-          ...formData,
-          entryPrice: parseFloat(formData.entryPrice),
-          exitPrice: formData.exitPrice ? parseFloat(formData.exitPrice) : null,
-          positionSize: parseFloat(formData.positionSize),
-        }),
+      const entryPrice = parseFloat(formData.entryPrice);
+      const positionSize = parseFloat(formData.positionSize);
+      const exitPrice = formData.exitPrice ? parseFloat(formData.exitPrice) : null;
+
+      const result = await api.createJournalEntry({
+        symbol: formData.symbol,
+        direction: formData.direction,
+        entryPrice,
+        exitPrice,
+        positionSize,
+        entryDate: formData.entryDate,
+        exitDate: formData.exitDate || null,
+        thesis: formData.thesis || null,
+        notes: formData.notes || null,
+        strategyTag: formData.strategyTag || null,
       });
-      
-      const data = await response.json();
-      
-      if (data.success) {
+
+      if (result.success) {
         setShowForm(false);
         loadJournal();
         loadStreak();
@@ -150,19 +157,20 @@ export default function JournalPage() {
           strategyTag: '',
         });
       } else {
-        setError(data.error?.message || 'Failed to create entry');
+        setError(result.error?.message || 'Failed to create entry');
       }
-    } catch (err) {
+    } catch {
       setError('Failed to create entry');
     }
   };
 
   const handleExport = async () => {
     try {
-      const response = await fetch('/api/nova-hub/journal/export.csv', {
+      const apiBase = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+      const response = await fetch(`${apiBase}/v1/journal/export.csv`, {
         headers: { Authorization: `Bearer ${api.getAccessToken()}` },
       });
-      
+
       if (response.ok) {
         const blob = await response.blob();
         const url = URL.createObjectURL(blob);
@@ -171,10 +179,10 @@ export default function JournalPage() {
         a.download = `nova-journal-${new Date().toISOString().split('T')[0]}.csv`;
         a.click();
       } else {
-        const data = await response.json();
-        setError(data.error?.message || 'Export failed');
+        const data = await response.json().catch(() => null);
+        setError(data?.error?.message || 'Export failed');
       }
-    } catch (err) {
+    } catch {
       setError('Export failed');
     }
   };
@@ -231,7 +239,7 @@ export default function JournalPage() {
             <Target className="w-4 h-4 text-blue-400" />
             <span className="text-gray-400 text-sm">Total Trades</span>
           </div>
-          <p className="text-2xl font-bold text-white">{metrics?.totalTrades || 0}</p>
+          <p className="text-2xl font-bold text-white">{metrics ? metrics.totalTrades : '—'}</p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -239,20 +247,26 @@ export default function JournalPage() {
             <Award className="w-4 h-4 text-green-400" />
             <span className="text-gray-400 text-sm">Win Rate</span>
           </div>
-          <p className="text-2xl font-bold text-white">{metrics?.winRate || 0}%</p>
+          <p className="text-2xl font-bold text-white">{metrics ? `${metrics.winRate}%` : '—'}</p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
           <div className="flex items-center gap-2 mb-2">
-            {(metrics?.totalPnl || 0) >= 0 ? (
-              <TrendingUp className="w-4 h-4 text-green-400" />
+            {metrics ? (
+              metrics.totalPnl >= 0 ? (
+                <TrendingUp className="w-4 h-4 text-green-400" />
+              ) : (
+                <TrendingDown className="w-4 h-4 text-red-400" />
+              )
             ) : (
-              <TrendingDown className="w-4 h-4 text-red-400" />
+              <AlertCircle className="w-4 h-4 text-gray-500" />
             )}
             <span className="text-gray-400 text-sm">Total P/L</span>
           </div>
-          <p className={`text-2xl font-bold ${(metrics?.totalPnl || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {formatCurrency(metrics?.totalPnl || 0)}
+          <p className={`text-2xl font-bold ${
+            metrics ? (metrics.totalPnl >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-500'
+          }`}>
+            {metrics ? formatCurrency(metrics.totalPnl) : '—'}
           </p>
         </div>
 
@@ -261,8 +275,10 @@ export default function JournalPage() {
             <TrendingUp className="w-4 h-4 text-purple-400" />
             <span className="text-gray-400 text-sm">Avg Return</span>
           </div>
-          <p className={`text-2xl font-bold ${(metrics?.avgPnlPercent || 0) >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-            {(metrics?.avgPnlPercent || 0).toFixed(2)}%
+          <p className={`text-2xl font-bold ${
+            metrics ? (metrics.avgPnlPercent >= 0 ? 'text-green-400' : 'text-red-400') : 'text-gray-500'
+          }`}>
+            {metrics ? `${metrics.avgPnlPercent.toFixed(2)}%` : '—'}
           </p>
         </div>
 
@@ -271,8 +287,10 @@ export default function JournalPage() {
             <Flame className="w-4 h-4 text-orange-400" />
             <span className="text-gray-400 text-sm">Journal Streak</span>
           </div>
-          <p className="text-2xl font-bold text-white">{streak?.currentStreak || 0} days</p>
-          <p className="text-xs text-gray-500">Best: {streak?.longestStreak || 0} days</p>
+          <p className={`text-2xl font-bold ${streak ? 'text-white' : 'text-gray-500'}`}>
+            {streak ? `${streak.currentStreak} days` : '—'}
+          </p>
+          <p className="text-xs text-gray-500">Best: {streak ? `${streak.longestStreak} days` : '—'}</p>
         </div>
       </div>
 
@@ -290,19 +308,35 @@ export default function JournalPage() {
         {isLoading ? (
           <div className="p-8 text-center text-gray-500">Loading...</div>
         ) : entries.length === 0 ? (
-          <div className="p-12 text-center">
-            <div className="w-16 h-16 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
-              <Target className="w-8 h-8 text-gray-600" />
+          metrics === null && error ? (
+            <div className="p-12 text-center">
+              <div className="w-16 h-16 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                <AlertCircle className="w-8 h-8 text-gray-500" />
+              </div>
+              <h3 className="text-lg font-medium text-white mb-2">Journal unavailable</h3>
+              <p className="text-gray-400 mb-4">{error}</p>
+              <button
+                onClick={loadJournal}
+                className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-gray-200 rounded-lg transition"
+              >
+                Retry
+              </button>
             </div>
-            <h3 className="text-lg font-medium text-white mb-2">No trades logged yet</h3>
-            <p className="text-gray-400 mb-4">Start tracking your trades to build discipline and improve your results.</p>
-            <button
-              onClick={() => setShowForm(true)}
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-            >
-              Log Your First Trade
-            </button>
-          </div>
+          ) : (
+            <div className="p-12 text-center">
+              <div className="w-16 h-16 bg-gray-800 rounded-full flex items-center justify-center mx-auto mb-4">
+                <Target className="w-8 h-8 text-gray-600" />
+              </div>
+              <h3 className="text-lg font-medium text-white mb-2">No trades logged yet</h3>
+              <p className="text-gray-400 mb-4">Start tracking your trades to build discipline and improve your results.</p>
+              <button
+                onClick={() => setShowForm(true)}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+              >
+                Log Your First Trade
+              </button>
+            </div>
+          )
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full">

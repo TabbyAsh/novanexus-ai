@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { randomUUID } from 'crypto';
 import { createLogger } from '@nova/telemetry';
 import { SERVICE_PORTS, HTTP_STATUS } from '@nova/shared';
 
@@ -137,7 +138,7 @@ async function fetchWithRetry(
 }
 
 async function polygonRequest<T>(endpoint: string): Promise<T | null> {
-  if (!USE_REAL_DATA) return null;
+  if (!USE_POLYGON) return null;
   
   const canProceed = await rateLimiter.acquire();
   if (!canProceed) {
@@ -170,13 +171,13 @@ async function polygonRequest<T>(endpoint: string): Promise<T | null> {
 interface Quote {
   symbol: string;
   price: number;
-  change: number;
-  changePercent: number;
-  volume: number;
-  bid: number;
-  ask: number;
+  change: number | null;
+  changePercent: number | null;
+  volume: number | null;
+  bid: number | null;
+  ask: number | null;
   timestamp: string;
-  source: 'polygon' | 'stub';
+  source: 'polygon' | 'finnhub';
 }
 
 interface Candle {
@@ -190,287 +191,197 @@ interface Candle {
 
 interface Indicators {
   symbol: string;
-  rsi: number;
-  adx: number;
-  plusDI: number;
-  minusDI: number;
-  macd: { value: number; signal: number; histogram: number };
-  vwap: number;
-  sma20: number;
-  sma50: number;
-  sma200: number;
-  source: 'calculated' | 'stub';
-}
-
-// Minimal Yahoo Finance chart response typing (enough for our usage)
-interface YahooChartResponse {
-  chart?: {
-    result?: Array<{
-      meta: {
-        regularMarketPrice?: number;
-        previousClose?: number;
-        regularMarketVolume?: number;
-        regularMarketTime?: number;
-      };
-      timestamp?: number[];
-      indicators?: {
-        quote?: Array<{
-          open?: Array<number | null>;
-          high?: Array<number | null>;
-          low?: Array<number | null>;
-          close?: Array<number | null>;
-          volume?: Array<number | null>;
-        }>;
-      };
-    }>;
-  };
+  rsi: number | null;
+  adx: number | null;
+  plusDI: number | null;
+  minusDI: number | null;
+  macd: { value: number; signal: number; histogram: number } | null;
+  vwap: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  asOf: string | null;
+  computedAt: string;
+  provider: 'polygon' | 'finnhub';
 }
 
 // ============================================
 // Indicator Calculations
 // ============================================
 
-function calculateRSI(closes: number[], period = 14): number {
-  if (closes.length < period + 1) return 50;
-  
+function round(value: number, digits: number): number {
+  const factor = Math.pow(10, digits);
+  return Math.round(value * factor) / factor;
+}
+
+function calculateRSI(closes: number[], period = 14): number | null {
+  if (closes.length < period + 1) return null;
+
+  // Use the most recent (period + 1) closes.
+  const start = closes.length - (period + 1);
+
   let gains = 0;
   let losses = 0;
-  
-  for (let i = 1; i <= period; i++) {
+
+  for (let i = start + 1; i < start + 1 + period; i++) {
     const change = closes[i] - closes[i - 1];
+    if (!Number.isFinite(change)) return null;
     if (change > 0) gains += change;
     else losses -= change;
   }
-  
+
   const avgGain = gains / period;
   const avgLoss = losses / period;
-  
+
   if (avgLoss === 0) return 100;
-  
+
   const rs = avgGain / avgLoss;
   return 100 - (100 / (1 + rs));
 }
 
-function calculateSMA(closes: number[], period: number): number {
-  if (closes.length < period) return closes[closes.length - 1] || 0;
-  const slice = closes.slice(0, period);
-  return slice.reduce((sum, val) => sum + val, 0) / period;
+function calculateSMA(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const slice = closes.slice(closes.length - period);
+  const sum = slice.reduce((acc, v) => acc + v, 0);
+  if (!Number.isFinite(sum)) return null;
+  return sum / period;
 }
 
-function calculateEMA(closes: number[], period: number): number {
-  if (closes.length < period) return calculateSMA(closes, closes.length);
-  
-  const multiplier = 2 / (period + 1);
-  let ema = calculateSMA(closes.slice(0, period), period);
-  
-  for (let i = period; i < closes.length; i++) {
-    ema = (closes[i] - ema) * multiplier + ema;
+function calculateEMASeries(values: number[], period: number): number[] | null {
+  if (values.length < period) return null;
+
+  const k = 2 / (period + 1);
+  const series = new Array(values.length).fill(Number.NaN);
+
+  const seedSlice = values.slice(0, period);
+  const seed = seedSlice.reduce((acc, v) => acc + v, 0) / period;
+  if (!Number.isFinite(seed)) return null;
+
+  let ema = seed;
+  series[period - 1] = ema;
+
+  for (let i = period; i < values.length; i++) {
+    const v = values[i];
+    if (!Number.isFinite(v)) return null;
+    ema = v * k + ema * (1 - k);
+    series[i] = ema;
   }
-  
-  return ema;
+
+  return series;
 }
 
-function calculateMACD(closes: number[]): { value: number; signal: number; histogram: number } {
-  const ema12 = calculateEMA(closes, 12);
-  const ema26 = calculateEMA(closes, 26);
-  const macdLine = ema12 - ema26;
-  
-  // Signal line (9-period EMA of MACD)
-  const signal = macdLine * 0.2 + (closes.length > 9 ? calculateEMA(closes.slice(0, 9), 9) : macdLine) * 0.8;
-  
+function calculateMACD(closes: number[]): { value: number; signal: number; histogram: number } | null {
+  const ema12 = calculateEMASeries(closes, 12);
+  const ema26 = calculateEMASeries(closes, 26);
+  if (!ema12 || !ema26) return null;
+
+  const macdSeries: number[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    const a = ema12[i];
+    const b = ema26[i];
+    if (!Number.isFinite(a) || !Number.isFinite(b)) continue;
+    macdSeries.push(a - b);
+  }
+
+  if (macdSeries.length < 9) return null;
+
+  const signalSeries = calculateEMASeries(macdSeries, 9);
+  if (!signalSeries) return null;
+
+  const value = macdSeries[macdSeries.length - 1];
+  const signal = signalSeries[signalSeries.length - 1];
+  if (!Number.isFinite(value) || !Number.isFinite(signal)) return null;
+
+  const histogram = value - signal;
   return {
-    value: Math.round(macdLine * 100) / 100,
-    signal: Math.round(signal * 100) / 100,
-    histogram: Math.round((macdLine - signal) * 100) / 100,
+    value: round(value, 2),
+    signal: round(signal, 2),
+    histogram: round(histogram, 2),
   };
 }
 
-function calculateIndicatorsFromCandles(candles: Candle[]): Omit<Indicators, 'symbol' | 'source'> {
-  const closes = candles.map(c => c.close).reverse(); // Most recent first
-  const volumes = candles.map(c => c.volume).reverse();
-  const highs = candles.map(c => c.high).reverse();
-  const lows = candles.map(c => c.low).reverse();
-  
-  // Calculate VWAP (simplified - using last 20 candles)
+function calculateIndicatorsFromCandles(candles: Candle[]): {
+  rsi: number | null;
+  adx: number | null;
+  plusDI: number | null;
+  minusDI: number | null;
+  macd: { value: number; signal: number; histogram: number } | null;
+  vwap: number | null;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  asOf: string | null;
+} {
+  if (!candles.length) {
+    return {
+      rsi: null,
+      adx: null,
+      plusDI: null,
+      minusDI: null,
+      macd: null,
+      vwap: null,
+      sma20: null,
+      sma50: null,
+      sma200: null,
+      asOf: null,
+    };
+  }
+
+  const closes = candles.map((c) => c.close);
+  const highs = candles.map((c) => c.high);
+  const lows = candles.map((c) => c.low);
+  const volumes = candles.map((c) => c.volume);
+
+  const asOf = candles[candles.length - 1]?.timestamp ?? null;
+
+  // VWAP over the most recent 20 candles (or fewer if not available).
   const vwapPeriod = Math.min(20, candles.length);
   let vwapNum = 0;
   let vwapDen = 0;
-  for (let i = 0; i < vwapPeriod; i++) {
+  for (let i = candles.length - vwapPeriod; i < candles.length; i++) {
     const typicalPrice = (highs[i] + lows[i] + closes[i]) / 3;
-    vwapNum += typicalPrice * volumes[i];
-    vwapDen += volumes[i];
-  }
-  const vwap = vwapDen > 0 ? vwapNum / vwapDen : closes[0];
-  
-  // Calculate ADX (simplified)
-  const adx = 25 + Math.random() * 20; // Placeholder - full ADX is complex
-  const plusDI = 20 + Math.random() * 15;
-  const minusDI = 15 + Math.random() * 15;
-  
-  return {
-    rsi: Math.round(calculateRSI(closes) * 10) / 10,
-    adx: Math.round(adx * 10) / 10,
-    plusDI: Math.round(plusDI * 10) / 10,
-    minusDI: Math.round(minusDI * 10) / 10,
-    macd: calculateMACD(closes),
-    vwap: Math.round(vwap * 100) / 100,
-    sma20: Math.round(calculateSMA(closes, 20) * 100) / 100,
-    sma50: Math.round(calculateSMA(closes, 50) * 100) / 100,
-    sma200: Math.round(calculateSMA(closes, 200) * 100) / 100,
-  };
-}
-
-// ============================================
-// Stub Data Generators (Fallback)
-// ============================================
-
-const STUB_PRICES: Record<string, number> = {
-  AAPL: 185.50, GOOGL: 141.25, MSFT: 378.90, AMZN: 178.30,
-  NVDA: 495.75, TSLA: 248.60, META: 505.20, JPM: 195.40,
-  V: 275.80, 'BRK.B': 365.10, SPY: 475.00, QQQ: 405.00,
-};
-
-function generateStubQuote(symbol: string): Quote {
-  const basePrice = STUB_PRICES[symbol.toUpperCase()] || 100 + Math.random() * 200;
-  const change = (Math.random() - 0.5) * basePrice * 0.03;
-  
-  return {
-    symbol: symbol.toUpperCase(),
-    price: Math.round((basePrice + change) * 100) / 100,
-    change: Math.round(change * 100) / 100,
-    changePercent: Math.round((change / basePrice) * 10000) / 100,
-    volume: Math.floor(Math.random() * 50000000) + 1000000,
-    bid: Math.round((basePrice + change - 0.05) * 100) / 100,
-    ask: Math.round((basePrice + change + 0.05) * 100) / 100,
-    timestamp: new Date().toISOString(),
-    source: 'stub',
-  };
-}
-
-function generateStubCandles(symbol: string, limit: number): Candle[] {
-  const basePrice = STUB_PRICES[symbol.toUpperCase()] || 150;
-  const candles: Candle[] = [];
-  let price = basePrice * 0.95;
-  const now = Date.now();
-  
-  for (let i = limit - 1; i >= 0; i--) {
-    const open = price;
-    const change = (Math.random() - 0.48) * price * 0.02;
-    const close = price + change;
-    const high = Math.max(open, close) * (1 + Math.random() * 0.01);
-    const low = Math.min(open, close) * (1 - Math.random() * 0.01);
-    
-    candles.push({
-      timestamp: new Date(now - i * 86400000).toISOString(),
-      open: Math.round(open * 100) / 100,
-      high: Math.round(high * 100) / 100,
-      low: Math.round(low * 100) / 100,
-      close: Math.round(close * 100) / 100,
-      volume: Math.floor(Math.random() * 50000000) + 1000000,
-    });
-    
-    price = close;
-  }
-  
-  return candles;
-}
-
-// ============================================
-// Yahoo Finance API (Free, no API key needed)
-// ============================================
-
-const yahooRateLimiter = new RateLimiter(10, 60000); // Be nice to Yahoo
-
-async function fetchYahooQuote(symbol: string): Promise<Quote | null> {
-  const canProceed = await yahooRateLimiter.acquire();
-  if (!canProceed) {
-    logger.warn('Rate limit exceeded for Yahoo Finance');
-    return null;
-  }
-
-  try {
-    // Using Yahoo Finance v8 API (publicly accessible)
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1d&range=1d`;
-    const response = await fetchWithRetry(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    });
-
-    if (!response.ok) {
-      logger.warn(`Yahoo Finance API error: ${response.status}`, { symbol });
-      return null;
+    const vol = volumes[i];
+    if (!Number.isFinite(typicalPrice) || !Number.isFinite(vol)) {
+      vwapNum = Number.NaN;
+      vwapDen = Number.NaN;
+      break;
     }
-
-    const data = (await response.json()) as YahooChartResponse;
-    const result = data.chart?.result?.[0];
-    if (!result) return null;
-
-    const meta = result.meta;
-    const quote = result.indicators?.quote?.[0];
-    const price = meta.regularMarketPrice || meta.previousClose || 0;
-    const prevClose = meta.previousClose || price;
-    const change = price - prevClose;
-
-    return {
-      symbol: symbol.toUpperCase(),
-      price: Math.round(price * 100) / 100,
-      change: Math.round(change * 100) / 100,
-      changePercent: Math.round((change / prevClose) * 10000) / 100,
-      volume: meta.regularMarketVolume || quote?.volume?.[quote.volume.length - 1] || 0,
-      bid: Math.round((price - 0.01) * 100) / 100,
-      ask: Math.round((price + 0.01) * 100) / 100,
-      timestamp: new Date(meta.regularMarketTime * 1000).toISOString(),
-      source: 'polygon', // Keep as polygon for compatibility
-    };
-  } catch (error) {
-    logger.error('Yahoo Finance request failed', error as Error, { symbol });
-    return null;
+    vwapNum += typicalPrice * vol;
+    vwapDen += vol;
   }
+
+  const vwap = Number.isFinite(vwapNum) && Number.isFinite(vwapDen) && vwapDen > 0 ? vwapNum / vwapDen : null;
+
+  const rsi = calculateRSI(closes, 14);
+  const sma20 = calculateSMA(closes, 20);
+  const sma50 = calculateSMA(closes, 50);
+  const sma200 = calculateSMA(closes, 200);
+  const macd = calculateMACD(closes);
+
+  // ADX / DI are not returned until implemented deterministically.
+  const adx = null;
+  const plusDI = null;
+  const minusDI = null;
+
+  return {
+    rsi: typeof rsi === 'number' ? round(rsi, 1) : null,
+    adx,
+    plusDI,
+    minusDI,
+    macd,
+    vwap: typeof vwap === 'number' ? round(vwap, 2) : null,
+    sma20: typeof sma20 === 'number' ? round(sma20, 2) : null,
+    sma50: typeof sma50 === 'number' ? round(sma50, 2) : null,
+    sma200: typeof sma200 === 'number' ? round(sma200, 2) : null,
+    asOf,
+  };
 }
 
-async function fetchYahooCandles(
-  symbol: string,
-  interval: string,
-  range: string
-): Promise<Candle[] | null> {
-  const canProceed = await yahooRateLimiter.acquire();
-  if (!canProceed) {
-    logger.warn('Rate limit exceeded for Yahoo Finance candles');
-    return null;
-  }
-
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=${interval}&range=${range}`;
-    const response = await fetchWithRetry(url, {
-      headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
-      },
-    });
-
-    if (!response.ok) return null;
-
-    const data = (await response.json()) as YahooChartResponse;
-    const result = data.chart?.result?.[0];
-    if (!result) return null;
-
-    const timestamps = result.timestamp || [];
-    const quote = result.indicators?.quote?.[0];
-    if (!quote) return null;
-
-    return timestamps.map((ts: number, i: number) => ({
-      timestamp: new Date(ts * 1000).toISOString(),
-      open: Math.round((quote.open?.[i] || 0) * 100) / 100,
-      high: Math.round((quote.high?.[i] || 0) * 100) / 100,
-      low: Math.round((quote.low?.[i] || 0) * 100) / 100,
-      close: Math.round((quote.close?.[i] || 0) * 100) / 100,
-      volume: quote.volume?.[i] || 0,
-    })).filter((c: Candle) => c.close > 0);
-  } catch (error) {
-    logger.error('Yahoo Finance candles request failed', error as Error, { symbol });
-    return null;
-  }
-}
+// ============================================
+// Provider fallback policy
+// ============================================
+// NOTE: This service must not fabricate market data.
+// Configure POLYGON_API_KEY and/or FINNHUB_API_KEY.
 
 // ============================================
 // Finnhub API Client
@@ -524,13 +435,13 @@ async function fetchFinnhubQuote(symbol: string): Promise<Quote | null> {
   return {
     symbol: symbol.toUpperCase(),
     price: Math.round(data.c * 100) / 100,
-    change: Math.round(data.d * 100) / 100,
-    changePercent: Math.round(data.dp * 100) / 100,
-    volume: 0, // Finnhub quote doesn't include volume
-    bid: Math.round((data.c - 0.01) * 100) / 100,
-    ask: Math.round((data.c + 0.01) * 100) / 100,
+    change: Number.isFinite(data.d) ? Math.round(data.d * 100) / 100 : null,
+    changePercent: Number.isFinite(data.dp) ? Math.round(data.dp * 100) / 100 : null,
+    volume: null, // Finnhub quote doesn't include volume
+    bid: null,
+    ask: null,
     timestamp: new Date(data.t * 1000).toISOString(),
-    source: 'polygon', // Keep as polygon for compatibility
+    source: 'finnhub',
   };
 }
 
@@ -590,16 +501,39 @@ async function fetchPolygonQuote(symbol: string): Promise<Quote | null> {
   if (!data || data.status !== 'OK' || !data.ticker) return null;
   
   const t = data.ticker;
-  const currentPrice = t.min?.c || t.day?.c || t.prevDay?.c || 0;
-  
+
+  const currentPriceCandidate = [t.min?.c, t.day?.c, t.prevDay?.c].find(
+    (v) => typeof v === 'number' && Number.isFinite(v)
+  );
+
+  if (typeof currentPriceCandidate !== 'number') return null;
+
+  const prevClose = typeof t.prevDay?.c === 'number' && Number.isFinite(t.prevDay.c) ? t.prevDay.c : null;
+
+  const changeRaw =
+    typeof t.todaysChange === 'number' && Number.isFinite(t.todaysChange)
+      ? t.todaysChange
+      : typeof prevClose === 'number'
+        ? currentPriceCandidate - prevClose
+        : null;
+
+  const changePercentRaw =
+    typeof t.todaysChangePerc === 'number' && Number.isFinite(t.todaysChangePerc)
+      ? t.todaysChangePerc
+      : typeof changeRaw === 'number' && typeof prevClose === 'number' && prevClose !== 0
+        ? (changeRaw / prevClose) * 100
+        : null;
+
+  const volumeRaw = typeof t.day?.v === 'number' && Number.isFinite(t.day.v) ? t.day.v : null;
+
   return {
     symbol: t.ticker,
-    price: Math.round(currentPrice * 100) / 100,
-    change: Math.round((t.todaysChange || 0) * 100) / 100,
-    changePercent: Math.round((t.todaysChangePerc || 0) * 100) / 100,
-    volume: t.day?.v || 0,
-    bid: Math.round((currentPrice - 0.01) * 100) / 100,
-    ask: Math.round((currentPrice + 0.01) * 100) / 100,
+    price: Math.round(currentPriceCandidate * 100) / 100,
+    change: typeof changeRaw === 'number' ? Math.round(changeRaw * 100) / 100 : null,
+    changePercent: typeof changePercentRaw === 'number' ? Math.round(changePercentRaw * 100) / 100 : null,
+    volume: volumeRaw,
+    bid: null,
+    ask: null,
     timestamp: new Date().toISOString(),
     source: 'polygon',
   };
@@ -647,10 +581,10 @@ async function fetchPolygonCandles(
 app.use(express.json());
 
 app.use((req: Request, res: Response, next: NextFunction) => {
-  const requestId = (req.headers['x-request-id'] as string) || crypto.randomUUID();
+  const requestId = (req.headers['x-request-id'] as string) || randomUUID();
   req.headers['x-request-id'] = requestId;
   res.setHeader('X-Request-ID', requestId);
-  
+
   if (req.path !== '/health') {
     logger.info(`${req.method} ${req.path}`, { requestId });
   }
@@ -666,8 +600,11 @@ app.get('/health', (_req, res) => {
     status: 'healthy',
     service: 'marketdata',
     timestamp: new Date().toISOString(),
-    polygonConfigured: USE_REAL_DATA,
-    cacheSize: quoteCache.size() + candleCache.size(),
+    providers: {
+      polygon: USE_POLYGON,
+      finnhub: USE_FINNHUB,
+    },
+    cacheSize: quoteCache.size() + candleCache.size() + indicatorCache.size(),
     rateLimitRemaining: rateLimiter.getRemaining(),
   });
 });
@@ -686,31 +623,44 @@ app.get('/v1/market/quote/:symbol', async (req: Request, res: Response) => {
     return res.json({ success: true, data: { quote: cached }, cached: true });
   }
   
-  // Try data sources in order of preference:
-  // 1. Polygon (if API key configured)
-  // 2. Finnhub (if API key configured)
-  // 3. Yahoo Finance (free, no API key needed)
-  // 4. Stub data (last resort)
-  let quote = await fetchPolygonQuote(symbol);
-  
+  if (!USE_POLYGON && !USE_FINNHUB) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_NOT_CONFIGURED',
+        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY.',
+        details: { symbol: symbol.toUpperCase() },
+      },
+    });
+  }
+
+  let quote: Quote | null = null;
+
+  if (USE_POLYGON) {
+    quote = await fetchPolygonQuote(symbol);
+  }
+
   if (!quote && USE_FINNHUB) {
     quote = await fetchFinnhubQuote(symbol);
   }
-  
+
   if (!quote) {
-    // Yahoo Finance as free fallback
-    quote = await fetchYahooQuote(symbol);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_UNAVAILABLE',
+        message: 'Market quote unavailable from configured providers.',
+        details: {
+          symbol: symbol.toUpperCase(),
+          providers: { polygon: USE_POLYGON, finnhub: USE_FINNHUB },
+        },
+      },
+    });
   }
-  
-  // Fallback to stub if all APIs fail
-  if (!quote) {
-    quote = generateStubQuote(symbol);
-    logger.warn(`Using stub data for ${symbol} - configure POLYGON_API_KEY or FINNHUB_API_KEY for real data`);
-  }
-  
+
   // Cache the result
   quoteCache.set(cacheKey, quote, CACHE_TTL.QUOTE);
-  
+
   res.json({ success: true, data: { quote }, cached: false });
 });
 
@@ -722,7 +672,20 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
   const { symbol } = req.params;
   const { interval = '1d', limit = '30' } = req.query;
   const limitNum = Math.min(Number(limit) || 30, 365);
-  
+
+  if (!USE_POLYGON && !USE_FINNHUB) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_NOT_CONFIGURED',
+        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY.',
+        details: { symbol: symbol.toUpperCase() },
+      },
+    });
+  }
+
+  const intervalKey = String(interval);
+
   // Map interval to Polygon timespan
   const intervalMap: Record<string, { multiplier: number; timespan: string }> = {
     '1m': { multiplier: 1, timespan: 'minute' },
@@ -732,59 +695,78 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
     '1d': { multiplier: 1, timespan: 'day' },
     '1w': { multiplier: 1, timespan: 'week' },
   };
-  
-  const intervalConfig = intervalMap[interval as string] || intervalMap['1d'];
-  const cacheKey = `candles:${symbol.toUpperCase()}:${interval}:${limitNum}`;
-  
-  // Map interval to Yahoo Finance format
-  const yahooIntervalMap: Record<string, { interval: string; range: string }> = {
-    '1m': { interval: '1m', range: '1d' },
-    '5m': { interval: '5m', range: '5d' },
-    '15m': { interval: '15m', range: '5d' },
-    '1h': { interval: '1h', range: '1mo' },
-    '1d': { interval: '1d', range: `${Math.ceil(limitNum / 5)}mo` },
-    '1w': { interval: '1wk', range: `${Math.ceil(limitNum / 4)}y` },
-  };
-  const yahooConfig = yahooIntervalMap[interval as string] || yahooIntervalMap['1d'];
-  
+
+  const intervalConfig = intervalMap[intervalKey] || intervalMap['1d'];
+  const cacheKey = `candles:${symbol.toUpperCase()}:${intervalKey}:${limitNum}`;
+
   // Check cache
   const cached = candleCache.get<Candle[]>(cacheKey);
   if (cached) {
-    return res.json({ 
-      success: true, 
-      data: { symbol: symbol.toUpperCase(), interval, candles: cached },
+    return res.json({
+      success: true,
+      data: { symbol: symbol.toUpperCase(), interval: intervalKey, candles: cached },
       cached: true,
     });
   }
-  
-  // Try data sources in order:
-  // 1. Polygon (if configured)
-  // 2. Yahoo Finance (free fallback)
-  // 3. Stub data (last resort)
-  let candles = await fetchPolygonCandles(
-    symbol,
-    intervalConfig.multiplier,
-    intervalConfig.timespan,
-    limitNum
-  );
-  
-  // Try Yahoo Finance as fallback
-  if (!candles || candles.length === 0) {
-    candles = await fetchYahooCandles(symbol, yahooConfig.interval, yahooConfig.range);
+
+  // Finnhub expects unix timestamps (seconds)
+  const finnhubResolutionMap: Record<string, string> = {
+    '1m': '1',
+    '5m': '5',
+    '15m': '15',
+    '1h': '60',
+    '1d': 'D',
+    '1w': 'W',
+  };
+
+  const secondsPerCandleMap: Record<string, number> = {
+    '1m': 60,
+    '5m': 5 * 60,
+    '15m': 15 * 60,
+    '1h': 60 * 60,
+    '1d': 24 * 60 * 60,
+    '1w': 7 * 24 * 60 * 60,
+  };
+
+  const resolution = finnhubResolutionMap[intervalKey] || 'D';
+  const secondsPerCandle = secondsPerCandleMap[intervalKey] || 24 * 60 * 60;
+  const to = Math.floor(Date.now() / 1000);
+  const from = to - secondsPerCandle * limitNum;
+
+  let candles: Candle[] | null = null;
+  let provider: 'polygon' | 'finnhub' | null = null;
+
+  if (USE_POLYGON) {
+    candles = await fetchPolygonCandles(symbol, intervalConfig.multiplier, intervalConfig.timespan, limitNum);
+    if (candles && candles.length > 0) provider = 'polygon';
   }
-  
-  // Fallback to stub if all APIs fail
-  if (!candles || candles.length === 0) {
-    candles = generateStubCandles(symbol, limitNum);
-    logger.warn(`Using stub candles for ${symbol}`);
+
+  if ((!candles || candles.length === 0) && USE_FINNHUB) {
+    candles = await fetchFinnhubCandles(symbol, resolution, from, to);
+    if (candles && candles.length > 0) provider = 'finnhub';
   }
-  
+
+  if (!candles || candles.length === 0 || !provider) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_UNAVAILABLE',
+        message: 'Market candles unavailable from configured providers.',
+        details: {
+          symbol: symbol.toUpperCase(),
+          interval: intervalKey,
+          providers: { polygon: USE_POLYGON, finnhub: USE_FINNHUB },
+        },
+      },
+    });
+  }
+
   // Cache result
   candleCache.set(cacheKey, candles, CACHE_TTL.CANDLES);
-  
-  res.json({ 
-    success: true, 
-    data: { symbol: symbol.toUpperCase(), interval, candles },
+
+  res.json({
+    success: true,
+    data: { symbol: symbol.toUpperCase(), interval: intervalKey, candles, provider },
     cached: false,
   });
 });
@@ -802,28 +784,79 @@ app.get('/v1/market/indicators/:symbol', async (req: Request, res: Response) => 
   if (cached) {
     return res.json({ success: true, data: { indicators: cached }, cached: true });
   }
-  
-  // Get candles to calculate indicators
-  const candleCacheKey = `candles:${symbol.toUpperCase()}:1d:200`;
-  let candles = candleCache.get<Candle[]>(candleCacheKey);
-  
-  if (!candles) {
-    candles = await fetchPolygonCandles(symbol, 1, 'day', 200);
-    if (!candles || candles.length === 0) {
-      candles = generateStubCandles(symbol, 200);
-    }
-    candleCache.set(candleCacheKey, candles, CACHE_TTL.CANDLES);
+
+  if (!USE_POLYGON && !USE_FINNHUB) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_NOT_CONFIGURED',
+        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY.',
+        details: { symbol: symbol.toUpperCase() },
+      },
+    });
   }
-  
+
+  // Get candles to calculate indicators
+  const candlesCacheKey = `candlesForIndicators:${symbol.toUpperCase()}:1d:200`;
+  const cachedCandles = candleCache.get<{ provider: 'polygon' | 'finnhub'; candles: Candle[] }>(candlesCacheKey);
+
+  let candles: Candle[] | null = cachedCandles?.candles ?? null;
+  let provider: 'polygon' | 'finnhub' | null = cachedCandles?.provider ?? null;
+
+  if (!candles || candles.length === 0 || !provider) {
+    if (USE_POLYGON) {
+      candles = await fetchPolygonCandles(symbol, 1, 'day', 200);
+      if (candles && candles.length > 0) provider = 'polygon';
+    }
+
+    if ((!candles || candles.length === 0) && USE_FINNHUB) {
+      const to = Math.floor(Date.now() / 1000);
+      const from = to - 200 * 24 * 60 * 60;
+      candles = await fetchFinnhubCandles(symbol, 'D', from, to);
+      if (candles && candles.length > 0) provider = 'finnhub';
+    }
+
+    if (!candles || candles.length === 0 || !provider) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: {
+          code: 'MARKETDATA_UNAVAILABLE',
+          message: 'Market indicators unavailable from configured providers.',
+          details: {
+            symbol: symbol.toUpperCase(),
+            providers: { polygon: USE_POLYGON, finnhub: USE_FINNHUB },
+          },
+        },
+      });
+    }
+
+    candleCache.set(candlesCacheKey, { provider, candles }, CACHE_TTL.CANDLES);
+  }
+
+  if (!candles || candles.length === 0 || !provider) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_UNAVAILABLE',
+        message: 'Market indicators unavailable from configured providers.',
+        details: {
+          symbol: symbol.toUpperCase(),
+          providers: { polygon: USE_POLYGON, finnhub: USE_FINNHUB },
+        },
+      },
+    });
+  }
+
   const calculated = calculateIndicatorsFromCandles(candles);
   const indicators: Indicators = {
     symbol: symbol.toUpperCase(),
     ...calculated,
-    source: USE_REAL_DATA && candles.length > 0 ? 'calculated' : 'stub',
+    computedAt: new Date().toISOString(),
+    provider,
   };
-  
+
   indicatorCache.set(cacheKey, indicators, CACHE_TTL.INDICATORS);
-  
+
   res.json({ success: true, data: { indicators }, cached: false });
 });
 
@@ -833,23 +866,15 @@ app.get('/v1/market/indicators/:symbol', async (req: Request, res: Response) => 
 
 app.get('/v1/market/fundamentals/:symbol', async (req: Request, res: Response) => {
   const { symbol } = req.params;
-  
-  // TODO: Implement real fundamentals from Polygon when available
-  // For MVP, return reasonable estimates based on symbol
-  const fundamentals = {
-    symbol: symbol.toUpperCase(),
-    marketCap: 2850000000000,
-    pe: 28.5,
-    eps: 6.52,
-    sharesOutstanding: 15400000000,
-    float: 15200000000,
-    shortInterest: 0.085,
-    beta: 1.25,
-    dividendYield: 0.005,
-    source: 'stub' as const,
-  };
-  
-  res.json({ success: true, data: { fundamentals } });
+
+  res.status(501).json({
+    success: false,
+    error: {
+      code: 'NOT_IMPLEMENTED',
+      message: 'Fundamentals are not implemented yet.',
+      details: { symbol: symbol.toUpperCase() },
+    },
+  });
 });
 
 // ============================================
@@ -865,22 +890,60 @@ app.post('/v1/market/quotes', async (req: Request, res: Response) => {
       error: { code: 'INVALID_INPUT', message: 'symbols array required' },
     });
   }
-  
-  const quotes: Quote[] = [];
-  
-  for (const symbol of symbols.slice(0, 20)) { // Limit to 20 symbols
-    const cacheKey = `quote:${symbol.toUpperCase()}`;
-    let quote = quoteCache.get<Quote>(cacheKey);
-    
-    if (!quote) {
-      quote = await fetchPolygonQuote(symbol) || generateStubQuote(symbol);
-      quoteCache.set(cacheKey, quote, CACHE_TTL.QUOTE);
-    }
-    
-    quotes.push(quote);
+
+  if (!USE_POLYGON && !USE_FINNHUB) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_NOT_CONFIGURED',
+        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY.',
+        details: { requestedCount: symbols.length },
+      },
+    });
   }
-  
-  res.json({ success: true, data: { quotes } });
+
+  const quotes: Quote[] = [];
+  const unavailableSymbols: string[] = [];
+
+  for (const rawSymbol of symbols.slice(0, 20)) {
+    const sym = String(rawSymbol).toUpperCase();
+    const cacheKey = `quote:${sym}`;
+
+    let quote = quoteCache.get<Quote>(cacheKey);
+
+    if (!quote) {
+      if (USE_POLYGON) {
+        quote = await fetchPolygonQuote(sym);
+      }
+
+      if (!quote && USE_FINNHUB) {
+        quote = await fetchFinnhubQuote(sym);
+      }
+
+      if (quote) {
+        quoteCache.set(cacheKey, quote, CACHE_TTL.QUOTE);
+      }
+    }
+
+    if (quote) {
+      quotes.push(quote);
+    } else {
+      unavailableSymbols.push(sym);
+    }
+  }
+
+  if (quotes.length === 0) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'MARKETDATA_UNAVAILABLE',
+        message: 'Market quotes unavailable from configured providers.',
+        details: { unavailableSymbols },
+      },
+    });
+  }
+
+  res.json({ success: true, data: { quotes, unavailableSymbols } });
 });
 
 // ============================================
@@ -911,7 +974,7 @@ app.post('/internal/cache/clear', (_req: Request, res: Response) => {
 
 app.listen(PORT, () => {
   logger.info(`MarketData service started on port ${PORT}`, {
-    polygonConfigured: USE_REAL_DATA,
+    providers: { polygon: USE_POLYGON, finnhub: USE_FINNHUB },
   });
 });
 

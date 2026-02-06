@@ -6,15 +6,12 @@ import {
   Package,
   DollarSign,
   TrendingUp,
-  TrendingDown,
   AlertTriangle,
-  ShoppingCart,
   RefreshCw,
   CheckCircle,
   Zap,
   ArrowUp,
   ArrowDown,
-  Tag,
   Boxes,
   BarChart3,
   Target,
@@ -80,9 +77,10 @@ interface ProductAppraisal {
 
 
 export default function MarketplaceDashboard() {
-  const [products, setProducts] = useState<Product[]>([]);
-  const [recommendations, setRecommendations] = useState<PriceRecommendation[]>([]);
-  const [alerts, setAlerts] = useState<InventoryAlert[]>([]);
+  const [products, setProducts] = useState<Product[] | null>(null);
+  const [recommendations, setRecommendations] = useState<PriceRecommendation[] | null>(null);
+  const [alerts, setAlerts] = useState<InventoryAlert[] | null>(null);
+  const [loadError, setLoadError] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
@@ -92,10 +90,12 @@ export default function MarketplaceDashboard() {
   const [applyingPrice, setApplyingPrice] = useState<string | null>(null);
   const [appraisalQuery, setAppraisalQuery] = useState('');
   const [appraisal, setAppraisal] = useState<ProductAppraisal | null>(null);
+  const [appraisalError, setAppraisalError] = useState<string | null>(null);
   const [isAppraising, setIsAppraising] = useState(false);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
+    setLoadError(null);
 
     const [productsRes, pricingRes, alertsRes] = await Promise.all([
       api.getStoreCatalog(),
@@ -103,36 +103,65 @@ export default function MarketplaceDashboard() {
       api.getInventoryAlerts(),
     ]);
 
-    if (productsRes.success && productsRes.data?.products) setProducts(productsRes.data.products);
-    if (pricingRes.success && pricingRes.data?.recommendations) setRecommendations(pricingRes.data.recommendations);
-    if (alertsRes.success && alertsRes.data?.alerts) setAlerts(alertsRes.data.alerts);
+    const errors: string[] = [];
 
+    if (productsRes.success) {
+      setProducts(productsRes.data?.products ?? []);
+    } else {
+      setProducts(null);
+      errors.push(productsRes.error?.message ?? 'Products unavailable');
+    }
+
+    if (pricingRes.success) {
+      setRecommendations(pricingRes.data?.recommendations ?? []);
+    } else {
+      setRecommendations(null);
+      errors.push(pricingRes.error?.message ?? 'Pricing recommendations unavailable');
+    }
+
+    if (alertsRes.success) {
+      setAlerts(alertsRes.data?.alerts ?? []);
+    } else {
+      setAlerts(null);
+      errors.push(alertsRes.error?.message ?? 'Inventory alerts unavailable');
+    }
+
+    setLoadError(errors[0] ?? null);
     setIsLoading(false);
   }, []);
 
   const runPricingAnalysis = async () => {
     setIsAnalyzing(true);
+    setLoadError(null);
 
-    const res = await api.analyzeStorePricing();
-    if (res.success && res.data?.recommendations) {
-      setRecommendations(res.data.recommendations);
+    try {
+      const res = await api.analyzeStorePricing();
+      if (res.success) {
+        setRecommendations(res.data?.recommendations ?? []);
+      } else {
+        setRecommendations(null);
+        setLoadError(res.error?.message ?? 'Pricing analysis unavailable');
+      }
+    } finally {
+      setIsAnalyzing(false);
     }
-
-    setIsAnalyzing(false);
   };
 
   const applyPrice = async (productId: string, newPrice: number, reason: string) => {
     setApplyingPrice(productId);
+    setLoadError(null);
 
-    const res = await api.applyStorePrice({ productId, newPrice, reason });
-    if (!res.success) {
-      console.error('Failed to apply price:', res.error);
+    try {
+      const res = await api.applyStorePrice({ productId, newPrice, reason });
+      if (!res.success) {
+        setLoadError(res.error?.message ?? 'Failed to apply price');
+      }
+
+      // Refresh data after applying
+      await loadData();
+    } finally {
+      setApplyingPrice(null);
     }
-
-    // Refresh data after applying
-    await loadData();
-
-    setApplyingPrice(null);
   };
 
   const appraiseItem = async () => {
@@ -140,15 +169,19 @@ export default function MarketplaceDashboard() {
 
     setIsAppraising(true);
     setAppraisal(null);
+    setAppraisalError(null);
 
-    const res = await api.appraiseStoreProduct(appraisalQuery);
-    if (res.success && res.data?.appraisal) {
-      setAppraisal(res.data.appraisal);
-    } else {
-      console.error('Appraisal failed:', res.error);
+    try {
+      const res = await api.appraiseStoreProduct(appraisalQuery);
+      if (res.success && res.data?.appraisal) {
+        setAppraisal(res.data.appraisal);
+        return;
+      }
+
+      setAppraisalError(res.error?.message ?? 'Appraisal unavailable');
+    } finally {
+      setIsAppraising(false);
     }
-
-    setIsAppraising(false);
   };
 
   useEffect(() => {
@@ -160,22 +193,24 @@ export default function MarketplaceDashboard() {
   };
 
   // Calculate totals
-  const totalProducts = products.length;
-  const totalInventoryValue = products.reduce((sum, p) => sum + (p.current_price * p.stock_quantity), 0);
-  const lowStockProducts = products.filter(p => p.stock_quantity <= p.reorder_point).length;
-  const avgMargin = products.length > 0
+  const totalProducts = products === null ? null : products.length;
+  const totalInventoryValue = products ? products.reduce((sum, p) => sum + (p.current_price * p.stock_quantity), 0) : null;
+  const lowStockProducts = products ? products.filter(p => p.stock_quantity <= p.reorder_point).length : null;
+  const avgMargin = products && products.length > 0
     ? products.reduce((sum, p) => sum + ((p.current_price - p.base_cost) / p.current_price), 0) / products.length * 100
-    : 0;
+    : null;
 
   // Match recommendations to products
-  const productRecommendations = recommendations.map(rec => {
-    const product = products.find(p => p.id === rec.product_id);
-    return { ...rec, product };
-  });
+  const productRecommendations = recommendations
+    ? recommendations.map(rec => {
+      const product = products?.find(p => p.id === rec.product_id);
+      return { ...rec, product };
+    })
+    : null;
 
-  const actionableRecommendations = productRecommendations.filter(
-    rec => Math.abs(rec.recommended_price - rec.current_price) > 1
-  );
+  const actionableRecommendations = productRecommendations
+    ? productRecommendations.filter(rec => Math.abs(rec.recommended_price - rec.current_price) > 1)
+    : null;
 
   return (
     <div className="p-8 bg-gray-950 min-h-screen">
@@ -207,6 +242,13 @@ export default function MarketplaceDashboard() {
         </div>
       </div>
 
+      {loadError && (
+        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          <span>{loadError}</span>
+        </div>
+      )}
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -216,7 +258,7 @@ export default function MarketplaceDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Total Products</span>
           </div>
-          <p className="text-2xl font-bold text-white">{totalProducts}</p>
+          <p className="text-2xl font-bold text-white">{totalProducts === null ? '—' : totalProducts}</p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -226,7 +268,9 @@ export default function MarketplaceDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Inventory Value</span>
           </div>
-          <p className="text-2xl font-bold text-green-400">{formatCurrency(totalInventoryValue)}</p>
+          <p className="text-2xl font-bold text-green-400">
+            {typeof totalInventoryValue === 'number' ? formatCurrency(totalInventoryValue) : '—'}
+          </p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
@@ -236,18 +280,20 @@ export default function MarketplaceDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Avg Margin</span>
           </div>
-          <p className="text-2xl font-bold text-purple-400">{avgMargin.toFixed(1)}%</p>
+          <p className="text-2xl font-bold text-purple-400">
+            {typeof avgMargin === 'number' ? `${avgMargin.toFixed(1)}%` : '—'}
+          </p>
         </div>
 
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
           <div className="flex items-center gap-3 mb-2">
-            <div className={`p-2 ${lowStockProducts > 0 ? 'bg-yellow-500/20' : 'bg-gray-500/20'} rounded-lg`}>
-              <AlertTriangle className={`w-5 h-5 ${lowStockProducts > 0 ? 'text-yellow-400' : 'text-gray-400'}`} />
+            <div className={`p-2 ${typeof lowStockProducts === 'number' && lowStockProducts > 0 ? 'bg-yellow-500/20' : 'bg-gray-500/20'} rounded-lg`}>
+              <AlertTriangle className={`w-5 h-5 ${typeof lowStockProducts === 'number' && lowStockProducts > 0 ? 'text-yellow-400' : 'text-gray-400'}`} />
             </div>
             <span className="text-gray-400 text-sm">Low Stock</span>
           </div>
-          <p className={`text-2xl font-bold ${lowStockProducts > 0 ? 'text-yellow-400' : 'text-white'}`}>
-            {lowStockProducts}
+          <p className={`text-2xl font-bold ${typeof lowStockProducts === 'number' && lowStockProducts > 0 ? 'text-yellow-400' : 'text-white'}`}>
+            {lowStockProducts === null ? '—' : lowStockProducts}
           </p>
         </div>
 
@@ -258,7 +304,7 @@ export default function MarketplaceDashboard() {
             </div>
             <span className="text-gray-400 text-sm">Price Actions</span>
           </div>
-          <p className="text-2xl font-bold text-cyan-400">{actionableRecommendations.length}</p>
+          <p className="text-2xl font-bold text-cyan-400">{actionableRecommendations === null ? '—' : actionableRecommendations.length}</p>
         </div>
       </div>
 
@@ -295,64 +341,72 @@ export default function MarketplaceDashboard() {
             Product Catalog
           </h2>
 
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="text-left text-gray-400 text-sm border-b border-gray-800">
-                  <th className="pb-3">SKU</th>
-                  <th className="pb-3">Product</th>
-                  <th className="pb-3">Category</th>
-                  <th className="pb-3">Cost</th>
-                  <th className="pb-3">Price</th>
-                  <th className="pb-3">Margin</th>
-                  <th className="pb-3">Stock</th>
-                  <th className="pb-3">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-800">
-                {products.map((product) => {
-                  const margin = ((product.current_price - product.base_cost) / product.current_price) * 100;
-                  const isLowStock = product.stock_quantity <= product.reorder_point;
+          {isLoading ? (
+            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading products...</div>
+          ) : products === null ? (
+            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Products unavailable.</div>
+          ) : products.length === 0 ? (
+            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No products found.</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full">
+                <thead>
+                  <tr className="text-left text-gray-400 text-sm border-b border-gray-800">
+                    <th className="pb-3">SKU</th>
+                    <th className="pb-3">Product</th>
+                    <th className="pb-3">Category</th>
+                    <th className="pb-3">Cost</th>
+                    <th className="pb-3">Price</th>
+                    <th className="pb-3">Margin</th>
+                    <th className="pb-3">Stock</th>
+                    <th className="pb-3">Status</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-800">
+                  {products.map((product) => {
+                    const margin = ((product.current_price - product.base_cost) / product.current_price) * 100;
+                    const isLowStock = product.stock_quantity <= product.reorder_point;
 
-                  return (
-                    <tr key={product.id} className="text-white">
-                      <td className="py-3 font-mono text-sm text-gray-400">{product.sku}</td>
-                      <td className="py-3">
-                        <div>
-                          <p className="font-medium">{product.name}</p>
-                          <p className="text-gray-500 text-xs">{product.description}</p>
-                        </div>
-                      </td>
-                      <td className="py-3">
-                        <span className="px-2 py-1 bg-gray-800 rounded text-sm">{product.category}</span>
-                      </td>
-                      <td className="py-3 text-gray-400">{formatCurrency(product.base_cost)}</td>
-                      <td className="py-3 font-medium text-green-400">{formatCurrency(product.current_price)}</td>
-                      <td className="py-3">
-                        <span className={`${margin >= 30 ? 'text-green-400' : margin >= 20 ? 'text-yellow-400' : 'text-red-400'}`}>
-                          {margin.toFixed(1)}%
-                        </span>
-                      </td>
-                      <td className="py-3">{product.stock_quantity}</td>
-                      <td className="py-3">
-                        {isLowStock ? (
-                          <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded flex items-center gap-1 w-fit">
-                            <AlertTriangle className="w-3 h-3" />
-                            Low Stock
+                    return (
+                      <tr key={product.id} className="text-white">
+                        <td className="py-3 font-mono text-sm text-gray-400">{product.sku}</td>
+                        <td className="py-3">
+                          <div>
+                            <p className="font-medium">{product.name}</p>
+                            <p className="text-gray-500 text-xs">{product.description}</p>
+                          </div>
+                        </td>
+                        <td className="py-3">
+                          <span className="px-2 py-1 bg-gray-800 rounded text-sm">{product.category}</span>
+                        </td>
+                        <td className="py-3 text-gray-400">{formatCurrency(product.base_cost)}</td>
+                        <td className="py-3 font-medium text-green-400">{formatCurrency(product.current_price)}</td>
+                        <td className="py-3">
+                          <span className={`${margin >= 30 ? 'text-green-400' : margin >= 20 ? 'text-yellow-400' : 'text-red-400'}`}>
+                            {margin.toFixed(1)}%
                           </span>
-                        ) : (
-                          <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded flex items-center gap-1 w-fit">
-                            <CheckCircle className="w-3 h-3" />
-                            In Stock
-                          </span>
-                        )}
-                      </td>
-                    </tr>
-                  );
-                })}
-              </tbody>
-            </table>
-          </div>
+                        </td>
+                        <td className="py-3">{product.stock_quantity}</td>
+                        <td className="py-3">
+                          {isLowStock ? (
+                            <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded flex items-center gap-1 w-fit">
+                              <AlertTriangle className="w-3 h-3" />
+                              Low Stock
+                            </span>
+                          ) : (
+                            <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded flex items-center gap-1 w-fit">
+                              <CheckCircle className="w-3 h-3" />
+                              In Stock
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
         </div>
       )}
 
@@ -366,74 +420,82 @@ export default function MarketplaceDashboard() {
             </h2>
 
             <div className="space-y-4">
-              {productRecommendations.map((rec) => {
-                const priceDiff = rec.recommended_price - rec.current_price;
-                const isIncrease = priceDiff > 0;
-                const showAction = Math.abs(priceDiff) > 1;
+              {isLoading ? (
+                <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading recommendations...</div>
+              ) : productRecommendations === null ? (
+                <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Recommendations unavailable.</div>
+              ) : productRecommendations.length === 0 ? (
+                <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No recommendations.</div>
+              ) : (
+                productRecommendations.map((rec) => {
+                  const priceDiff = rec.recommended_price - rec.current_price;
+                  const isIncrease = priceDiff > 0;
+                  const showAction = Math.abs(priceDiff) > 1;
 
-                return (
-                  <div key={rec.product_id} className="p-4 bg-gray-800 rounded-lg">
-                    <div className="flex items-start justify-between mb-3">
-                      <div>
-                        <p className="text-white font-medium">{rec.product?.name || rec.product_id}</p>
-                        <p className="text-gray-500 text-xs">{rec.product?.sku}</p>
-                      </div>
-                      <div className={`flex items-center gap-1 px-2 py-1 rounded text-sm ${
-                        isIncrease ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                      }`}>
-                        {isIncrease ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-                        {Math.abs(priceDiff).toFixed(2)}
-                      </div>
-                    </div>
-
-                    <div className="grid grid-cols-3 gap-4 mb-3">
-                      <div>
-                        <p className="text-gray-500 text-xs">Current</p>
-                        <p className="text-white font-medium">{formatCurrency(rec.current_price)}</p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500 text-xs">Recommended</p>
-                        <p className={`font-medium ${isIncrease ? 'text-green-400' : 'text-red-400'}`}>
-                          {formatCurrency(rec.recommended_price)}
-                        </p>
-                      </div>
-                      <div>
-                        <p className="text-gray-500 text-xs">Proj. Margin</p>
-                        <p className="text-purple-400 font-medium">{rec.projected_margin}%</p>
-                      </div>
-                    </div>
-
-                    <p className="text-gray-400 text-sm mb-3">{rec.reason}</p>
-
-                    <div className="flex items-center justify-between">
-                      <div className="flex items-center gap-2">
-                        <div className="w-16 bg-gray-700 rounded-full h-2">
-                          <div
-                            className="bg-blue-500 h-2 rounded-full"
-                            style={{ width: `${rec.confidence}%` }}
-                          />
+                  return (
+                    <div key={rec.product_id} className="p-4 bg-gray-800 rounded-lg">
+                      <div className="flex items-start justify-between mb-3">
+                        <div>
+                          <p className="text-white font-medium">{rec.product?.name || rec.product_id}</p>
+                          <p className="text-gray-500 text-xs">{rec.product?.sku}</p>
                         </div>
-                        <span className="text-gray-500 text-xs">{rec.confidence}% confidence</span>
+                        <div className={`flex items-center gap-1 px-2 py-1 rounded text-sm ${
+                          isIncrease ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                        }`}>
+                          {isIncrease ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
+                          {Math.abs(priceDiff).toFixed(2)}
+                        </div>
                       </div>
 
-                      {showAction && (
-                        <button
-                          onClick={() => applyPrice(rec.product_id, rec.recommended_price, rec.reason)}
-                          disabled={applyingPrice === rec.product_id}
-                          className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white text-sm rounded-lg transition flex items-center gap-1"
-                        >
-                          {applyingPrice === rec.product_id ? (
-                            <RefreshCw className="w-3 h-3 animate-spin" />
-                          ) : (
-                            <CheckCircle className="w-3 h-3" />
-                          )}
-                          Apply
-                        </button>
-                      )}
+                      <div className="grid grid-cols-3 gap-4 mb-3">
+                        <div>
+                          <p className="text-gray-500 text-xs">Current</p>
+                          <p className="text-white font-medium">{formatCurrency(rec.current_price)}</p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500 text-xs">Recommended</p>
+                          <p className={`font-medium ${isIncrease ? 'text-green-400' : 'text-red-400'}`}>
+                            {formatCurrency(rec.recommended_price)}
+                          </p>
+                        </div>
+                        <div>
+                          <p className="text-gray-500 text-xs">Proj. Margin</p>
+                          <p className="text-purple-400 font-medium">{rec.projected_margin}%</p>
+                        </div>
+                      </div>
+
+                      <p className="text-gray-400 text-sm mb-3">{rec.reason}</p>
+
+                      <div className="flex items-center justify-between">
+                        <div className="flex items-center gap-2">
+                          <div className="w-16 bg-gray-700 rounded-full h-2">
+                            <div
+                              className="bg-blue-500 h-2 rounded-full"
+                              style={{ width: `${rec.confidence}%` }}
+                            />
+                          </div>
+                          <span className="text-gray-500 text-xs">{rec.confidence}% confidence</span>
+                        </div>
+
+                        {showAction && (
+                          <button
+                            onClick={() => applyPrice(rec.product_id, rec.recommended_price, rec.reason)}
+                            disabled={applyingPrice === rec.product_id}
+                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white text-sm rounded-lg transition flex items-center gap-1"
+                          >
+                            {applyingPrice === rec.product_id ? (
+                              <RefreshCw className="w-3 h-3 animate-spin" />
+                            ) : (
+                              <CheckCircle className="w-3 h-3" />
+                            )}
+                            Apply
+                          </button>
+                        )}
+                      </div>
                     </div>
-                  </div>
-                );
-              })}
+                  );
+                })
+              )}
             </div>
           </div>
 
@@ -444,26 +506,8 @@ export default function MarketplaceDashboard() {
               Active Pricing Rules
             </h2>
 
-            <div className="space-y-3">
-              {[
-                { name: 'Target Margin Rule', type: 'margin', status: 'active', description: 'Maintains 35% target profit margin' },
-                { name: 'Inventory Management', type: 'inventory', status: 'active', description: 'Adjusts prices based on stock levels' },
-                { name: 'Demand Pricing', type: 'demand', status: 'active', description: 'Responds to market demand signals' },
-                { name: 'Time-Based Pricing', type: 'time_based', status: 'active', description: 'Seasonal and time-of-day adjustments' },
-              ].map((rule, idx) => (
-                <div key={idx} className="p-4 bg-gray-800 rounded-lg flex items-center justify-between">
-                  <div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <Tag className="w-4 h-4 text-gray-400" />
-                      <p className="text-white font-medium">{rule.name}</p>
-                    </div>
-                    <p className="text-gray-500 text-sm">{rule.description}</p>
-                  </div>
-                  <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded">
-                    Active
-                  </span>
-                </div>
-              ))}
+            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">
+              Pricing rules unavailable — rules engine not connected.
             </div>
           </div>
         </div>
@@ -526,7 +570,13 @@ export default function MarketplaceDashboard() {
               Appraisal Results
             </h2>
 
-            {!appraisal ? (
+            {appraisalError ? (
+              <div className="text-center py-12 text-gray-500">
+                <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>Appraisal unavailable</p>
+                <p className="text-sm mt-1">{appraisalError}</p>
+              </div>
+            ) : !appraisal ? (
               <div className="text-center py-12 text-gray-500">
                 <Search className="w-12 h-12 mx-auto mb-3 opacity-50" />
                 <p>Enter a product to see market pricing</p>
@@ -635,7 +685,22 @@ export default function MarketplaceDashboard() {
               Inventory Alerts
             </h2>
 
-            {alerts.length === 0 ? (
+            {isLoading ? (
+              <div className="text-center py-8 text-gray-500">
+                Loading alerts...
+              </div>
+            ) : alerts === null ? (
+              <div className="text-center py-8 text-gray-500">
+                <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                <p>Inventory alerts unavailable</p>
+                <button
+                  onClick={loadData}
+                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
+                >
+                  Retry
+                </button>
+              </div>
+            ) : alerts.length === 0 ? (
               <div className="text-center py-8 text-gray-500">
                 <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
                 <p>No inventory alerts</p>
@@ -677,41 +742,49 @@ export default function MarketplaceDashboard() {
               Stock Overview
             </h2>
 
-            <div className="space-y-4">
-              {products.map((product) => {
-                const stockPercent = Math.min((product.stock_quantity / (product.reorder_point * 3)) * 100, 100);
-                const isLow = product.stock_quantity <= product.reorder_point;
-                const isOut = product.stock_quantity === 0;
+            {isLoading ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading stock...</div>
+            ) : products === null ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Stock unavailable.</div>
+            ) : products.length === 0 ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No products found.</div>
+            ) : (
+              <div className="space-y-4">
+                {products.map((product) => {
+                  const stockPercent = Math.min((product.stock_quantity / (product.reorder_point * 3)) * 100, 100);
+                  const isLow = product.stock_quantity <= product.reorder_point;
+                  const isOut = product.stock_quantity === 0;
 
-                return (
-                  <div key={product.id} className="p-3 bg-gray-800 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <div>
-                        <p className="text-white font-medium text-sm">{product.name}</p>
-                        <p className="text-gray-500 text-xs">{product.sku}</p>
+                  return (
+                    <div key={product.id} className="p-3 bg-gray-800 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <div>
+                          <p className="text-white font-medium text-sm">{product.name}</p>
+                          <p className="text-gray-500 text-xs">{product.sku}</p>
+                        </div>
+                        <span className={`text-sm font-medium ${
+                          isOut ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'
+                        }`}>
+                          {product.stock_quantity} units
+                        </span>
                       </div>
-                      <span className={`text-sm font-medium ${
-                        isOut ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'
-                      }`}>
-                        {product.stock_quantity} units
-                      </span>
+                      <div className="w-full bg-gray-700 rounded-full h-2">
+                        <div
+                          className={`h-2 rounded-full ${
+                            isOut ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-green-500'
+                          }`}
+                          style={{ width: `${stockPercent}%` }}
+                        />
+                      </div>
+                      <div className="flex justify-between mt-1 text-xs text-gray-500">
+                        <span>Reorder at: {product.reorder_point}</span>
+                        <span>Range: {formatCurrency(product.min_price)} - {formatCurrency(product.max_price)}</span>
+                      </div>
                     </div>
-                    <div className="w-full bg-gray-700 rounded-full h-2">
-                      <div
-                        className={`h-2 rounded-full ${
-                          isOut ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-green-500'
-                        }`}
-                        style={{ width: `${stockPercent}%` }}
-                      />
-                    </div>
-                    <div className="flex justify-between mt-1 text-xs text-gray-500">
-                      <span>Reorder at: {product.reorder_point}</span>
-                      <span>Range: {formatCurrency(product.min_price)} - {formatCurrency(product.max_price)}</span>
-                    </div>
-                  </div>
-                );
-              })}
-            </div>
+                  );
+                })}
+              </div>
+            )}
           </div>
         </div>
       )}

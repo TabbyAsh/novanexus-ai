@@ -92,19 +92,22 @@ const defaultStrategies: Strategy[] = [
 export default function BacktestPage() {
   const [strategies] = useState<Strategy[]>(defaultStrategies);
   const [selectedStrategy, setSelectedStrategy] = useState<Strategy>(defaultStrategies[0]);
-  const [pastResults, setPastResults] = useState<BacktestResult[]>([]);
+
+  const [pastResults, setPastResults] = useState<BacktestResult[] | null>(null);
+  const [pastResultsError, setPastResultsError] = useState<string | null>(null);
+
   const [currentResult, setCurrentResult] = useState<DetailedResult | null>(null);
   const [isLoading, setIsLoading] = useState(false);
   const [isRunning, setIsRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Form state
+  // Form state (no defaults — require explicit inputs)
   const [formData, setFormData] = useState({
-    symbol: 'AAPL',
-    startDate: '2024-01-01',
-    endDate: '2024-12-31',
-    initialCapital: '100000',
-    params: {} as Record<string, number>,
+    symbol: '',
+    startDate: '',
+    endDate: '',
+    initialCapital: '',
+    params: {} as Record<string, string>,
   });
 
   useEffect(() => {
@@ -113,28 +116,33 @@ export default function BacktestPage() {
 
   useEffect(() => {
     // Initialize params when strategy changes
-    const defaultParams: Record<string, number> = {};
+    const nextParams: Record<string, string> = {};
     selectedStrategy.params.forEach(p => {
-      defaultParams[p.name] = p.default;
+      nextParams[p.name] = '';
     });
-    setFormData(prev => ({ ...prev, params: defaultParams }));
+    setFormData(prev => ({ ...prev, params: nextParams }));
   }, [selectedStrategy]);
 
   const loadPastResults = async () => {
     setIsLoading(true);
+    setPastResultsError(null);
+
     try {
-      const response = await fetch('/api/nova-hub/backtest', {
-        headers: { Authorization: `Bearer ${api.getAccessToken()}` },
-      });
-      const data = await response.json();
-      if (data.success) {
-        setPastResults(data.data.results || []);
+      const result = await api.getBacktests();
+
+      if (result.success && result.data) {
+        setPastResults((result.data.results ?? []) as BacktestResult[]);
+        return;
       }
-    } catch (err) {
-      // Demo fallback
-      setPastResults([]);
+
+      setPastResults(null);
+      setPastResultsError(result.error?.message ?? 'Backtest history unavailable');
+    } catch {
+      setPastResults(null);
+      setPastResultsError('Backtest history unavailable');
+    } finally {
+      setIsLoading(false);
     }
-    setIsLoading(false);
   };
 
   const handleRunBacktest = async () => {
@@ -143,34 +151,67 @@ export default function BacktestPage() {
     setCurrentResult(null);
 
     try {
-      const response = await fetch('/api/nova-hub/backtest', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          Authorization: `Bearer ${api.getAccessToken()}`,
-        },
-        body: JSON.stringify({
-          symbol: formData.symbol.toUpperCase(),
-          strategyType: selectedStrategy.id,
-          startDate: formData.startDate,
-          endDate: formData.endDate,
-          initialCapital: parseFloat(formData.initialCapital),
-          params: formData.params,
-        }),
+      const sym = formData.symbol.trim().toUpperCase();
+      if (!sym) {
+        setError('Symbol is required');
+        return;
+      }
+
+      if (!formData.startDate || !formData.endDate) {
+        setError('Start and end dates are required');
+        return;
+      }
+
+      if (formData.startDate > formData.endDate) {
+        setError('Start date must be on or before end date');
+        return;
+      }
+
+      const initialCapital = parseFloat(formData.initialCapital);
+      if (!Number.isFinite(initialCapital) || initialCapital <= 0) {
+        setError('Initial capital is required');
+        return;
+      }
+
+      const params: Record<string, number> = {};
+      for (const p of selectedStrategy.params) {
+        const raw = formData.params[p.name];
+        const parsed = typeof raw === 'string' ? parseFloat(raw) : NaN;
+
+        if (!Number.isFinite(parsed)) {
+          setError(`${p.label} is required`);
+          return;
+        }
+
+        if (parsed < p.min || parsed > p.max) {
+          setError(`${p.label} must be between ${p.min} and ${p.max}`);
+          return;
+        }
+
+        params[p.name] = parsed;
+      }
+
+      const result = await api.runBacktest({
+        symbol: sym,
+        strategyType: selectedStrategy.id,
+        startDate: formData.startDate,
+        endDate: formData.endDate,
+        initialCapital,
+        params,
       });
 
-      const data = await response.json();
-
-      if (data.success) {
-        setCurrentResult(data.data.result);
+      if (result.success && result.data) {
+        setCurrentResult((result.data as any).result ?? null);
         loadPastResults();
-      } else {
-        setError(data.error?.message || 'Backtest failed');
+        return;
       }
+
+      setError(result.error?.message ?? 'Backtest failed');
     } catch (err) {
-      setError('Failed to run backtest');
+      setError((err as Error).message || 'Failed to run backtest');
+    } finally {
+      setIsRunning(false);
     }
-    setIsRunning(false);
   };
 
   const formatCurrency = (value: number) => {
@@ -268,10 +309,11 @@ export default function BacktestPage() {
                     step={param.max < 1 ? '0.01' : '1'}
                     min={param.min}
                     max={param.max}
-                    value={formData.params[param.name] || param.default}
+                    value={formData.params[param.name] ?? ''}
+                    placeholder={String(param.default)}
                     onChange={(e) => setFormData({
                       ...formData,
-                      params: { ...formData.params, [param.name]: parseFloat(e.target.value) }
+                      params: { ...formData.params, [param.name]: e.target.value }
                     })}
                     className="w-full px-3 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
                   />
@@ -421,7 +463,14 @@ export default function BacktestPage() {
           )}
 
           {/* Past Results */}
-          {pastResults.length > 0 && (
+          {pastResultsError && (
+            <div className="p-4 bg-red-500/10 border border-red-500/30 rounded-lg flex items-center gap-3">
+              <AlertTriangle className="w-5 h-5 text-red-400" />
+              <span className="text-red-300">{pastResultsError}</span>
+            </div>
+          )}
+
+          {Array.isArray(pastResults) && pastResults.length > 0 && (
             <div className="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
               <div className="p-4 border-b border-gray-800">
                 <h3 className="font-semibold text-white">Past Backtests</h3>

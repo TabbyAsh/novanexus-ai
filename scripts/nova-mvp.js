@@ -73,6 +73,10 @@ async function main() {
     { name: 'Auth', url: 'http://localhost:3001/health' },
     { name: 'Orchestrator', url: 'http://localhost:3002/health' },
     { name: 'EventBus', url: 'http://localhost:3003/health' },
+    { name: 'Billing', url: 'http://localhost:3006/health' },
+    { name: 'Marketdata', url: 'http://localhost:3020/health' },
+    { name: 'Tradebot', url: 'http://localhost:3010/health/live' },
+    { name: 'Nova Hub', url: 'http://localhost:3030/health' },
   ];
 
   let allHealthy = true;
