@@ -301,8 +301,8 @@ CREATE TABLE IF NOT EXISTS content_posts (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_content_posts_org_status ON content_posts(org_id, status);
-CREATE INDEX idx_content_posts_scheduled ON content_posts(scheduled_at) WHERE status = 'SCHEDULED';
+CREATE INDEX IF NOT EXISTS idx_content_posts_org_status ON content_posts(org_id, status);
+CREATE INDEX IF NOT EXISTS idx_content_posts_scheduled ON content_posts(scheduled_at) WHERE status = 'SCHEDULED';
 
 -- ============================================
 -- SOCIAL: Analytics
@@ -416,8 +416,8 @@ CREATE TABLE IF NOT EXISTS trade_journal (
     updated_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_trade_journal_user ON trade_journal(user_id, status);
-CREATE INDEX idx_trade_journal_symbol ON trade_journal(symbol, entered_at);
+CREATE INDEX IF NOT EXISTS idx_trade_journal_user ON trade_journal(user_id, status);
+CREATE INDEX IF NOT EXISTS idx_trade_journal_symbol ON trade_journal(symbol, entered_at);
 
 -- ============================================
 -- BUSINESS INTELLIGENCE: Financial Tracking
@@ -448,8 +448,8 @@ CREATE TABLE IF NOT EXISTS financial_transactions (
     created_at TIMESTAMPTZ DEFAULT NOW()
 );
 
-CREATE INDEX idx_financial_trans_org_date ON financial_transactions(org_id, transaction_date);
-CREATE INDEX idx_financial_trans_category ON financial_transactions(org_id, category);
+CREATE INDEX IF NOT EXISTS idx_financial_trans_org_date ON financial_transactions(org_id, transaction_date);
+CREATE INDEX IF NOT EXISTS idx_financial_trans_category ON financial_transactions(org_id, category);
 
 CREATE TABLE IF NOT EXISTS financial_reports (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
