@@ -298,6 +298,7 @@ CREATE TRIGGER update_usage_tracking_updated_at
     BEFORE UPDATE ON usage_tracking 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
 
+DROP TRIGGER IF EXISTS update_entitlements_updated_at ON entitlements;
 CREATE TRIGGER update_entitlements_updated_at 
     BEFORE UPDATE ON entitlements 
     FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
