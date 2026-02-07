@@ -52,6 +52,7 @@ const ROUTE_SCOPES: Record<string, Scope[]> = {
 const PUBLIC_ROUTES = [
   '/health',
   '/v1/auth/register',
+  '/v1/auth/signup',
   '/v1/auth/login',
   '/v1/auth/refresh',
   '/v1/billing/pricing',
