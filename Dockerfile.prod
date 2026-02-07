@@ -24,8 +24,8 @@ COPY scripts ./scripts
 ENV NODE_ENV=development
 RUN npm ci --legacy-peer-deps --ignore-scripts || npm install --legacy-peer-deps
 
-# Build only backend services (skip frontend)
-RUN npx turbo run build --filter='./services/*' --filter='./libs/*'
+# Build only backend services (skip frontend) and force rebuild to avoid stale cache
+RUN npx turbo run build --filter='./services/*' --filter='./libs/*' --force
 
 # ─────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
