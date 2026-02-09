@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import {
   Package,
   DollarSign,
@@ -213,9 +214,10 @@ export default function MarketplaceDashboard() {
     : null;
 
   return (
-    <div className="p-8 bg-gray-950 min-h-screen">
+    <DashboardLayout>
+      <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Marketplace Hub</h1>
           <p className="text-gray-400 mt-1">
@@ -788,6 +790,7 @@ export default function MarketplaceDashboard() {
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

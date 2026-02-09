@@ -21,6 +21,18 @@ interface MarketQuote {
   change: number | null; // percent
 }
 
+// Latent opportunity signal from screener
+interface OpportunitySignal {
+  symbol: string;
+  confidence: number;
+  type: 'bullish' | 'bearish';
+  pattern: string;
+  qualification: string;
+  entry: number;
+  target: number;
+  riskReward: number;
+}
+
 interface ActivityItem {
   action: string;
   target: string;
@@ -62,29 +74,69 @@ const quickActions: QuickAction[] = [
 
 export default function DashboardPage() {
   const [marketData, setMarketData] = useState<MarketQuote[]>([]);
+  const [opportunities, setOpportunities] = useState<OpportunitySignal[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
 
   const fetchData = useCallback(async () => {
     try {
-      // Fetch market quotes
-      const quotesPromises = ['SPY', 'QQQ', 'NVDA', 'AAPL'].map(async (symbol) => {
-        const result = await api.getMarketQuote(symbol);
-        if (result.success && result.data?.quote) {
-          const price = result.data.quote.price;
-          const change = result.data.quote.changePercent;
-
-          return {
-            symbol,
-            price: Number.isFinite(price) ? price : null,
-            change: typeof change === 'number' && Number.isFinite(change) ? change : null,
-          };
-        }
-        return null;
+      // Fetch top opportunities from screener with latent opportunity scoring
+      // Uses a diverse universe, sorted by confidence (composite latent score)
+      const screenerResult = await api.runScreener({
+        maxSymbols: 30,
+        minConfidence: 30, // Low threshold to get ranked universe
+        signalType: 'all',
       });
       
-      const quotes = (await Promise.all(quotesPromises)).filter((q): q is MarketQuote => q !== null);
-      if (quotes.length > 0) {
+      if (screenerResult.success && screenerResult.data?.signals?.length > 0) {
+        // Take top 5 qualified or near-qualified by confidence
+        const topSignals = screenerResult.data.signals
+          .filter((s: any) => s.qualification !== 'NOT_QUALIFIED')
+          .slice(0, 5)
+          .map((s: any): OpportunitySignal => ({
+            symbol: s.symbol,
+            confidence: s.confidence,
+            type: s.type,
+            pattern: s.pattern,
+            qualification: s.qualification,
+            entry: s.entry,
+            target: s.target,
+            riskReward: s.riskReward,
+          }));
+        setOpportunities(topSignals);
+        
+        // Also get quotes for these symbols
+        const quotesPromises = topSignals.slice(0, 4).map(async (sig: OpportunitySignal) => {
+          const result = await api.getMarketQuote(sig.symbol);
+          if (result.success && result.data?.quote) {
+            const price = result.data.quote.price;
+            const change = result.data.quote.changePercent;
+            return {
+              symbol: sig.symbol,
+              price: Number.isFinite(price) ? price : null,
+              change: typeof change === 'number' && Number.isFinite(change) ? change : null,
+            };
+          }
+          return { symbol: sig.symbol, price: sig.entry, change: null };
+        });
+        const quotes = await Promise.all(quotesPromises);
+        setMarketData(quotes);
+      } else {
+        // Fallback to index ETFs if screener fails
+        const quotesPromises = ['SPY', 'QQQ', 'IWM', 'DIA'].map(async (symbol) => {
+          const result = await api.getMarketQuote(symbol);
+          if (result.success && result.data?.quote) {
+            const price = result.data.quote.price;
+            const change = result.data.quote.changePercent;
+            return {
+              symbol,
+              price: Number.isFinite(price) ? price : null,
+              change: typeof change === 'number' && Number.isFinite(change) ? change : null,
+            };
+          }
+          return null;
+        });
+        const quotes = (await Promise.all(quotesPromises)).filter((q): q is MarketQuote => q !== null);
         setMarketData(quotes);
       }
 
@@ -183,44 +235,80 @@ export default function DashboardPage() {
           >
             <GlassCard hover={false} glowColor="cyan">
               <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <span className="text-cyan-400">📈</span> Market Overview
+                <span className="text-cyan-400">🎯</span> Top Opportunities
+                <span className="text-xs bg-cyan-500/20 text-cyan-400 px-2 py-0.5 rounded-full">Live</span>
               </h3>
+              <p className="text-gray-500 text-xs mb-3">Ranked by AI composite confidence score</p>
               <div className="space-y-3">
-                {marketData.length === 0 ? (
+                {opportunities.length === 0 && marketData.length === 0 ? (
                   <div className="p-4 rounded-xl bg-white/5 text-sm text-gray-400">
-                    Market data unavailable.
+                    Scanning for opportunities...
                   </div>
+                ) : opportunities.length > 0 ? (
+                  opportunities.map((opp, idx) => (
+                    <Link 
+                      key={opp.symbol} 
+                      href={`/dashboard/screener?symbol=${opp.symbol}`}
+                      className="block"
+                    >
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer border border-transparent hover:border-cyan-500/30">
+                        <div className="flex items-center gap-3">
+                          <span className="text-gray-500 text-xs w-4">#{idx + 1}</span>
+                          <div>
+                            <span className="font-medium text-white">{opp.symbol}</span>
+                            <div className="flex items-center gap-2 mt-0.5">
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${opp.type === 'bullish' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
+                                {opp.type === 'bullish' ? '▲' : '▼'} {opp.pattern}
+                              </span>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${opp.qualification === 'QUALIFIED' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
+                                {opp.qualification === 'QUALIFIED' ? '✓' : '~'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="text-right">
+                          <p className="text-white font-medium">{opp.confidence}%</p>
+                          <p className="text-gray-500 text-xs">R:R {opp.riskReward.toFixed(1)}</p>
+                        </div>
+                      </div>
+                    </Link>
+                  ))
                 ) : (
                   marketData.map((item) => (
-                    <div key={item.symbol} className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer">
-                      <span className="font-medium text-white">{item.symbol}</span>
-                      <div className="text-right">
-                        <p className="text-white">
-                          {typeof item.price === 'number' && Number.isFinite(item.price)
-                            ? `$${item.price.toLocaleString()}`
-                            : '—'}
-                        </p>
-                        <p
-                          className={`text-sm ${
-                            typeof item.change === 'number' && Number.isFinite(item.change)
-                              ? item.change >= 0
-                                ? 'text-green-400'
-                                : 'text-red-400'
-                              : 'text-gray-400'
-                          }`}
-                        >
-                          {typeof item.change === 'number' && Number.isFinite(item.change)
-                            ? `${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%`
-                            : '—'}
-                        </p>
+                    <Link key={item.symbol} href={`/dashboard/screener?symbol=${item.symbol}`} className="block">
+                      <div className="flex items-center justify-between p-3 rounded-xl bg-white/5 hover:bg-white/10 transition-colors cursor-pointer">
+                        <span className="font-medium text-white">{item.symbol}</span>
+                        <div className="text-right">
+                          <p className="text-white">
+                            {typeof item.price === 'number' && Number.isFinite(item.price)
+                              ? `$${item.price.toLocaleString()}`
+                              : '—'}
+                          </p>
+                          <p
+                            className={`text-sm ${
+                              typeof item.change === 'number' && Number.isFinite(item.change)
+                                ? item.change >= 0
+                                  ? 'text-green-400'
+                                  : 'text-red-400'
+                                : 'text-gray-400'
+                            }`}
+                          >
+                            {typeof item.change === 'number' && Number.isFinite(item.change)
+                              ? `${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%`
+                              : '—'}
+                          </p>
+                        </div>
                       </div>
-                    </div>
+                    </Link>
                   ))
                 )}
               </div>
               {isLoading && (
-                <div className="mt-2 text-xs text-gray-500 text-center">Updating...</div>
+                <div className="mt-2 text-xs text-gray-500 text-center">Scanning markets...</div>
               )}
+              <Link href="/dashboard/screener" className="block mt-3 text-center text-cyan-400 text-sm hover:text-cyan-300">
+                View all opportunities →
+              </Link>
             </GlassCard>
           </motion.div>
           

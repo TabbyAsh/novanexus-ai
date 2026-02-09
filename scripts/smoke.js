@@ -4,9 +4,13 @@
  * Verifies core endpoints are responding
  */
 const http = require('http');
+const https = require('https');
+const { loadEnvFile, getStackConfig } = require('./stack-config');
 
-const GATEWAY_URL = process.env.GATEWAY_URL || 'http://localhost:3000';
-const WEB_URL = process.env.WEB_URL || 'http://localhost:8080';
+loadEnvFile();
+const { services } = getStackConfig({ includeWeb: true });
+const GATEWAY_URL = services.gateway?.baseUrl || 'http://localhost:3000';
+const WEB_URL = services.web?.baseUrl || 'http://localhost:8080';
 const TIMEOUT = 5000;
 
 const tests = [
@@ -16,7 +20,8 @@ const tests = [
 
 async function httpGet(url) {
   return new Promise((resolve, reject) => {
-    const req = http.get(url, { timeout: TIMEOUT }, (res) => {
+    const client = url.startsWith('https') ? https : http;
+    const req = client.get(url, { timeout: TIMEOUT }, (res) => {
       let data = '';
       res.on('data', chunk => data += chunk);
       res.on('end', () => resolve({ status: res.statusCode, data }));

@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useState, useCallback } from 'react';
+import Link from 'next/link';
 import {
   TrendingUp,
   TrendingDown,
@@ -20,6 +21,7 @@ import {
   Square,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
 // Types
 interface AlpacaAccount {
@@ -80,7 +82,11 @@ export default function TradingDashboard() {
   const [watchlistQuotes, setWatchlistQuotes] = useState<MarketQuote[]>([]);
   const [marketError, setMarketError] = useState<string | null>(null);
 
-  const [alpacaEnabled, setAlpacaEnabled] = useState<boolean | null>(null);
+  const [alpacaStatus, setAlpacaStatus] = useState<{
+    connected: boolean;
+    endpoint?: string;
+    environment?: 'paper' | 'live';
+  } | null>(null);
   const [alpacaError, setAlpacaError] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);
@@ -101,17 +107,21 @@ export default function TradingDashboard() {
       const statusRes = await api.getAlpacaStatus();
 
       if (!statusRes.success || !statusRes.data) {
-        setAlpacaEnabled(null);
+        setAlpacaStatus(null);
         setAccount(null);
         setPositions(null);
         setOrders(null);
         setAlpacaError(statusRes.error?.message || 'Alpaca status unavailable');
         return;
       }
-
+      setAlpacaStatus({
+        connected: statusRes.data.connected,
+        endpoint: statusRes.data.endpoint,
+        environment: statusRes.data.environment,
+      });
       setAlpacaEnabled(statusRes.data.enabled);
 
-      if (!statusRes.data.enabled) {
+      if (!statusRes.data.connected) {
         setAccount(null);
         setPositions(null);
         setOrders(null);
@@ -150,7 +160,7 @@ export default function TradingDashboard() {
       setAlpacaError(errors[0] ?? null);
       setLastUpdate(new Date());
     } catch (error) {
-      setAlpacaEnabled(null);
+      setAlpacaStatus(null);
       setAccount(null);
       setPositions(null);
       setOrders(null);
@@ -247,11 +257,13 @@ export default function TradingDashboard() {
     typeof dayChange === 'number' && Number.isFinite(lastEquity) && lastEquity !== 0
       ? (dayChange / lastEquity) * 100
       : null;
+  const alpacaConnected = alpacaStatus?.connected === true;
 
   return (
-    <div className="p-8 bg-gray-950 min-h-screen">
+    <DashboardLayout>
+      <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Trading Command Center</h1>
           <p className="text-gray-400 mt-1">
@@ -266,22 +278,26 @@ export default function TradingDashboard() {
         <div className="flex items-center gap-4">
           <div
             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
-              alpacaEnabled === null
+              alpacaStatus === null
                 ? 'bg-gray-500/10 text-gray-300'
-                : alpacaEnabled
+                : alpacaStatus.connected
                   ? 'bg-green-500/20 text-green-400'
                   : 'bg-yellow-500/20 text-yellow-400'
             }`}
-            title={alpacaEnabled === null ? 'Alpaca status unavailable' : undefined}
+            title={alpacaStatus === null ? 'Alpaca status unavailable' : undefined}
           >
-            {alpacaEnabled === null ? (
+            {alpacaStatus === null ? (
               <AlertTriangle className="w-4 h-4" />
-            ) : alpacaEnabled ? (
+            ) : alpacaStatus.connected ? (
               <CheckCircle className="w-4 h-4" />
             ) : (
               <AlertTriangle className="w-4 h-4" />
             )}
-            {alpacaEnabled === null ? 'Alpaca Unknown' : alpacaEnabled ? 'Alpaca Connected' : 'Paper Mode'}
+            {alpacaStatus === null
+              ? 'Alpaca Unknown'
+              : alpacaStatus.connected
+                ? `Alpaca Connected${alpacaStatus.environment ? ` (${alpacaStatus.environment})` : ''}`
+                : 'Alpaca Not Connected'}
           </div>
           <button
             onClick={loadAll}
@@ -298,6 +314,21 @@ export default function TradingDashboard() {
         <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-300 flex items-center gap-2">
           <AlertTriangle className="w-4 h-4" />
           <span>{alpacaError}</span>
+        </div>
+      )}
+
+      {!alpacaConnected && alpacaStatus && (
+        <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl text-sm text-yellow-200 flex items-center justify-between gap-4">
+          <div>
+            <p className="font-semibold">Alpaca not connected</p>
+            <p className="text-xs text-yellow-200/80">Connect your Alpaca keys in Settings to load account analytics.</p>
+          </div>
+          <Link
+            href="/dashboard/settings"
+            className="px-3 py-2 bg-yellow-500/20 hover:bg-yellow-500/30 rounded-lg text-xs font-semibold"
+          >
+            Open Settings
+          </Link>
         </div>
       )}
 
@@ -480,7 +511,7 @@ export default function TradingDashboard() {
 
             <button
               onClick={placeOrder}
-              disabled={!orderSymbol || !orderQty || isPlacingOrder || alpacaEnabled !== true}
+              disabled={!orderSymbol || !orderQty || isPlacingOrder || !alpacaConnected}
               className={`w-full py-3 rounded-lg font-medium transition flex items-center justify-center gap-2 ${
                 orderSide === 'buy'
                   ? 'bg-green-600 hover:bg-green-700 disabled:bg-green-600/50'
@@ -509,10 +540,10 @@ export default function TradingDashboard() {
             Open Positions ({Array.isArray(positions) ? positions.length : '—'})
           </h2>
 
-          {alpacaEnabled !== true ? (
+          {!alpacaConnected ? (
             <div className="text-center py-8 text-gray-500">
               <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-              <p>{alpacaEnabled === false ? 'Alpaca not connected' : 'Alpaca status unavailable'}</p>
+              <p>Alpaca not connected</p>
               <p className="text-sm mt-1">Connect Alpaca to load positions.</p>
             </div>
           ) : isLoading && positions === null ? (
@@ -655,10 +686,10 @@ export default function TradingDashboard() {
           Recent Orders
         </h2>
 
-        {alpacaEnabled !== true ? (
+        {!alpacaConnected ? (
           <div className="text-center py-8 text-gray-500">
             <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-            <p>{alpacaEnabled === false ? 'Alpaca not connected' : 'Alpaca status unavailable'}</p>
+            <p>Alpaca not connected</p>
             <p className="text-sm mt-1">Connect Alpaca to load orders.</p>
           </div>
         ) : isLoading && orders === null ? (
@@ -728,6 +759,7 @@ export default function TradingDashboard() {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

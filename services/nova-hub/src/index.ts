@@ -1,16 +1,29 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { createCipheriv, createDecipheriv, randomBytes, createHash } from 'crypto';
 import { createLogger } from '@nova/telemetry';
 import {
   SERVICE_PORTS,
   HTTP_STATUS,
   ERROR_CODES,
+  EVENT_TYPES,
   query,
   queryOne,
   transaction,
   verifyToken,
   nowTimestamp,
   generateId,
+  computeEventHash,
 } from '@nova/shared';
+import {
+  buildGuidedThesis,
+  evaluateExecutionGate,
+  pruneStrategyAnalytics,
+  type CandleIntegrity,
+  type ExecutionGateResult,
+  type GuidedSignalInput,
+  type BuildThesisResult,
+  type ThesisValidationError,
+} from './guided';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -20,6 +33,17 @@ const PORT = process.env.PORT || 3030;
 const MARKETDATA_URL = process.env.MARKETDATA_URL || 'http://localhost:3020';
 const BILLING_URL = process.env.BILLING_URL || 'http://localhost:3006';
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
+// Internal verification (Phase 0)
+const INTERNAL_VERIFY_ENABLED = process.env.INTERNAL_VERIFY_ENABLED === 'true';
+const INTERNAL_VERIFY_TOKEN = process.env.INTERNAL_VERIFY_TOKEN || '';
+const INTERNAL_VERIFY_USER_ID = process.env.INTERNAL_VERIFY_USER_ID || '';
+const INTERNAL_VERIFY_SYMBOL = process.env.INTERNAL_VERIFY_SYMBOL || 'SPY';
+const INTERNAL_VERIFY_DAYS = Math.max(3, Number(process.env.INTERNAL_VERIFY_DAYS || '10'));
+const INTERNAL_VERIFY_PLAN = process.env.INTERNAL_VERIFY_PLAN || '';
+const INTERNAL_VERIFY_ALPACA_KEY = process.env.INTERNAL_VERIFY_ALPACA_KEY || process.env.ALPACA_API_KEY || '';
+const INTERNAL_VERIFY_ALPACA_SECRET = process.env.INTERNAL_VERIFY_ALPACA_SECRET || process.env.ALPACA_SECRET_KEY || '';
+const INTERNAL_VERIFY_ALPACA_ENDPOINT = process.env.INTERNAL_VERIFY_ALPACA_ENDPOINT || process.env.ALPACA_ENDPOINT || '';
+const INTERNAL_DECISION_CARDS_TOKEN = process.env.INTERNAL_DECISION_CARDS_TOKEN || '';
 
 // ============================================
 // Middleware
@@ -78,10 +102,12 @@ async function authMiddleware(req: AuthenticatedRequest, res: Response, next: Ne
 interface PlanLimits {
   daily_journal_entries: number;
   daily_backtests: number;
+  daily_decision_cards: number;
   max_watchlists: number;
   max_alerts: number;
   max_paper_trades: number;
   ai_thesis_daily: number;
+  strategy_analytics_depth: number;
   csv_export: boolean;
   pdf_reports: boolean;
 }
@@ -102,10 +128,12 @@ async function getUserPlan(userId: string): Promise<{ plan: string; limits: Plan
   const limits = config?.limits_json ? JSON.parse(config.limits_json) : {
     daily_journal_entries: 3,
     daily_backtests: 1,
+    daily_decision_cards: 3,
     max_watchlists: 1,
     max_alerts: 5,
     max_paper_trades: 10,
     ai_thesis_daily: 0,
+    strategy_analytics_depth: 0,
     csv_export: false,
     pdf_reports: false,
   };
@@ -118,8 +146,8 @@ async function checkQuota(userId: string, quotaType: string): Promise<{ allowed:
   
   // Get today's usage
   const today = new Date().toISOString().split('T')[0];
-  let usage = await queryOne<{ journal_entries_count: number; backtests_count: number; ai_thesis_count: number }>(
-    'SELECT journal_entries_count, backtests_count, ai_thesis_count FROM usage_tracking WHERE user_id = $1 AND usage_date = $2',
+  let usage = await queryOne<{ journal_entries_count: number; backtests_count: number; ai_thesis_count: number; decision_cards_count: number }>(
+    'SELECT journal_entries_count, backtests_count, ai_thesis_count, decision_cards_count FROM usage_tracking WHERE user_id = $1 AND usage_date = $2',
     [userId, today]
   );
   
@@ -129,7 +157,7 @@ async function checkQuota(userId: string, quotaType: string): Promise<{ allowed:
       'INSERT INTO usage_tracking (user_id, usage_date) VALUES ($1, $2) ON CONFLICT (user_id, usage_date) DO NOTHING',
       [userId, today]
     );
-    usage = { journal_entries_count: 0, backtests_count: 0, ai_thesis_count: 0 };
+    usage = { journal_entries_count: 0, backtests_count: 0, ai_thesis_count: 0, decision_cards_count: 0 };
   }
   
   let limit: number;
@@ -143,6 +171,10 @@ async function checkQuota(userId: string, quotaType: string): Promise<{ allowed:
     case 'backtest':
       limit = limits.daily_backtests;
       current = usage.backtests_count;
+      break;
+    case 'decision_card':
+      limit = limits.daily_decision_cards;
+      current = usage.decision_cards_count;
       break;
     case 'ai_thesis':
       limit = limits.ai_thesis_daily;
@@ -174,6 +206,7 @@ async function incrementUsage(userId: string, quotaType: string): Promise<void> 
   const column = quotaType === 'journal' ? 'journal_entries_count'
     : quotaType === 'backtest' ? 'backtests_count'
     : quotaType === 'ai_thesis' ? 'ai_thesis_count'
+    : quotaType === 'decision_card' ? 'decision_cards_count'
     : null;
     
   if (column) {
@@ -182,6 +215,132 @@ async function incrementUsage(userId: string, quotaType: string): Promise<void> 
        ON CONFLICT (user_id, usage_date) DO UPDATE SET ${column} = usage_tracking.${column} + 1`,
       [userId, today]
     );
+  }
+}
+
+function resolveAnalyticsDepth(plan: string, limits: PlanLimits): number {
+  const raw = (limits as any)?.strategy_analytics_depth;
+  const depth = Number(raw);
+  if (Number.isFinite(depth)) return depth;
+  return plan === 'FREE' ? 0 : 2;
+}
+
+function computeRemaining(limit: number, used: number): number {
+  if (limit === -1) return -1;
+  return Math.max(0, limit - used);
+}
+
+async function getUsageSnapshot(userId: string): Promise<{
+  plan: string;
+  limits: PlanLimits;
+  analyticsDepth: number;
+  usage: { journal: number; backtest: number; aiThesis: number; decisionCards: number };
+  remaining: { journal: number; backtest: number; aiThesis: number; decisionCards: number };
+}> {
+  const { plan, limits } = await getUserPlan(userId);
+  const today = new Date().toISOString().split('T')[0];
+  let usage = await queryOne<{
+    journal_entries_count: number;
+    backtests_count: number;
+    ai_thesis_count: number;
+    decision_cards_count: number;
+  }>(
+    'SELECT journal_entries_count, backtests_count, ai_thesis_count, decision_cards_count FROM usage_tracking WHERE user_id = $1 AND usage_date = $2',
+    [userId, today]
+  );
+
+  if (!usage) {
+    await query(
+      'INSERT INTO usage_tracking (user_id, usage_date) VALUES ($1, $2) ON CONFLICT (user_id, usage_date) DO NOTHING',
+      [userId, today]
+    );
+    usage = { journal_entries_count: 0, backtests_count: 0, ai_thesis_count: 0, decision_cards_count: 0 };
+  }
+
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+  return {
+    plan,
+    limits,
+    analyticsDepth,
+    usage: {
+      journal: usage.journal_entries_count || 0,
+      backtest: usage.backtests_count || 0,
+      aiThesis: usage.ai_thesis_count || 0,
+      decisionCards: usage.decision_cards_count || 0,
+    },
+    remaining: {
+      journal: computeRemaining(limits.daily_journal_entries, usage.journal_entries_count || 0),
+      backtest: computeRemaining(limits.daily_backtests, usage.backtests_count || 0),
+      aiThesis: computeRemaining(limits.ai_thesis_daily, usage.ai_thesis_count || 0),
+      decisionCards: computeRemaining(limits.daily_decision_cards, usage.decision_cards_count || 0),
+    },
+  };
+}
+// ============================================
+// Broker Encryption Helpers (Alpaca)
+// ============================================
+
+const BROKER_ENCRYPTION_KEY = process.env.BROKER_ENCRYPTION_KEY || process.env.DATA_ENCRYPTION_KEY || '';
+const ALPACA_DEFAULT_PAPER_ENDPOINT = 'https://paper-api.alpaca.markets/v2';
+const ALPACA_DEFAULT_LIVE_ENDPOINT = 'https://api.alpaca.markets/v2';
+
+function getBrokerKey(): Buffer {
+  if (!BROKER_ENCRYPTION_KEY) {
+    throw new Error('BROKER_ENCRYPTION_KEY is not configured');
+  }
+  return createHash('sha256').update(BROKER_ENCRYPTION_KEY).digest();
+}
+
+function encryptSecret(value: string): string {
+  const iv = randomBytes(12);
+  const cipher = createCipheriv('aes-256-gcm', getBrokerKey(), iv);
+  const encrypted = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
+  const tag = cipher.getAuthTag();
+  return Buffer.concat([iv, tag, encrypted]).toString('base64');
+}
+
+function decryptSecret(payload: string): string {
+  const raw = Buffer.from(payload, 'base64');
+  const iv = raw.subarray(0, 12);
+  const tag = raw.subarray(12, 28);
+  const encrypted = raw.subarray(28);
+  const decipher = createDecipheriv('aes-256-gcm', getBrokerKey(), iv);
+  decipher.setAuthTag(tag);
+  const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  return decrypted.toString('utf8');
+}
+
+function resolveAlpacaEndpoint(env: 'paper' | 'live', endpoint?: string): string {
+  const base = endpoint || (env === 'live' ? ALPACA_DEFAULT_LIVE_ENDPOINT : ALPACA_DEFAULT_PAPER_ENDPOINT);
+  return base.replace(/\/$/, '');
+}
+
+// ============================================
+// Event Emission Helper (append-only)
+// ============================================
+async function emitEvent(
+  orgId: string,
+  actorType: 'USER' | 'BOT' | 'SYSTEM',
+  actorId: string,
+  type: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  try {
+    const lastEvent = await queryOne<{ hash: string }>(
+      'SELECT hash FROM events WHERE org_id = $1 ORDER BY ts DESC LIMIT 1',
+      [orgId]
+    );
+    const prevHash = lastEvent?.hash || '0'.repeat(64);
+    const ts = nowTimestamp();
+    const hash = computeEventHash(prevHash, payload, type, ts, actorType, actorId);
+
+    await query(
+      `INSERT INTO events (org_id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [orgId, actorType, actorId, type, ts, JSON.stringify(payload), prevHash, hash]
+    );
+  } catch (error) {
+    logger.error('Failed to emit event', error as Error);
   }
 }
 
@@ -203,6 +362,17 @@ type HistoricalBar = {
   low: number;
   close: number;
   volume: number;
+};
+type HubIndicators = {
+  symbol: string;
+  rsi: number | null;
+  macd: { value: number; signal: number; histogram: number } | null;
+  sma20: number | null;
+  sma50: number | null;
+  sma200: number | null;
+  asOf: string | null;
+  provider: string;
+  computedAt: string;
 };
 
 async function getQuote(symbol: string): Promise<HubQuote | null> {
@@ -238,6 +408,34 @@ async function getQuote(symbol: string): Promise<HubQuote | null> {
   }
 }
 
+async function getIndicators(symbol: string): Promise<HubIndicators | null> {
+  const sym = symbol.toUpperCase();
+
+  try {
+    const res = await fetch(`${MARKETDATA_URL}/v1/market/indicators/${encodeURIComponent(sym)}`);
+    const data = (await res.json().catch(() => null)) as any;
+
+    const indicators = data?.data?.indicators;
+    if (!res.ok || !data?.success || !indicators) {
+      return null;
+    }
+
+    return {
+      symbol: indicators.symbol || sym,
+      rsi: typeof indicators.rsi === 'number' ? indicators.rsi : null,
+      macd: indicators.macd || null,
+      sma20: typeof indicators.sma20 === 'number' ? indicators.sma20 : null,
+      sma50: typeof indicators.sma50 === 'number' ? indicators.sma50 : null,
+      sma200: typeof indicators.sma200 === 'number' ? indicators.sma200 : null,
+      asOf: indicators.asOf || null,
+      provider: indicators.provider || 'unknown',
+      computedAt: indicators.computedAt || new Date().toISOString(),
+    };
+  } catch (err) {
+    logger.warn('Market indicators unavailable', { symbol: sym, error: (err as Error).message });
+    return null;
+  }
+}
 async function getHistoricalData(symbol: string, startDate: string, endDate: string): Promise<HistoricalBar[]> {
   const sym = symbol.toUpperCase();
 
@@ -256,13 +454,24 @@ async function getHistoricalData(symbol: string, startDate: string, endDate: str
 
   const url = `${MARKETDATA_URL}/v1/market/candles/${encodeURIComponent(sym)}?interval=1d&limit=${limit}`;
 
-  const res = await fetch(url);
-  const data = (await res.json().catch(() => null)) as any;
+  let fetchRes: globalThis.Response;
+  try {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 8000);
+    try {
+      fetchRes = await fetch(url, { signal: controller.signal });
+    } finally {
+      clearTimeout(timeout);
+    }
+  } catch (_error) {
+    throw new Error('Historical market data unavailable on current data plan. Candles require paid provider access.');
+  }
+
+  const data = (await fetchRes.json().catch(() => null)) as any;
 
   const candles: any[] | undefined = data?.data?.candles;
-  if (!res.ok || !data?.success || !Array.isArray(candles)) {
-    const msg = data?.error?.message || 'Historical market data unavailable';
-    throw new Error(msg);
+  if (!fetchRes.ok || !data?.success || !Array.isArray(candles)) {
+    throw new Error('Historical market data unavailable on current data plan. Candles require paid provider access.');
   }
 
   const startKey = startDate;
@@ -285,6 +494,148 @@ async function getHistoricalData(symbol: string, startDate: string, endDate: str
     .filter((b): b is HistoricalBar => !!b)
     .filter((b) => b.date >= startKey && b.date <= endKey);
 }
+// ============================================
+// Alpaca Broker Client (per-user)
+// ============================================
+
+type AlpacaConnectionRow = {
+  id: string;
+  api_key_enc: string;
+  api_secret_enc: string;
+  endpoint: string;
+  environment: 'paper' | 'live';
+  key_last4: string | null;
+  last_verified_at: string | null;
+  is_active: boolean;
+};
+
+type AlpacaAccount = {
+  id: string;
+  account_number: string;
+  status: string;
+  currency: string;
+  buying_power: string;
+  cash: string;
+  portfolio_value: string;
+  equity: string;
+  last_equity: string;
+  pattern_day_trader: boolean;
+  trading_blocked: boolean;
+};
+
+type AlpacaPosition = {
+  symbol: string;
+  qty: string;
+  avg_entry_price: string;
+  market_value: string;
+  unrealized_pl: string;
+  unrealized_plpc: string;
+  current_price: string;
+  side: string;
+};
+
+type AlpacaOrder = {
+  id: string;
+  symbol: string;
+  qty: string;
+  filled_qty: string;
+  side: 'buy' | 'sell';
+  type: string;
+  status: string;
+  filled_avg_price: string | null;
+  created_at: string;
+};
+
+type AlpacaPortfolioHistory = {
+  timestamp: number[];
+  equity: number[];
+  profit_loss: number[];
+  profit_loss_pct: number[];
+  timeframe: string;
+};
+
+class AlpacaClient {
+  private baseUrl: string;
+  private headers: Record<string, string>;
+
+  constructor(params: { apiKey: string; apiSecret: string; endpoint: string }) {
+    this.baseUrl = params.endpoint.replace(/\/$/, '');
+    this.headers = {
+      'APCA-API-KEY-ID': params.apiKey,
+      'APCA-API-SECRET-KEY': params.apiSecret,
+      'Content-Type': 'application/json',
+    };
+  }
+
+  private async request<T>(path: string, init?: RequestInit): Promise<T> {
+    const res = await fetch(`${this.baseUrl}${path}`, {
+      ...init,
+      headers: { ...this.headers, ...(init?.headers || {}) },
+    });
+
+    if (!res.ok) {
+      const body = await res.text().catch(() => '');
+      throw new Error(`Alpaca API error (${res.status}): ${body || 'Request failed'}`);
+    }
+
+    return (await res.json()) as T;
+  }
+
+  async getAccount(): Promise<AlpacaAccount> {
+    return this.request<AlpacaAccount>('/account');
+  }
+
+  async getPositions(): Promise<AlpacaPosition[]> {
+    return this.request<AlpacaPosition[]>('/positions');
+  }
+
+  async getOrders(status: 'open' | 'closed' | 'all' = 'all'): Promise<AlpacaOrder[]> {
+    return this.request<AlpacaOrder[]>(`/orders?status=${status}`);
+  }
+
+  async placeOrder(params: {
+    symbol: string;
+    qty: number;
+    side: 'buy' | 'sell';
+    type?: 'market' | 'limit' | 'stop' | 'stop_limit';
+    time_in_force?: 'day' | 'gtc' | 'opg' | 'cls' | 'ioc' | 'fok';
+    limit_price?: number;
+    stop_price?: number;
+  }): Promise<AlpacaOrder> {
+    return this.request<AlpacaOrder>('/orders', {
+      method: 'POST',
+      body: JSON.stringify({
+        symbol: params.symbol,
+        qty: params.qty.toString(),
+        side: params.side,
+        type: params.type || 'market',
+        time_in_force: params.time_in_force || 'day',
+        ...(params.limit_price ? { limit_price: params.limit_price.toString() } : {}),
+        ...(params.stop_price ? { stop_price: params.stop_price.toString() } : {}),
+      }),
+    });
+  }
+
+  async getPortfolioHistory(params: { period: string; timeframe: string }): Promise<AlpacaPortfolioHistory> {
+    const qs = new URLSearchParams({ period: params.period, timeframe: params.timeframe });
+    return this.request<AlpacaPortfolioHistory>(`/account/portfolio/history?${qs.toString()}`);
+  }
+}
+
+async function getActiveAlpacaConnection(userId: string): Promise<AlpacaConnectionRow | null> {
+  return await queryOne<AlpacaConnectionRow>(
+    `SELECT id, api_key_enc, api_secret_enc, endpoint, environment, key_last4, last_verified_at, is_active
+     FROM broker_connections
+     WHERE user_id = $1 AND provider = 'ALPACA' AND is_active = true`,
+    [userId]
+  );
+}
+
+function buildAlpacaClient(connection: AlpacaConnectionRow): AlpacaClient {
+  const apiKey = decryptSecret(connection.api_key_enc);
+  const apiSecret = decryptSecret(connection.api_secret_enc);
+  return new AlpacaClient({ apiKey, apiSecret, endpoint: connection.endpoint });
+}
 
 // ============================================
 // Health Check
@@ -297,6 +648,341 @@ app.get('/health', async (_req: Request, res: Response) => {
   } catch (error) {
     res.status(503).json({ status: 'unhealthy', service: 'nova-hub' });
   }
+});
+// ============================================
+// Internal Verification (Phase 1)
+// ============================================
+
+type VerificationStatus = 'PASS' | 'FAIL' | 'UNAVAILABLE';
+type VerificationCheck = {
+  name: string;
+  status: VerificationStatus;
+  message: string;
+  details?: Record<string, unknown>;
+};
+
+function resolveInternalToken(req: Request): string {
+  const headerToken = req.headers['x-internal-verify-token'];
+  if (typeof headerToken === 'string') return headerToken;
+  if (Array.isArray(headerToken) && headerToken[0]) return headerToken[0];
+  const queryToken = req.query?.token;
+  return typeof queryToken === 'string' ? queryToken : '';
+}
+
+app.get('/internal/verify', async (req: Request, res: Response) => {
+  if (!INTERNAL_VERIFY_ENABLED) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Not found' },
+    });
+  }
+
+  if (INTERNAL_VERIFY_TOKEN && resolveInternalToken(req) !== INTERNAL_VERIFY_TOKEN) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Forbidden' },
+    });
+  }
+
+  const startedAt = Date.now();
+  const checks: VerificationCheck[] = [];
+  const addCheck = (check: VerificationCheck) => checks.push(check);
+
+  const verifySymbol = typeof req.query?.symbol === 'string' ? req.query.symbol : INTERNAL_VERIFY_SYMBOL;
+  const daysParam = typeof req.query?.days === 'string' ? Number(req.query.days) : INTERNAL_VERIFY_DAYS;
+  const verifyDays = Math.max(3, Number.isFinite(daysParam) ? daysParam : INTERNAL_VERIFY_DAYS);
+  const endDate = new Date();
+  const startDate = new Date(endDate.getTime() - verifyDays * 24 * 60 * 60 * 1000);
+  const startKey = startDate.toISOString().split('T')[0];
+  const endKey = endDate.toISOString().split('T')[0];
+
+  // Market candles verification (availability + integrity)
+  try {
+    const limit = Math.min(Math.max(5, verifyDays), 365);
+    const url = `${MARKETDATA_URL}/v1/market/candles/${encodeURIComponent(verifySymbol)}?interval=1d&limit=${limit}`;
+    const resCandles = await fetch(url);
+    const payload = (await resCandles.json().catch(() => null)) as any;
+    const candles = payload?.data?.candles;
+    const provider = payload?.data?.provider;
+    const integrity = payload?.data?.integrity ?? candles?.[0]?.integrity;
+
+    const hasCandles = Array.isArray(candles) && candles.length > 0;
+    const hasNumeric = hasCandles && candles.some((c: any) => Number.isFinite(c?.close));
+    const hasIntegrity =
+      integrity &&
+      typeof integrity.source_type === 'string' &&
+      typeof integrity.source_identifier === 'string' &&
+      typeof integrity.latency_class === 'string' &&
+      Number.isFinite(integrity.confidence_score) &&
+      integrity.timestamp_range &&
+      typeof integrity.timestamp_range.start === 'string' &&
+      typeof integrity.timestamp_range.end === 'string';
+
+    if (resCandles.ok && payload?.success && hasCandles && hasNumeric && hasIntegrity) {
+      addCheck({
+        name: 'market_candles',
+        status: 'PASS',
+        message: `Received ${candles.length} candles with integrity tagging.`,
+        details: {
+          symbol: verifySymbol,
+          startDate: startKey,
+          endDate: endKey,
+          provider,
+          integrity,
+        },
+      });
+    } else {
+      addCheck({
+        name: 'market_candles',
+        status: 'FAIL',
+        message: 'Candle availability or integrity tagging failed.',
+        details: {
+          symbol: verifySymbol,
+          startDate: startKey,
+          endDate: endKey,
+          provider,
+          integrity,
+        },
+      });
+    }
+  } catch (error) {
+    const message = (error as Error).message || 'Market candles unavailable.';
+    const status: VerificationStatus = message.toLowerCase().includes('unavailable') ? 'UNAVAILABLE' : 'FAIL';
+    addCheck({
+      name: 'market_candles',
+      status,
+      message,
+      details: { symbol: verifySymbol, startDate: startKey, endDate: endKey },
+    });
+  }
+
+  // Provider health snapshot (informational only)
+  try {
+    const healthRes = await fetch(`${MARKETDATA_URL}/health`);
+    const healthPayload = (await healthRes.json().catch(() => null)) as any;
+    if (healthRes.ok) {
+      addCheck({
+        name: 'marketdata_provider_health',
+        status: 'PASS',
+        message: 'Provider health snapshot captured.',
+        details: {
+          providers: healthPayload?.providers,
+          providerHealth: healthPayload?.providerHealth,
+        },
+      });
+    } else {
+      addCheck({
+        name: 'marketdata_provider_health',
+        status: 'UNAVAILABLE',
+        message: 'Provider health snapshot unavailable.',
+      });
+    }
+  } catch (error) {
+    addCheck({
+      name: 'marketdata_provider_health',
+      status: 'UNAVAILABLE',
+      message: (error as Error).message || 'Provider health snapshot unavailable.',
+    });
+  }
+
+  // Alpaca history + plan window verification
+  let verifyUserId = INTERNAL_VERIFY_USER_ID;
+  if (!verifyUserId) {
+    const row = await queryOne<{ user_id: string }>(
+      `SELECT user_id
+       FROM broker_connections
+       WHERE provider = 'ALPACA' AND is_active = true
+       ORDER BY last_verified_at DESC NULLS LAST, updated_at DESC
+       LIMIT 1`
+    );
+    verifyUserId = row?.user_id || '';
+  }
+  const requestedPeriod = typeof req.query?.alpacaPeriod === 'string' ? req.query.alpacaPeriod : 'all';
+  const requestedTimeframe = typeof req.query?.alpacaTimeframe === 'string' ? req.query.alpacaTimeframe : '1D';
+  const allowedPeriods = ['1M', '3M', '6M', '1A', 'all'];
+  const normalizedPeriod = requestedPeriod.toUpperCase();
+
+  const resolvePeriodForPlan = (plan: string) => {
+    if (plan === 'PRO') {
+      return allowedPeriods.includes(normalizedPeriod) ? normalizedPeriod : 'all';
+    }
+    if (plan === 'LITE') {
+      return ['1M', '3M', '6M'].includes(normalizedPeriod) ? normalizedPeriod : '3M';
+    }
+    return '1M';
+  };
+
+  const recordPlanWindowCheck = (plan: string, resolvedPeriod: string, context?: Record<string, unknown>) => {
+    const planWindowOk =
+      (plan === 'PRO' && allowedPeriods.includes(resolvedPeriod)) ||
+      (plan === 'LITE' && ['1M', '3M', '6M'].includes(resolvedPeriod) && resolvedPeriod !== 'all') ||
+      (plan !== 'PRO' && plan !== 'LITE' && resolvedPeriod === '1M');
+
+    const forcedWindow = plan !== 'PRO' && normalizedPeriod === 'ALL' ? resolvedPeriod !== 'all' : true;
+
+    if (planWindowOk && forcedWindow) {
+      addCheck({
+        name: 'alpaca_plan_window',
+        status: 'PASS',
+        message: 'Plan window enforced.',
+        details: { plan, requestedPeriod, resolvedPeriod, ...context },
+      });
+    } else {
+      addCheck({
+        name: 'alpaca_plan_window',
+        status: 'FAIL',
+        message: 'Plan window not enforced as expected.',
+        details: { plan, requestedPeriod, resolvedPeriod, ...context },
+      });
+    }
+  };
+
+  if (!verifyUserId && INTERNAL_VERIFY_ALPACA_KEY && INTERNAL_VERIFY_ALPACA_SECRET) {
+    const planOverride = ['FREE', 'LITE', 'PRO'].includes(INTERNAL_VERIFY_PLAN.toUpperCase())
+      ? INTERNAL_VERIFY_PLAN.toUpperCase()
+      : 'FREE';
+    const period = resolvePeriodForPlan(planOverride);
+    const endpoint = INTERNAL_VERIFY_ALPACA_ENDPOINT || ALPACA_DEFAULT_PAPER_ENDPOINT;
+    try {
+      const client = new AlpacaClient({
+        apiKey: INTERNAL_VERIFY_ALPACA_KEY,
+        apiSecret: INTERNAL_VERIFY_ALPACA_SECRET,
+        endpoint,
+      });
+      const history = await client.getPortfolioHistory({ period, timeframe: requestedTimeframe });
+      const pointCount = Array.isArray(history.timestamp) ? history.timestamp.length : 0;
+
+      if (pointCount > 0) {
+        addCheck({
+          name: 'alpaca_history',
+          status: 'PASS',
+          message: `Received ${pointCount} history points.`,
+          details: { plan: planOverride, period, timeframe: requestedTimeframe, endpoint, mode: 'service' },
+        });
+      } else {
+        addCheck({
+          name: 'alpaca_history',
+          status: 'FAIL',
+          message: 'No history points returned.',
+          details: { plan: planOverride, period, timeframe: requestedTimeframe, endpoint, mode: 'service' },
+        });
+      }
+    } catch (error) {
+      const message = (error as Error).message || 'Alpaca history unavailable.';
+      addCheck({
+        name: 'alpaca_history',
+        status: 'UNAVAILABLE',
+        message,
+        details: { plan: planOverride, period, timeframe: requestedTimeframe, endpoint, mode: 'service' },
+      });
+    }
+
+    recordPlanWindowCheck(planOverride, period, { mode: 'service' });
+  } else if (!verifyUserId) {
+    addCheck({
+      name: 'alpaca_history',
+      status: 'UNAVAILABLE',
+      message: 'No active Alpaca connection found.',
+    });
+    addCheck({
+      name: 'alpaca_plan_window',
+      status: 'UNAVAILABLE',
+      message: 'No active Alpaca connection found.',
+    });
+  } else {
+    const connection = await getActiveAlpacaConnection(verifyUserId);
+    if (!connection) {
+      addCheck({
+        name: 'alpaca_history',
+        status: 'UNAVAILABLE',
+        message: 'Alpaca connection missing or inactive.',
+        details: { userId: verifyUserId },
+      });
+      addCheck({
+        name: 'alpaca_plan_window',
+        status: 'UNAVAILABLE',
+        message: 'Alpaca connection missing or inactive.',
+        details: { userId: verifyUserId },
+      });
+    } else {
+      const { plan } = await getUserPlan(verifyUserId);
+      const period = resolvePeriodForPlan(plan);
+
+      try {
+        const client = buildAlpacaClient(connection);
+        const history = await client.getPortfolioHistory({ period, timeframe: requestedTimeframe });
+        const pointCount = Array.isArray(history.timestamp) ? history.timestamp.length : 0;
+
+        if (pointCount > 0) {
+          addCheck({
+            name: 'alpaca_history',
+            status: 'PASS',
+            message: `Received ${pointCount} history points.`,
+            details: { plan, period, timeframe: requestedTimeframe, userId: verifyUserId },
+          });
+        } else {
+          addCheck({
+            name: 'alpaca_history',
+            status: 'FAIL',
+            message: 'No history points returned.',
+            details: { plan, period, timeframe: requestedTimeframe, userId: verifyUserId },
+          });
+        }
+      } catch (error) {
+        const message = (error as Error).message || 'Alpaca history unavailable.';
+        addCheck({
+          name: 'alpaca_history',
+          status: 'UNAVAILABLE',
+          message,
+          details: { plan, period, timeframe: requestedTimeframe, userId: verifyUserId },
+        });
+      }
+
+      recordPlanWindowCheck(plan, period, { userId: verifyUserId });
+    }
+  }
+
+  const blockingChecks = new Set(['market_candles']);
+  const blockingResults = checks.filter((c) => blockingChecks.has(c.name));
+  const overallStatus: VerificationStatus =
+    blockingResults.length === 0
+      ? 'PASS'
+      : blockingResults.every((c) => c.status === 'PASS')
+        ? 'PASS'
+        : 'FAIL';
+  const finishedAt = Date.now();
+
+
+  res.json({
+    success: overallStatus === 'PASS',
+    data: {
+      status: overallStatus,
+      checks,
+      startedAt: new Date(startedAt).toISOString(),
+      finishedAt: new Date(finishedAt).toISOString(),
+      durationMs: finishedAt - startedAt,
+    },
+  });
+});
+
+// ============================================
+// Usage / Plan Gating
+// ============================================
+
+app.get('/v1/usage', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const snapshot = await getUsageSnapshot(userId);
+  res.json({
+    success: true,
+    data: {
+      plan: snapshot.plan,
+      limits: snapshot.limits,
+      analyticsDepth: snapshot.analyticsDepth,
+      usage: snapshot.usage,
+      remaining: snapshot.remaining,
+      upgradeUrl: '/pricing',
+    },
+  });
 });
 
 // ============================================
@@ -655,6 +1341,1887 @@ app.get('/v1/journal/streak', authMiddleware, async (req: AuthenticatedRequest, 
     },
   });
 });
+// ============================================
+// Decisions API (Decision -> Replay)
+// ============================================
+
+type DecisionStatus = 'DRAFT' | 'ACTIVE' | 'EXECUTED' | 'CANCELLED' | 'ARCHIVED';
+type DecisionActionType = 'BUY' | 'SELL' | 'HOLD' | 'WATCH' | 'INACTION';
+
+const DECISION_STATUSES = new Set<DecisionStatus>([
+  'DRAFT',
+  'ACTIVE',
+  'EXECUTED',
+  'CANCELLED',
+  'ARCHIVED',
+]);
+const DECISION_ACTION_TYPES = new Set<DecisionActionType>([
+  'BUY',
+  'SELL',
+  'HOLD',
+  'WATCH',
+  'INACTION',
+]);
+
+function normalizeDecisionStatus(value?: string): DecisionStatus | null {
+  if (!value) return null;
+  const upper = value.toUpperCase() as DecisionStatus;
+  return DECISION_STATUSES.has(upper) ? upper : null;
+}
+
+function normalizeDecisionActionType(value?: string, direction?: string): DecisionActionType {
+  if (value) {
+    const upper = value.toUpperCase() as DecisionActionType;
+    if (DECISION_ACTION_TYPES.has(upper)) return upper;
+  }
+  const dir = (direction || '').toUpperCase();
+  if (dir === 'SHORT' || dir === 'SELL') return 'SELL';
+  if (dir === 'LONG' || dir === 'BUY') return 'BUY';
+  return 'HOLD';
+}
+
+function parseTimeHorizonDays(raw?: string): number | null {
+  if (!raw) return null;
+  const trimmed = raw.trim().toLowerCase();
+  const match = trimmed.match(/^(\d+)\s*(d|day|days|w|wk|week|weeks|m|mo|month|months|y|yr|year|years)$/i);
+  if (!match) return null;
+  const count = parseInt(match[1], 10);
+  const unit = match[2].toLowerCase();
+  if (!Number.isFinite(count) || count <= 0) return null;
+  if (unit.startsWith('d')) return count;
+  if (unit.startsWith('w')) return count * 7;
+  if (unit.startsWith('m')) return count * 30;
+  if (unit.startsWith('y')) return count * 365;
+  return null;
+}
+
+function getDecisionReplayWindow(plan: string): { days: number; label: string } {
+  if (plan === 'PRO') return { days: 365, label: '1y' };
+  if (plan === 'LITE') return { days: 90, label: '3m' };
+  return { days: 7, label: '7d' };
+}
+
+async function checkDecisionQuota(userId: string): Promise<{
+  allowed: boolean;
+  plan: string;
+  limit: number;
+  used: number;
+  message?: string;
+}> {
+  const { plan } = await getUserPlan(userId);
+  if (plan !== 'FREE') {
+    return { allowed: true, plan, limit: -1, used: 0 };
+  }
+
+  const result = await queryOne<{ count: string }>(
+    `SELECT COUNT(*)::text as count
+     FROM decisions
+     WHERE user_id = $1 AND created_at::date = CURRENT_DATE`,
+    [userId]
+  );
+
+  const used = parseInt(result?.count || '0', 10);
+  const limit = 3;
+  if (used >= limit) {
+    return {
+      allowed: false,
+      plan,
+      limit,
+      used,
+      message: 'Free plan decision limit reached. Upgrade to Lite for more decisions.',
+    };
+  }
+  return { allowed: true, plan, limit, used };
+}
+
+function parseDecisionJson<T>(value: unknown, fallback: T): T {
+  if (value === null || value === undefined) return fallback;
+  if (typeof value === 'string') {
+    try {
+      return JSON.parse(value) as T;
+    } catch {
+      return fallback;
+    }
+  }
+  return value as T;
+}
+
+function applyDecisionEvent(
+  state: Record<string, any>,
+  event: { eventType: string; payload: Record<string, any>; ts: string }
+) {
+  const payload = event.payload || {};
+
+  if (typeof payload.intent === 'string') {
+    state.intent = payload.intent;
+  }
+  if (payload.constraints !== undefined) {
+    state.constraints = payload.constraints;
+  }
+  if (payload.rationale !== undefined) {
+    state.rationale = payload.rationale;
+  }
+  if (payload.journalEntryId !== undefined) {
+    state.journalEntryId = payload.journalEntryId;
+  }
+  if (payload.status) {
+    const normalized = normalizeDecisionStatus(payload.status);
+    if (normalized) {
+      state.status = normalized;
+    }
+  }
+  if (payload.note) {
+    state.notes = state.notes || [];
+    state.notes.push({ note: payload.note, ts: event.ts });
+  }
+  if (payload.quote) {
+    state.quoteSnapshot = payload.quote;
+  }
+  if (payload.snapshot) {
+    state.snapshot = payload.snapshot;
+  }
+  if (payload.actionType) {
+    state.actionType = normalizeDecisionActionType(payload.actionType, state.direction);
+  }
+  if (payload.thesis !== undefined) {
+    state.thesis = payload.thesis;
+  }
+  if (payload.invalidationRule !== undefined) {
+    state.invalidationRule = payload.invalidationRule;
+  }
+  if (payload.timeHorizon !== undefined) {
+    state.timeHorizon = payload.timeHorizon;
+  }
+  if (payload.riskNote !== undefined) {
+    state.riskNote = payload.riskNote;
+  }
+  state.lastEventAt = event.ts;
+}
+
+type DecisionCardScore = {
+  model: string;
+  score: number;
+  signalConfidence: number;
+  dataConfidence: number | null;
+  expectedValue: number;
+  riskRewardRatio: number;
+  riskEnvelope: Record<string, unknown> | null;
+  gate?: Record<string, unknown>;
+  regime?: string | null;
+  strategy?: Record<string, unknown>;
+  computedAt: string;
+  expiresAt?: string | null;
+};
+
+function normalizeSignalConfidence(value: unknown): number {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return 0;
+  return value > 1 ? value / 100 : value;
+}
+
+function stableStringify(value: unknown): string {
+  return JSON.stringify(value, (_key, val) => {
+    if (val && typeof val === 'object' && !Array.isArray(val)) {
+      return Object.keys(val as Record<string, unknown>)
+        .sort()
+        .reduce<Record<string, unknown>>((acc, key) => {
+          acc[key] = (val as Record<string, unknown>)[key];
+          return acc;
+        }, {});
+    }
+    return val;
+  });
+}
+
+function computeDecisionCardScore(card: Record<string, any>, gate?: Record<string, unknown>, regime?: string | null): DecisionCardScore {
+  const thesis = card?.thesis || {};
+  const signalConfidence = normalizeSignalConfidence(thesis.confidence ?? card?.decision?.confidence ?? 0);
+  const dataConfidence = typeof thesis?.dataIntegrity?.confidence_score === 'number'
+    ? thesis.dataIntegrity.confidence_score
+    : null;
+  const riskRewardRatioRaw = typeof thesis.riskRewardRatio === 'number' && Number.isFinite(thesis.riskRewardRatio)
+    ? thesis.riskRewardRatio
+    : 0;
+  const riskRewardRatio = riskRewardRatioRaw > 0
+    ? riskRewardRatioRaw
+    : (thesis.entryPrice && thesis.targetPrice && thesis.stopLoss)
+      ? (() => {
+        const denom = Math.abs(thesis.entryPrice - thesis.stopLoss);
+        return denom > 0 ? Math.abs(thesis.targetPrice - thesis.entryPrice) / denom : 0;
+      })()
+      : 0;
+  const reward = riskRewardRatio > 0 ? riskRewardRatio : 1;
+  const expectedValue = (signalConfidence * reward) - ((1 - signalConfidence) * 1);
+  const evNormalized = Math.max(-1, Math.min(1, expectedValue / Math.max(1, reward)));
+  const confidenceComposite = (signalConfidence + (dataConfidence ?? signalConfidence)) / 2;
+  const score = Math.round(((confidenceComposite * 0.7) + ((evNormalized + 1) / 2) * 0.3) * 100);
+
+  return {
+    model: 'nexus-v1',
+    score,
+    signalConfidence,
+    dataConfidence,
+    expectedValue: Math.round(expectedValue * 100) / 100,
+    riskRewardRatio: Math.round((riskRewardRatio || 0) * 100) / 100,
+    riskEnvelope: card?.risk?.envelope ?? null,
+    gate,
+    regime: regime ?? null,
+    computedAt: nowTimestamp(),
+    expiresAt: thesis.expiresAt ?? null,
+  };
+}
+
+function buildDecisionCardHash(card: Record<string, any>, score: Record<string, unknown>): string {
+  const payload = { card, score };
+  return createHash('sha256').update(stableStringify(payload)).digest('hex');
+}
+
+function resolveInternalDecisionToken(req: Request): string {
+  const headerToken = req.headers['x-internal-decision-token'];
+  if (typeof headerToken === 'string') return headerToken;
+  if (Array.isArray(headerToken) && headerToken[0]) return headerToken[0];
+  const queryToken = req.query?.token;
+  return typeof queryToken === 'string' ? queryToken : '';
+}
+
+type DecisionReplayMetrics = {
+  entryPrice: number;
+  exitPrice: number;
+  entryTime: string;
+  exitTime: string;
+  returnPct: number;
+  maxDrawdownPct: number;
+  bestExcursionPct: number;
+  worstExcursionPct: number;
+  bars: number;
+  windowDays: number;
+};
+
+function computeDecisionReplayMetrics(
+  bars: HistoricalBar[],
+  entryPrice: number,
+  entryTime: string,
+  direction: string,
+  windowDays: number
+): DecisionReplayMetrics {
+  const multiplier = (direction || '').toUpperCase().includes('SHORT') || (direction || '').toUpperCase() === 'SELL' ? -1 : 1;
+  const returns = bars.map((bar) => ((bar.close - entryPrice) / entryPrice) * 100 * multiplier);
+  const exitBar = bars[bars.length - 1];
+  let best = returns[0];
+  let worst = returns[0];
+  let peak = returns[0];
+  let maxDrawdown = 0;
+
+  for (const r of returns) {
+    if (r > best) best = r;
+    if (r < worst) worst = r;
+    if (r > peak) peak = r;
+    const drawdown = r - peak;
+    if (drawdown < maxDrawdown) maxDrawdown = drawdown;
+  }
+
+  return {
+    entryPrice,
+    exitPrice: exitBar.close,
+    entryTime,
+    exitTime: exitBar.date,
+    returnPct: Math.round(returns[returns.length - 1] * 100) / 100,
+    maxDrawdownPct: Math.round(maxDrawdown * 100) / 100,
+    bestExcursionPct: Math.round(best * 100) / 100,
+    worstExcursionPct: Math.round(worst * 100) / 100,
+    bars: bars.length,
+    windowDays,
+  };
+}
+
+// List decisions
+app.get('/v1/decisions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { status, symbol, limit = '50', offset = '0' } = req.query;
+
+  let whereClause = 'WHERE user_id = $1';
+  const params: (string | number)[] = [userId];
+  let paramIndex = 2;
+
+  if (symbol) {
+    whereClause += ` AND symbol = $${paramIndex++}`;
+    params.push((symbol as string).toUpperCase());
+  }
+
+  if (status) {
+    const normalized = normalizeDecisionStatus(status as string);
+    if (!normalized) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Invalid decision status' },
+      });
+    }
+    whereClause += ` AND status = $${paramIndex++}`;
+    params.push(normalized);
+  }
+
+  params.push(parseInt(limit as string), parseInt(offset as string));
+
+  const result = await query<{
+    id: string;
+    symbol: string;
+    direction: string;
+    intent: string;
+    status: string;
+    source: string | null;
+    journal_entry_id: string | null;
+    constraints_json: string | null;
+    rationale_json: string | null;
+    created_at: string;
+    updated_at: string;
+    event_count: string;
+    last_event_at: string | null;
+  }>(`
+      SELECT d.*,
+        (SELECT COUNT(*) FROM decision_events e WHERE e.decision_id = d.id) as event_count,
+        (SELECT MAX(ts) FROM decision_events e WHERE e.decision_id = d.id) as last_event_at
+      FROM decisions d
+      ${whereClause}
+      ORDER BY d.created_at DESC
+      LIMIT $${paramIndex++} OFFSET $${paramIndex}
+    `,
+    params
+  );
+
+  const decisions = result.rows.map((row) => {
+    const constraintsObj = parseDecisionJson<Record<string, unknown>>(row.constraints_json, {});
+    const rationaleObj = parseDecisionJson<Record<string, unknown>>(row.rationale_json, {});
+    const actionType = normalizeDecisionActionType((rationaleObj as any)?.actionType, row.direction);
+    return {
+      id: row.id,
+      symbol: row.symbol,
+      direction: row.direction,
+      intent: row.intent,
+      status: row.status,
+      source: row.source || 'MANUAL',
+      journalEntryId: row.journal_entry_id,
+      constraints: constraintsObj,
+      rationale: rationaleObj,
+      actionType,
+      thesis: (rationaleObj as any)?.thesis ?? (rationaleObj as any)?.text,
+      riskNote: (rationaleObj as any)?.riskNote,
+      invalidationRule: (constraintsObj as any)?.invalidationRule,
+      timeHorizon: (constraintsObj as any)?.timeHorizon,
+      createdAt: row.created_at,
+      updatedAt: row.updated_at,
+      eventCount: parseInt(row.event_count || '0', 10),
+      lastEventAt: row.last_event_at,
+    };
+  });
+
+  res.json({ success: true, data: { decisions } });
+});
+
+// Create decision
+app.post('/v1/decisions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const {
+    symbol,
+    direction,
+    intent,
+    constraints,
+    rationale,
+    journalEntryId,
+    source,
+    actionType,
+    thesis,
+    invalidationRule,
+    timeHorizon,
+    riskNote,
+  } = req.body;
+
+  if (!symbol || !direction || !intent) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'symbol, direction, and intent are required' },
+    });
+  }
+
+  const quota = await checkDecisionQuota(userId);
+  if (!quota.allowed) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: {
+        code: 'QUOTA_EXCEEDED',
+        message: quota.message,
+        requiredPlan: 'LITE',
+        limit: quota.limit,
+        used: quota.used,
+        upgradeUrl: '/pricing',
+      },
+    });
+  }
+
+  const normalizedDirection = String(direction).toUpperCase();
+  if (!['LONG', 'SHORT', 'BUY', 'SELL'].includes(normalizedDirection)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Invalid direction' },
+    });
+  }
+
+  const quote = await getQuote(symbol);
+  const normalizedActionType = normalizeDecisionActionType(actionType, normalizedDirection);
+  const constraintObj = constraints && typeof constraints === 'object' && !Array.isArray(constraints)
+    ? constraints
+    : constraints !== undefined
+      ? { value: constraints }
+      : {};
+  const rationaleObj = rationale && typeof rationale === 'object' && !Array.isArray(rationale)
+    ? rationale
+    : rationale !== undefined
+      ? { value: rationale }
+      : {};
+  const constraintsPayload = {
+    ...(constraintObj as Record<string, unknown>),
+    ...(invalidationRule ? { invalidationRule } : {}),
+    ...(timeHorizon ? { timeHorizon } : {}),
+  };
+  const rationalePayload = {
+    ...(rationaleObj as Record<string, unknown>),
+    ...(thesis ? { thesis } : {}),
+    ...(riskNote ? { riskNote } : {}),
+    actionType: normalizedActionType,
+  };
+  const snapshot = {
+    price: quote?.price ?? null,
+    ts: nowTimestamp(),
+  };
+
+  const decision = await transaction(async (client) => {
+    const decisionResult = await client.query<{
+      id: string;
+      symbol: string;
+      direction: string;
+      intent: string;
+      status: string;
+      source: string | null;
+      journal_entry_id: string | null;
+      constraints_json: string | null;
+      rationale_json: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `INSERT INTO decisions (org_id, user_id, symbol, direction, intent, status, source, journal_entry_id, constraints_json, rationale_json)
+       VALUES ($1, $2, $3, $4, $5, 'ACTIVE', $6, $7, $8, $9)
+       RETURNING *`,
+      [
+        orgId,
+        userId,
+        symbol.toUpperCase(),
+        normalizedDirection,
+        intent,
+        source || 'MANUAL',
+        journalEntryId || null,
+        Object.keys(constraintsPayload).length ? JSON.stringify(constraintsPayload) : null,
+        Object.keys(rationalePayload).length ? JSON.stringify(rationalePayload) : null,
+      ]
+    );
+
+    const created = decisionResult.rows[0];
+    const eventPayload = {
+      symbol: created.symbol,
+      direction: created.direction,
+      intent: created.intent,
+      actionType: normalizedActionType,
+      thesis: thesis || (rationalePayload as any)?.thesis,
+      invalidationRule: invalidationRule || (constraintsPayload as any)?.invalidationRule,
+      timeHorizon: timeHorizon || (constraintsPayload as any)?.timeHorizon,
+      riskNote: riskNote || (rationalePayload as any)?.riskNote,
+      constraints: constraintsPayload,
+      rationale: rationalePayload,
+      journalEntryId: created.journal_entry_id,
+      source: created.source,
+      quote,
+      snapshot,
+    };
+
+    await client.query(
+      `INSERT INTO decision_events (decision_id, org_id, user_id, event_type, payload_json, seq)
+       VALUES ($1, $2, $3, $4, $5, 1)`,
+      [created.id, orgId, userId, 'created', JSON.stringify(eventPayload)]
+    );
+
+    return created;
+  });
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.DECISION_CREATED, {
+    decisionId: decision.id,
+    symbol: decision.symbol,
+    direction: decision.direction,
+    status: decision.status,
+  });
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      decision: {
+        id: decision.id,
+        symbol: decision.symbol,
+        direction: decision.direction,
+        intent: decision.intent,
+        status: decision.status,
+        source: decision.source || 'MANUAL',
+        journalEntryId: decision.journal_entry_id,
+        constraints: parseDecisionJson(decision.constraints_json, {}),
+        rationale: parseDecisionJson(decision.rationale_json, {}),
+        actionType: normalizedActionType,
+        thesis: thesis || (rationalePayload as any)?.thesis,
+        invalidationRule: invalidationRule || (constraintsPayload as any)?.invalidationRule,
+        timeHorizon: timeHorizon || (constraintsPayload as any)?.timeHorizon,
+        riskNote: riskNote || (rationalePayload as any)?.riskNote,
+        createdAt: decision.created_at,
+        updatedAt: decision.updated_at,
+        quoteSnapshot: quote,
+        snapshot,
+      },
+    },
+  });
+});
+
+// Get decision + events
+app.get('/v1/decisions/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { id } = req.params;
+
+  const decision = await queryOne<{
+    id: string;
+    symbol: string;
+    direction: string;
+    intent: string;
+    status: string;
+    source: string | null;
+    journal_entry_id: string | null;
+    constraints_json: string | null;
+    rationale_json: string | null;
+    created_at: string;
+    updated_at: string;
+  }>('SELECT * FROM decisions WHERE id = $1 AND user_id = $2', [id, userId]);
+
+  if (!decision) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision not found' },
+    });
+  }
+
+  const events = await query<{
+    id: string;
+    event_type: string;
+    payload_json: string;
+    seq: number;
+    ts: string;
+  }>(
+    `SELECT id, event_type, payload_json, seq, ts
+     FROM decision_events WHERE decision_id = $1 ORDER BY seq ASC`,
+    [id]
+  );
+
+  res.json({
+    success: true,
+    data: {
+      decision: {
+        id: decision.id,
+        symbol: decision.symbol,
+        direction: decision.direction,
+        intent: decision.intent,
+        status: decision.status,
+        source: decision.source || 'MANUAL',
+        journalEntryId: decision.journal_entry_id,
+        constraints: parseDecisionJson(decision.constraints_json, {}),
+        rationale: parseDecisionJson(decision.rationale_json, {}),
+        actionType: normalizeDecisionActionType(
+          (parseDecisionJson<Record<string, unknown>>(decision.rationale_json, {}) as any)?.actionType,
+          decision.direction
+        ),
+        thesis: (parseDecisionJson<Record<string, unknown>>(decision.rationale_json, {}) as any)?.thesis,
+        riskNote: (parseDecisionJson<Record<string, unknown>>(decision.rationale_json, {}) as any)?.riskNote,
+        invalidationRule: (parseDecisionJson<Record<string, unknown>>(decision.constraints_json, {}) as any)?.invalidationRule,
+        timeHorizon: (parseDecisionJson<Record<string, unknown>>(decision.constraints_json, {}) as any)?.timeHorizon,
+        createdAt: decision.created_at,
+        updatedAt: decision.updated_at,
+      },
+      events: events.rows.map((row) => ({
+        id: row.id,
+        eventType: row.event_type,
+        seq: row.seq,
+        ts: row.ts,
+        payload: parseDecisionJson(row.payload_json, {}),
+      })),
+    },
+  });
+});
+
+// Append decision event (immutable)
+app.post('/v1/decisions/:id/events', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { id } = req.params;
+  const { eventType, payload } = req.body;
+
+  if (!eventType) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'eventType is required' },
+    });
+  }
+
+  const result = await transaction(async (client) => {
+    const existing = await client.query<{
+      id: string;
+      status: string;
+    }>('SELECT id, status FROM decisions WHERE id = $1 AND user_id = $2 FOR UPDATE', [id, userId]);
+
+    if (!existing.rows[0]) {
+      return null;
+    }
+
+    const seqResult = await client.query<{ next_seq: string }>(
+      'SELECT COALESCE(MAX(seq), 0) + 1 as next_seq FROM decision_events WHERE decision_id = $1',
+      [id]
+    );
+    const seq = parseInt(seqResult.rows[0].next_seq, 10);
+
+    await client.query(
+      `INSERT INTO decision_events (decision_id, org_id, user_id, event_type, payload_json, seq)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [id, orgId, userId, eventType, JSON.stringify(payload || {}), seq]
+    );
+
+    const updateFields: string[] = [];
+    const updateValues: any[] = [];
+    let paramIndex = 1;
+
+    if (payload?.status) {
+      const normalized = normalizeDecisionStatus(payload.status);
+      if (normalized) {
+        updateFields.push(`status = $${paramIndex++}`);
+        updateValues.push(normalized);
+      }
+    }
+    if (typeof payload?.intent === 'string') {
+      updateFields.push(`intent = $${paramIndex++}`);
+      updateValues.push(payload.intent);
+    }
+    if (payload?.constraints !== undefined) {
+      updateFields.push(`constraints_json = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(payload.constraints));
+    }
+    if (payload?.rationale !== undefined) {
+      updateFields.push(`rationale_json = $${paramIndex++}`);
+      updateValues.push(JSON.stringify(payload.rationale));
+    }
+    if (payload?.journalEntryId !== undefined) {
+      updateFields.push(`journal_entry_id = $${paramIndex++}`);
+      updateValues.push(payload.journalEntryId);
+    }
+    if (payload?.source) {
+      updateFields.push(`source = $${paramIndex++}`);
+      updateValues.push(payload.source);
+    }
+
+    updateFields.push('updated_at = NOW()');
+    await client.query(
+      `UPDATE decisions SET ${updateFields.join(', ')} WHERE id = $${paramIndex}`,
+      [...updateValues, id]
+    );
+
+    return { seq };
+  });
+
+  if (!result) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision not found' },
+    });
+  }
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.DECISION_EVENT_APPENDED, {
+    decisionId: id,
+    eventType,
+  });
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      event: {
+        decisionId: id,
+        eventType,
+        seq: result.seq,
+      },
+    },
+  });
+});
+
+// Replay decision state from append-only events
+app.post('/v1/decisions/:id/replay', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { id } = req.params;
+
+  const decision = await queryOne<{
+    id: string;
+    symbol: string;
+    direction: string;
+    intent: string;
+    status: string;
+    source: string | null;
+    journal_entry_id: string | null;
+    constraints_json: string | null;
+    rationale_json: string | null;
+    created_at: string;
+    updated_at: string;
+  }>('SELECT * FROM decisions WHERE id = $1 AND user_id = $2', [id, userId]);
+
+  if (!decision) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision not found' },
+    });
+  }
+
+  const events = await query<{
+    id: string;
+    event_type: string;
+    payload_json: string;
+    seq: number;
+    ts: string;
+  }>(
+    `SELECT id, event_type, payload_json, seq, ts
+     FROM decision_events WHERE decision_id = $1 ORDER BY seq ASC`,
+    [id]
+  );
+
+  const replayConstraints = parseDecisionJson<Record<string, unknown>>(decision.constraints_json, {});
+  const replayRationale = parseDecisionJson<Record<string, unknown>>(decision.rationale_json, {});
+  const replayActionType = normalizeDecisionActionType((replayRationale as any)?.actionType, decision.direction);
+
+  const replayState: Record<string, any> = {
+    id: decision.id,
+    symbol: decision.symbol,
+    direction: decision.direction,
+    intent: decision.intent,
+    status: decision.status,
+    source: decision.source || 'MANUAL',
+    journalEntryId: decision.journal_entry_id,
+    constraints: replayConstraints,
+    rationale: replayRationale,
+    actionType: replayActionType,
+    thesis: (replayRationale as any)?.thesis ?? (replayRationale as any)?.text,
+    invalidationRule: (replayConstraints as any)?.invalidationRule,
+    timeHorizon: (replayConstraints as any)?.timeHorizon,
+    riskNote: (replayRationale as any)?.riskNote,
+    createdAt: decision.created_at,
+    updatedAt: decision.updated_at,
+    notes: [],
+  };
+
+  const eventRows = events.rows.map((row) => ({
+    id: row.id,
+    eventType: row.event_type,
+    seq: row.seq,
+    ts: row.ts,
+    payload: parseDecisionJson(row.payload_json, {}),
+  }));
+
+  for (const event of eventRows) {
+    applyDecisionEvent(replayState, { eventType: event.eventType, payload: event.payload, ts: event.ts });
+  }
+  const { plan } = await getUserPlan(userId);
+  const replayWindow = getDecisionReplayWindow(plan);
+
+  const entryTime = replayState.snapshot?.ts || eventRows[0]?.ts || decision.created_at;
+  const entryDate = new Date(entryTime);
+  if (!Number.isFinite(entryDate.getTime())) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Invalid decision entry timestamp' },
+    });
+  }
+
+  const horizonDays = parseTimeHorizonDays(replayState.timeHorizon);
+  if (horizonDays && horizonDays > replayWindow.days) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: {
+        code: 'REPLAY_WINDOW_EXCEEDED',
+        message: `Replay window exceeds your ${plan} plan limit (${replayWindow.label}).`,
+        requiredPlan: plan === 'FREE' ? 'LITE' : 'PRO',
+        upgradeUrl: '/pricing',
+      },
+    });
+  }
+
+  const now = new Date();
+  const maxAgeMs = replayWindow.days * 24 * 60 * 60 * 1000;
+  if (now.getTime() - entryDate.getTime() > maxAgeMs) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: {
+        code: 'REPLAY_WINDOW_EXCEEDED',
+        message: `Replay window exceeds your ${plan} plan limit (${replayWindow.label}).`,
+        requiredPlan: plan === 'FREE' ? 'LITE' : 'PRO',
+        upgradeUrl: '/pricing',
+      },
+    });
+  }
+
+  const windowDays = horizonDays || replayWindow.days;
+  const endDate = new Date(Math.min(now.getTime(), entryDate.getTime() + windowDays * 24 * 60 * 60 * 1000));
+  const startKey = entryDate.toISOString().split('T')[0];
+  const endKey = endDate.toISOString().split('T')[0];
+
+  let metrics: DecisionReplayMetrics | null = null;
+  let metricsWarning: string | null = null;
+
+  const actionType: DecisionActionType = normalizeDecisionActionType(replayState.actionType, replayState.direction);
+  const entryPrice = replayState.snapshot?.price ?? replayState.quoteSnapshot?.price;
+
+  if (!entryPrice || !Number.isFinite(entryPrice)) {
+    metricsWarning = 'Entry price unavailable for replay.';
+  } else if (actionType === 'HOLD' || actionType === 'WATCH' || actionType === 'INACTION') {
+    metricsWarning = 'Replay metrics are not computed for non-execution decisions.';
+  } else {
+    try {
+      const bars = await getHistoricalData(decision.symbol, startKey, endKey);
+      if (bars.length > 0) {
+        metrics = computeDecisionReplayMetrics(bars, entryPrice, entryTime, actionType, windowDays);
+      } else {
+        metricsWarning = 'No market data available for replay window.';
+      }
+    } catch (error) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: { code: 'MARKETDATA_UNAVAILABLE', message: (error as Error).message },
+      });
+    }
+  }
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.DECISION_REPLAYED, {
+    decisionId: id,
+    eventCount: eventRows.length,
+    plan,
+    windowDays,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      decision: replayState,
+      events: eventRows,
+      metrics,
+      metricsWarning,
+      replayWindow: { plan, days: replayWindow.days, label: replayWindow.label },
+    },
+  });
+});
+// ============================================
+// Decision Cards (Phase 2)
+// ============================================
+
+type DecisionCardRow = {
+  id: string;
+  org_id: string | null;
+  user_id: string | null;
+  symbol: string;
+  strategy_tag: string | null;
+  confidence_score: string | number | null;
+  source_type: string | null;
+  latency_class: string | null;
+  regime: string | null;
+  status: string;
+  expires_at: string | null;
+  card_hash: string;
+  card_json: string | Record<string, unknown>;
+  score_json: string | Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+};
+
+function formatDecisionCard(row: DecisionCardRow) {
+  return {
+    id: row.id,
+    symbol: row.symbol,
+    strategyTag: row.strategy_tag,
+    confidenceScore: row.confidence_score !== null ? Number(row.confidence_score) : null,
+    sourceType: row.source_type,
+    latencyClass: row.latency_class,
+    regime: row.regime,
+    status: row.status,
+    expiresAt: row.expires_at,
+    cardHash: row.card_hash,
+    card: parseDecisionJson(row.card_json, null),
+    score: parseDecisionJson(row.score_json, null),
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function resolveLatestIntegrity(symbol: string): Promise<CandleIntegrity | null> {
+  const sym = String(symbol || '').toUpperCase();
+  if (!sym) return null;
+
+  try {
+    const res = await fetch(`${MARKETDATA_URL}/v1/market/candles/${encodeURIComponent(sym)}?interval=1d&limit=2`);
+    const payload = (await res.json().catch(() => null)) as any;
+    if (!res.ok || !payload?.success) return null;
+    const integrity =
+      payload?.data?.integrity ||
+      payload?.data?.provenance ||
+      payload?.data?.candles?.[0]?.integrity ||
+      payload?.data?.candles?.[0]?.provenance ||
+      null;
+    return integrity && typeof integrity === 'object' ? (integrity as CandleIntegrity) : null;
+  } catch (error) {
+    logger.warn('Failed to resolve integrity', { symbol: sym, error: (error as Error).message });
+    return null;
+  }
+}
+
+function hasIntegrityFields(integrity?: CandleIntegrity | null): integrity is CandleIntegrity {
+  return Boolean(
+    integrity &&
+      typeof integrity.source_type === 'string' &&
+      typeof integrity.source_identifier === 'string' &&
+      typeof integrity.latency_class === 'string' &&
+      Number.isFinite(integrity.confidence_score) &&
+      integrity.timestamp_range &&
+      typeof integrity.timestamp_range.start === 'string' &&
+      typeof integrity.timestamp_range.end === 'string'
+  );
+}
+
+// Internal ingest (tradebot -> nova-hub)
+app.post('/internal/decision-cards', async (req: Request, res: Response) => {
+  if (INTERNAL_DECISION_CARDS_TOKEN && resolveInternalDecisionToken(req) !== INTERNAL_DECISION_CARDS_TOKEN) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Forbidden' },
+    });
+  }
+
+  const { card, score, metadata } = req.body || {};
+  const thesis = card?.thesis;
+
+  if (!card || !card.id || !thesis?.symbol) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Decision card payload invalid' },
+    });
+  }
+
+  const symbol = String(thesis.symbol).toUpperCase();
+  const scorePayload: DecisionCardScore = (score && typeof score === 'object')
+    ? score
+    : computeDecisionCardScore(card, metadata?.gate, metadata?.regime);
+
+  const expiresAtRaw = metadata?.expiresAt || thesis.expiresAt || null;
+  const expiresAt = expiresAtRaw && Number.isFinite(new Date(expiresAtRaw).getTime()) ? new Date(expiresAtRaw).toISOString() : null;
+  const now = Date.now();
+  const statusBase = String(metadata?.status || (card?.decision?.approved ? 'ACTIVE' : 'REJECTED')).toUpperCase();
+  const status = expiresAt && new Date(expiresAt).getTime() <= now ? 'EXPIRED' : statusBase;
+  const strategyTag = metadata?.strategyTag || thesis?.indicators?.strategyTag || thesis?.indicators?.strategy || null;
+
+  let strategySummary: StrategySimulationSummary | null = null;
+  if (strategyTag) {
+    const strategyType = resolveStrategyType(strategyTag, metadata?.strategyType || null);
+    const end = new Date();
+    const start = new Date(end.getTime() - STRATEGY_SIM_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+    const startDate = start.toISOString().split('T')[0];
+    const endDate = end.toISOString().split('T')[0];
+
+    try {
+      strategySummary = await ensureStrategyPerformance({
+        strategyTag,
+        strategyType,
+        symbol,
+        orgId: metadata?.orgId || null,
+        userId: metadata?.userId || null,
+        startDate,
+        endDate,
+        initialCapital: 100000,
+      });
+    } catch (error) {
+      logger.warn('Strategy simulation failed', { error: (error as Error).message });
+    }
+  }
+
+  const confidenceScore = typeof metadata?.confidenceScore === 'number'
+    ? metadata.confidenceScore
+    : typeof scorePayload?.signalConfidence === 'number'
+      ? scorePayload.signalConfidence
+      : null;
+
+  if (strategySummary) {
+    (scorePayload as any).strategy = {
+      status: strategySummary.status,
+      fitnessScore: strategySummary.fitnessScore,
+      drift: strategySummary.drift,
+      backtest: strategySummary.backtest,
+      monteCarlo: strategySummary.monteCarlo,
+      slippage: strategySummary.slippage,
+      evaluatedAt: strategySummary.evaluatedAt,
+    };
+    if (strategySummary.status === 'QUARANTINED' && scorePayload.gate && typeof scorePayload.gate === 'object') {
+      const gate = scorePayload.gate as any;
+      const reasons = Array.isArray(gate.reasons) ? gate.reasons : [];
+      if (!reasons.includes('strategy_quarantined')) reasons.push('strategy_quarantined');
+      gate.reasons = reasons;
+      if (gate.mode === 'live') gate.mode = 'paper';
+      scorePayload.gate = gate;
+    }
+  }
+
+  const sourceType = metadata?.sourceType || thesis?.dataIntegrity?.source_type || null;
+  const latencyClass = metadata?.latencyClass || thesis?.dataIntegrity?.latency_class || null;
+  const regime = metadata?.regime || scorePayload?.regime || null;
+
+  const cardHash = buildDecisionCardHash(card, scorePayload as unknown as Record<string, unknown>);
+
+  const result = await queryOne<DecisionCardRow>(
+    `INSERT INTO decision_cards (
+        id, org_id, user_id, symbol, strategy_tag, confidence_score, source_type,
+        latency_class, regime, status, expires_at, card_hash, card_json, score_json
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7,
+             $8, $9, $10, $11, $12, $13, $14)
+     ON CONFLICT (id) DO UPDATE SET
+       symbol = EXCLUDED.symbol,
+       strategy_tag = EXCLUDED.strategy_tag,
+       confidence_score = EXCLUDED.confidence_score,
+       source_type = EXCLUDED.source_type,
+       latency_class = EXCLUDED.latency_class,
+       regime = EXCLUDED.regime,
+       status = EXCLUDED.status,
+       expires_at = EXCLUDED.expires_at,
+       card_hash = EXCLUDED.card_hash,
+       card_json = EXCLUDED.card_json,
+       score_json = EXCLUDED.score_json
+     RETURNING *`,
+    [
+      card.id,
+      metadata?.orgId || null,
+      metadata?.userId || null,
+      symbol,
+      strategyTag,
+      confidenceScore,
+      sourceType,
+      latencyClass,
+      regime,
+      status,
+      expiresAt,
+      cardHash,
+      JSON.stringify(card),
+      JSON.stringify(scorePayload),
+    ]
+  );
+
+  res.status(HTTP_STATUS.CREATED).json({ success: true, data: { card: formatDecisionCard(result!) } });
+});
+
+// Decision card feed (auth)
+app.get('/v1/decision-cards', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { symbol, strategy, sourceType, latencyClass, regime, status, minConfidence, maxConfidence, limit = '50', offset = '0' } = req.query;
+
+  let whereClause = 'WHERE (org_id IS NULL OR org_id = $1)';
+  const params: (string | number)[] = [orgId];
+  let paramIndex = 2;
+
+  if (symbol) {
+    whereClause += ` AND symbol = $${paramIndex++}`;
+    params.push(String(symbol).toUpperCase());
+  }
+  if (strategy) {
+    whereClause += ` AND strategy_tag = $${paramIndex++}`;
+    params.push(String(strategy));
+  }
+  if (sourceType) {
+    whereClause += ` AND source_type = $${paramIndex++}`;
+    params.push(String(sourceType));
+  }
+  if (latencyClass) {
+    whereClause += ` AND latency_class = $${paramIndex++}`;
+    params.push(String(latencyClass));
+  }
+  if (regime) {
+    whereClause += ` AND regime = $${paramIndex++}`;
+    params.push(String(regime));
+  }
+  if (status) {
+    whereClause += ` AND status = $${paramIndex++}`;
+    params.push(String(status).toUpperCase());
+  }
+  if (minConfidence && !Number.isNaN(Number(minConfidence))) {
+    whereClause += ` AND confidence_score >= $${paramIndex++}`;
+    params.push(Number(minConfidence));
+  }
+  if (maxConfidence && !Number.isNaN(Number(maxConfidence))) {
+    whereClause += ` AND confidence_score <= $${paramIndex++}`;
+    params.push(Number(maxConfidence));
+  }
+
+  const limitValue = Math.min(200, Math.max(1, parseInt(limit as string, 10) || 50));
+  const offsetValue = Math.max(0, parseInt(offset as string, 10) || 0);
+
+  params.push(limitValue, offsetValue);
+
+  const result = await query<DecisionCardRow>(
+    `SELECT * FROM decision_cards
+     ${whereClause}
+     ORDER BY created_at DESC
+     LIMIT $${paramIndex++} OFFSET $${paramIndex}`,
+    params
+  );
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+  const cards = result.rows.map((row) => {
+    const formatted = formatDecisionCard(row);
+    if (formatted.score?.strategy) {
+      formatted.score.strategy = pruneStrategyAnalytics(formatted.score.strategy, analyticsDepth);
+    }
+    return formatted;
+  });
+
+  res.json({ success: true, data: { cards, analyticsDepth } });
+});
+
+// Decision card detail (auth)
+app.get('/v1/decision-cards/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { id } = req.params;
+
+  const card = await queryOne<DecisionCardRow>(
+    `SELECT * FROM decision_cards
+     WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+
+  if (!card) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision card not found' },
+    });
+  }
+
+  const formatted = formatDecisionCard(card);
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+  if (formatted.score?.strategy) {
+    formatted.score.strategy = pruneStrategyAnalytics(formatted.score.strategy, analyticsDepth);
+  }
+
+  res.json({ success: true, data: { card: formatted, analyticsDepth } });
+});
+
+// Decision card replay + drift check
+app.post('/v1/decision-cards/:id/replay', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { id } = req.params;
+
+  const cardRow = await queryOne<DecisionCardRow>(
+    `SELECT * FROM decision_cards
+     WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+
+  if (!cardRow) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision card not found' },
+    });
+  }
+
+  const card = parseDecisionJson<Record<string, any>>(cardRow.card_json, {});
+  let storedScore = parseDecisionJson<Record<string, any>>(cardRow.score_json, {});
+  const recomputed = computeDecisionCardScore(card, storedScore?.gate, storedScore?.regime);
+  const recomputedHash = buildDecisionCardHash(card, recomputed as unknown as Record<string, unknown>);
+
+  const scoreDelta = typeof storedScore?.score === 'number'
+    ? Math.round((recomputed.score - storedScore.score) * 100) / 100
+    : null;
+  const evDelta = typeof storedScore?.expectedValue === 'number'
+    ? Math.round((recomputed.expectedValue - storedScore.expectedValue) * 100) / 100
+    : null;
+  const hashMismatch = cardRow.card_hash !== recomputedHash;
+
+  const expiresAt = cardRow.expires_at ? new Date(cardRow.expires_at) : null;
+  const expired = expiresAt ? expiresAt.getTime() <= Date.now() : false;
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+  if (storedScore?.strategy) {
+    storedScore = { ...storedScore, strategy: pruneStrategyAnalytics(storedScore.strategy, analyticsDepth) };
+  }
+  const recomputedScore = (recomputed as any)?.strategy
+    ? { ...recomputed, strategy: pruneStrategyAnalytics((recomputed as any).strategy, analyticsDepth) }
+    : recomputed;
+
+  res.json({
+    success: true,
+    data: {
+      cardId: cardRow.id,
+      stored: {
+        hash: cardRow.card_hash,
+        score: storedScore,
+      },
+      recomputed: {
+        hash: recomputedHash,
+        score: recomputedScore,
+      },
+      drift: {
+        hashMismatch,
+        scoreDelta,
+        expectedValueDelta: evDelta,
+      },
+      status: cardRow.status,
+      expiresAt: cardRow.expires_at,
+      expired,
+    },
+  });
+});
+
+// ============================================
+// Guided Flow (Scan -> Thesis -> Decision -> Paper -> Review)
+// ============================================
+
+app.post('/v1/guided/flow', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const input = (req.body?.signal || req.body || {}) as GuidedSignalInput;
+
+  if (!input?.symbol) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'signal.symbol is required' },
+    });
+  }
+
+  const decisionQuota = await checkQuota(userId, 'decision_card');
+  if (!decisionQuota.allowed) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: {
+        code: 'QUOTA_EXCEEDED',
+        message: decisionQuota.message,
+        requiredPlan: 'LITE',
+        upgradeUrl: '/pricing',
+      },
+    });
+  }
+
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+
+  const integrity = await resolveLatestIntegrity(input.symbol);
+  if (!hasIntegrityFields(integrity)) {
+    return res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({
+      success: false,
+      error: {
+        code: 'INTEGRITY_MISSING',
+        message: 'Market data integrity missing',
+        details: { symbol: String(input.symbol).toUpperCase() },
+        nextAction: 'Verify market data service is running and symbol is valid',
+      },
+    });
+  }
+
+  // Build thesis with validation - NO NEUTRAL FALLBACKS
+  const thesisResult = buildGuidedThesis(input, integrity);
+  
+  // If thesis validation fails, return explicit errors with actionable reasons
+  if (!thesisResult.ok) {
+    return res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({
+      success: false,
+      error: {
+        code: 'THESIS_VALIDATION_FAILED',
+        message: 'Required inputs missing for thesis generation',
+        validationErrors: thesisResult.errors,
+        nextAction: 'Provide missing fields: ' + thesisResult.errors.map(e => e.field).join(', '),
+      },
+      trace: {
+        inputReceived: {
+          symbol: input.symbol,
+          entry: input.entry,
+          target: input.target,
+          stopLoss: input.stopLoss,
+          confidence: input.confidence,
+          direction: input.direction,
+        },
+        errors: thesisResult.errors,
+      },
+    });
+  }
+  
+  const { thesis, warnings } = thesisResult;
+  let gate: ExecutionGateResult = evaluateExecutionGate({ signalConfidence: thesis.confidence, integrity });
+  
+  // Build decision with explicit rejection reasons
+  const rejectionReasons: string[] = [];
+  if (gate.mode === 'blocked') {
+    rejectionReasons.push(...gate.reasons);
+    if (thesis.confidence < 30) rejectionReasons.push(`Confidence ${thesis.confidence}% below minimum threshold (30%)`);
+    if (gate.dataConfidence && gate.dataConfidence < 0.7) rejectionReasons.push(`Data confidence ${(gate.dataConfidence * 100).toFixed(0)}% below threshold (70%)`);
+  }
+  
+  const decision = {
+    approved: gate.mode !== 'blocked',
+    reasoning: gate.mode === 'blocked'
+      ? `Execution blocked: ${rejectionReasons.join('; ')}`
+      : gate.mode === 'paper'
+        ? 'Eligible for paper execution'
+        : 'Eligible for live execution',
+    constraints: gate.reasons,
+    rejectionReasons: gate.mode === 'blocked' ? rejectionReasons : [],
+    tier: gate.mode.toUpperCase(),
+    confidence: gate.signalConfidence,
+    timestamp: nowTimestamp(),
+  };
+
+  const card = {
+    id: generateId(),
+    createdAt: nowTimestamp(),
+    thesis,
+    decision,
+    warnings,
+  };
+
+  const scorePayload: DecisionCardScore = computeDecisionCardScore(card, gate, null);
+
+  const strategyTag =
+    input.strategyTag ||
+    ((input.indicators as any)?.strategyTag as string | undefined) ||
+    ((input.indicators as any)?.strategy as string | undefined) ||
+    null;
+
+  let strategySummary: StrategySimulationSummary | null = null;
+  let analyticsLocked = false;
+  let analyticsLockReason: string | null = null;
+
+  if (strategyTag) {
+    const strategyType = resolveStrategyType(strategyTag, null);
+    if (!strategyType) {
+      strategySummary = await ensureStrategyPerformance({
+        strategyTag,
+        strategyType: null,
+        symbol: thesis.symbol,
+        orgId,
+        userId,
+        startDate: new Date(Date.now() - STRATEGY_SIM_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+        endDate: new Date().toISOString().split('T')[0],
+        initialCapital: 100000,
+      });
+    } else {
+      const simQuota = await checkQuota(userId, 'backtest');
+      if (!simQuota.allowed) {
+        analyticsLocked = true;
+        analyticsLockReason = simQuota.message || 'Simulation quota reached';
+      } else {
+        try {
+          strategySummary = await ensureStrategyPerformance({
+            strategyTag,
+            strategyType,
+            symbol: thesis.symbol,
+            orgId,
+            userId,
+            startDate: new Date(Date.now() - STRATEGY_SIM_WINDOW_DAYS * 24 * 60 * 60 * 1000).toISOString().split('T')[0],
+            endDate: new Date().toISOString().split('T')[0],
+            initialCapital: 100000,
+          });
+          await incrementUsage(userId, 'backtest');
+        } catch (error) {
+          logger.warn('Guided flow strategy simulation failed', { error: (error as Error).message });
+        }
+      }
+    }
+  }
+
+  if (strategySummary) {
+    (scorePayload as any).strategy = {
+      status: strategySummary.status,
+      fitnessScore: strategySummary.fitnessScore,
+      drift: strategySummary.drift,
+      backtest: strategySummary.backtest,
+      monteCarlo: strategySummary.monteCarlo,
+      slippage: strategySummary.slippage,
+      evaluatedAt: strategySummary.evaluatedAt,
+    };
+    if (strategySummary.status === 'QUARANTINED') {
+      const reasons = Array.isArray(gate.reasons) ? gate.reasons : [];
+      if (!reasons.includes('strategy_quarantined')) reasons.push('strategy_quarantined');
+      gate = { ...gate, reasons, mode: gate.mode === 'live' ? 'paper' : gate.mode };
+      scorePayload.gate = gate;
+    }
+  }
+
+  const confidenceScore = typeof scorePayload?.signalConfidence === 'number' ? scorePayload.signalConfidence : null;
+  const expiresAtRaw = thesis.expiresAt || null;
+  const expiresAt = expiresAtRaw && Number.isFinite(new Date(expiresAtRaw).getTime()) ? new Date(expiresAtRaw).toISOString() : null;
+  const now = Date.now();
+  const statusBase = gate.mode === 'blocked' ? 'REJECTED' : 'ACTIVE';
+  const status = expiresAt && new Date(expiresAt).getTime() <= now ? 'EXPIRED' : statusBase;
+
+  const cardHash = buildDecisionCardHash(card, scorePayload as unknown as Record<string, unknown>);
+
+  const result = await queryOne<DecisionCardRow>(
+    `INSERT INTO decision_cards (
+        id, org_id, user_id, symbol, strategy_tag, confidence_score, source_type,
+        latency_class, regime, status, expires_at, card_hash, card_json, score_json
+     )
+     VALUES ($1, $2, $3, $4, $5, $6, $7,
+             $8, $9, $10, $11, $12, $13, $14)
+     RETURNING *`,
+    [
+      card.id,
+      orgId || null,
+      userId || null,
+      thesis.symbol,
+      strategyTag,
+      confidenceScore,
+      integrity?.source_type || null,
+      integrity?.latency_class || null,
+      null,
+      status,
+      expiresAt,
+      cardHash,
+      JSON.stringify(card),
+      JSON.stringify(scorePayload),
+    ]
+  );
+
+  await incrementUsage(userId, 'decision_card');
+  const usageSnapshot = await getUsageSnapshot(userId);
+
+  const formatted = result ? formatDecisionCard(result) : null;
+  if (formatted?.score?.strategy) {
+    formatted.score.strategy = pruneStrategyAnalytics(formatted.score.strategy, analyticsDepth);
+  }
+
+  // TRACE/INTEGRITY envelope with full debug metadata
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      flow: {
+        thesis,
+        decisionCard: formatted,
+        gate,
+        analytics: {
+          depth: analyticsDepth,
+          locked: analyticsDepth <= 0 || analyticsLocked,
+          reason: analyticsLockReason,
+        },
+        warnings,
+      },
+      usage: {
+        plan: usageSnapshot.plan,
+        remaining: usageSnapshot.remaining,
+        upgradeUrl: '/pricing',
+      },
+    },
+    trace: {
+      inputSymbol: input.symbol,
+      thesisId: thesis.id,
+      decisionCardId: card.id,
+      gateMode: gate.mode,
+      gateReasons: gate.reasons,
+      signalConfidence: gate.signalConfidence,
+      dataConfidence: gate.dataConfidence,
+      status,
+      strategyTag,
+      analyticsDepth,
+      warnings,
+    },
+  });
+});
+// ============================================
+// Screener API (Deterministic)
+// ============================================
+
+type ScreenerQualification = 'QUALIFIED' | 'NEAR_QUALIFIED' | 'NOT_QUALIFIED';
+
+type ScreenerSignal = {
+  symbol: string;
+  name: string;
+  type: 'bullish' | 'bearish';
+  pattern: string;
+  confidence: number;
+  entry: number;
+  target: number;
+  stopLoss: number;
+  riskReward: number;
+  reasoning: string;
+  timeframe: string;
+  qualification: ScreenerQualification;
+  qualificationReasons: string[];
+  indicators?: {
+    rsi: number | null;
+    sma20: number | null;
+    sma50: number | null;
+    priceVsSma20: number | null;
+    priceVsSma50: number | null;
+    macdHistogram: number | null;
+  };
+};
+
+const DEFAULT_SCREENER_UNIVERSE = [
+  'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'AMD', 'NFLX', 'INTC',
+  'JPM', 'BAC', 'GS', 'MS', 'WFC', 'V', 'MA', 'PYPL',
+  'XOM', 'CVX', 'COP', 'SLB',
+  'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV',
+  'KO', 'PEP', 'COST', 'WMT', 'TGT',
+  'HD', 'LOW', 'BA', 'CAT', 'GE', 'MMM',
+  'SPY', 'QQQ', 'IWM', 'DIA',
+];
+
+function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators, minConfidence: number): ScreenerSignal | null {
+  const price = quote.price;
+  if (!Number.isFinite(price)) return null;
+
+  const rsi = typeof indicators.rsi === 'number' ? indicators.rsi : null;
+  const sma20 = typeof indicators.sma20 === 'number' ? indicators.sma20 : null;
+  const sma50 = typeof indicators.sma50 === 'number' ? indicators.sma50 : null;
+  const sma200 = typeof indicators.sma200 === 'number' ? indicators.sma200 : null;
+  const macdHist = typeof indicators.macd?.histogram === 'number' ? indicators.macd.histogram : null;
+
+  const priceVsSma20 = sma20 ? ((price - sma20) / sma20) * 100 : null;
+  const priceVsSma50 = sma50 ? ((price - sma50) / sma50) * 100 : null;
+
+  let bullScore = 0;
+  let bearScore = 0;
+  const bullReasons: string[] = [];
+  const bearReasons: string[] = [];
+
+  if (rsi !== null && rsi <= 35) {
+    bullScore += 25;
+    bullReasons.push(`RSI ${rsi.toFixed(1)} (oversold)`);
+  }
+  if (rsi !== null && rsi >= 65) {
+    bearScore += 25;
+    bearReasons.push(`RSI ${rsi.toFixed(1)} (overbought)`);
+  }
+
+  if (macdHist !== null && macdHist > 0) {
+    bullScore += 15;
+    bullReasons.push('MACD histogram positive');
+  }
+  if (macdHist !== null && macdHist < 0) {
+    bearScore += 15;
+    bearReasons.push('MACD histogram negative');
+  }
+
+  if (sma20 && price > sma20) {
+    bullScore += 15;
+    bullReasons.push('Price above SMA20');
+  }
+  if (sma20 && price < sma20) {
+    bearScore += 15;
+    bearReasons.push('Price below SMA20');
+  }
+
+  if (sma50 && price > sma50) {
+    bullScore += 15;
+    bullReasons.push('Price above SMA50');
+  }
+  if (sma50 && price < sma50) {
+    bearScore += 15;
+    bearReasons.push('Price below SMA50');
+  }
+
+  if (sma20 && sma50 && sma20 > sma50) {
+    bullScore += 10;
+    bullReasons.push('SMA20 above SMA50');
+  }
+  if (sma20 && sma50 && sma20 < sma50) {
+    bearScore += 10;
+    bearReasons.push('SMA20 below SMA50');
+  }
+
+  if (sma50 && sma200 && sma50 > sma200) {
+    bullScore += 10;
+    bullReasons.push('SMA50 above SMA200');
+  }
+  if (sma50 && sma200 && sma50 < sma200) {
+    bearScore += 10;
+    bearReasons.push('SMA50 below SMA200');
+  }
+
+  const bullish = bullScore >= bearScore;
+  const score = Math.max(bullScore, bearScore);
+  const reasons = bullish ? bullReasons : bearReasons;
+
+  // ALWAYS compute a signal even with low scores - ranking happens before qualification
+  const confidence = Math.max(1, Math.min(100, score)); // Minimum 1 to always have a signal
+  const targetPct = 0.03 + (confidence / 100) * 0.04; // 3% to 7%
+  const stopPct = Math.max(0.015, targetPct / 2);
+
+  const entry = price;
+  const target = bullish ? price * (1 + targetPct) : price * (1 - targetPct);
+  const stopLoss = bullish ? price * (1 - stopPct) : price * (1 + stopPct);
+  
+  // Qualification logic: QUALIFIED if meets threshold, NEAR if within 10%, else NOT_QUALIFIED
+  const qualificationReasons: string[] = [];
+  let qualification: ScreenerQualification;
+  if (confidence >= minConfidence) {
+    qualification = 'QUALIFIED';
+    qualificationReasons.push(`Confidence ${confidence}% meets threshold ${minConfidence}%`);
+  } else if (confidence >= minConfidence * 0.9) {
+    qualification = 'NEAR_QUALIFIED';
+    qualificationReasons.push(`Confidence ${confidence}% is within 10% of threshold ${minConfidence}%`);
+  } else {
+    qualification = 'NOT_QUALIFIED';
+    qualificationReasons.push(`Confidence ${confidence}% below threshold ${minConfidence}%`);
+  }
+  if (reasons.length === 0) {
+    qualification = 'NOT_QUALIFIED';
+    qualificationReasons.push('No technical signals detected');
+  }
+  const riskReward = Math.abs((target - entry) / (entry - stopLoss));
+
+  let pattern = 'Signal Alignment';
+  if (rsi !== null && rsi <= 35 && sma20 && price < sma20) {
+    pattern = 'Oversold Rebound';
+  } else if (rsi !== null && rsi >= 65 && sma20 && price > sma20) {
+    pattern = 'Overbought Pullback';
+  } else if (sma20 && sma50 && sma20 > sma50 && macdHist !== null && macdHist > 0) {
+    pattern = 'Trend Momentum';
+  } else if (sma20 && sma50 && sma20 < sma50 && macdHist !== null && macdHist < 0) {
+    pattern = 'Trend Weakness';
+  }
+
+  const reasoning = `${reasons.join('; ')}. Score ${confidence}/100.`;
+
+  return {
+    symbol,
+    name: symbol,
+    type: bullish ? 'bullish' : 'bearish',
+    pattern: pattern || 'Neutral',
+    confidence,
+    entry: Number(entry.toFixed(2)),
+    target: Number(target.toFixed(2)),
+    stopLoss: Number(stopLoss.toFixed(2)),
+    riskReward: Number(riskReward.toFixed(2)),
+    reasoning: reasoning || `No strong signals for ${symbol}`,
+    timeframe: '1-3 weeks',
+    qualification,
+    qualificationReasons,
+    indicators: {
+      rsi: rsi ?? null,
+      sma20,
+      sma50,
+      priceVsSma20: priceVsSma20 !== null ? Number(priceVsSma20.toFixed(1)) : null,
+      priceVsSma50: priceVsSma50 !== null ? Number(priceVsSma50.toFixed(1)) : null,
+      macdHistogram: macdHist !== null ? Number(macdHist.toFixed(2)) : null,
+    },
+  };
+}
+
+app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const {
+    symbols,
+    maxSymbols = 50,
+    minConfidence = 65,
+    signalType = 'all',
+    save = false,
+    name,
+  } = req.body || {};
+
+  const universe = Array.isArray(symbols) && symbols.length > 0 ? symbols : DEFAULT_SCREENER_UNIVERSE;
+  const normalizedUniverse = universe
+    .map((s) => String(s).trim().toUpperCase())
+    .filter((s) => !!s);
+  const limit = Math.min(200, Math.max(1, Number(maxSymbols) || 50));
+  const list = normalizedUniverse.slice(0, limit);
+
+  const allSignals: ScreenerSignal[] = [];
+  const missingDataSymbols: string[] = [];
+
+  for (const symbol of list) {
+    const [quote, indicators] = await Promise.all([getQuote(symbol), getIndicators(symbol)]);
+    if (!quote || !indicators) {
+      missingDataSymbols.push(symbol);
+      continue;
+    }
+
+    const signal = buildSignal(symbol, quote, indicators, Number(minConfidence));
+    if (!signal) {
+      missingDataSymbols.push(symbol);
+      continue;
+    }
+
+    // Filter by signal type if specified
+    if (signalType !== 'all' && signal.type !== signalType) continue;
+
+    allSignals.push(signal);
+  }
+
+  // Sort ALL signals by confidence descending - ranking happens BEFORE any filtering
+  allSignals.sort((a, b) => b.confidence - a.confidence);
+  
+  // Separate into qualified/near/not categories
+  const qualified = allSignals.filter(s => s.qualification === 'QUALIFIED');
+  const nearQualified = allSignals.filter(s => s.qualification === 'NEAR_QUALIFIED');
+  const notQualified = allSignals.filter(s => s.qualification === 'NOT_QUALIFIED');
+
+  const scannedAt = new Date().toISOString();
+  let reportId: string | null = null;
+
+  if (save || name) {
+    const reportName = name || `Scan ${new Date().toLocaleString('en-US')}`;
+    const reportResult = await queryOne<{ id: string }>(
+      `INSERT INTO scanner_reports (user_id, name, results)
+       VALUES ($1, $2, $3)
+       RETURNING id`,
+      [userId, reportName, JSON.stringify({ signals: allSignals, settings: { maxSymbols, minConfidence, signalType }, scannedAt })]
+    );
+    reportId = reportResult?.id || null;
+  }
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.SCAN_EXECUTED, {
+    mode: 'screener',
+    universeCount: list.length,
+    qualifiedCount: qualified.length,
+    nearQualifiedCount: nearQualified.length,
+    notQualifiedCount: notQualified.length,
+    missingDataCount: missingDataSymbols.length,
+    minConfidence,
+    signalType,
+    reportId,
+  });
+
+  // TRACE/INTEGRITY envelope with debug metadata
+  res.json({
+    success: true,
+    data: {
+      signals: allSignals,
+      qualified,
+      nearQualified,
+      notQualified,
+      scannedAt,
+      reportId,
+    },
+    trace: {
+      universeSize: list.length,
+      scannedCount: allSignals.length,
+      qualifiedCount: qualified.length,
+      nearQualifiedCount: nearQualified.length,
+      notQualifiedCount: notQualified.length,
+      missingDataSymbols,
+      minConfidenceThreshold: minConfidence,
+      signalTypeFilter: signalType,
+      rankings: allSignals.slice(0, 10).map(s => ({ symbol: s.symbol, confidence: s.confidence, qualification: s.qualification })),
+    },
+  });
+});
+
+// Save screener report from client-provided results
+app.post('/v1/screener/reports', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { name, signals, settings, scannedAt } = req.body || {};
+
+  if (!Array.isArray(signals) || signals.length === 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'signals array is required' },
+    });
+  }
+
+  const reportName = name || `Scan ${new Date().toLocaleString('en-US')}`;
+  const reportResult = await queryOne<{ id: string; scanned_at: string }>(
+    `INSERT INTO scanner_reports (user_id, name, results, scanned_at)
+     VALUES ($1, $2, $3, $4)
+     RETURNING id, scanned_at`,
+    [
+      userId,
+      reportName,
+      JSON.stringify({ signals, settings: settings || {}, scannedAt: scannedAt || new Date().toISOString() }),
+      scannedAt || new Date().toISOString(),
+    ]
+  );
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.SCAN_EXECUTED, {
+    mode: 'screener-save',
+    resultsCount: signals.length,
+    reportId: reportResult?.id,
+  });
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      reportId: reportResult?.id,
+      scannedAt: reportResult?.scanned_at,
+    },
+  });
+});
+
+// List screener reports
+app.get('/v1/screener/reports', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+
+  const result = await query<{
+    id: string;
+    name: string | null;
+    results: any;
+    scanned_at: string;
+  }>(
+    `SELECT id, name, results, scanned_at
+     FROM scanner_reports WHERE user_id = $1
+     ORDER BY scanned_at DESC LIMIT 50`,
+    [userId]
+  );
+
+  const reports = result.rows.map((row) => {
+    const parsed = parseDecisionJson<{ signals?: any[]; settings?: any }>(row.results, {});
+    const signals = Array.isArray(parsed?.signals) ? parsed.signals : [];
+    return {
+      id: row.id,
+      name: row.name,
+      scannedAt: row.scanned_at,
+      resultsCount: signals.length,
+      settings: parsed?.settings || {},
+    };
+  });
+
+  res.json({ success: true, data: { reports } });
+});
+
+// Get single screener report
+app.get('/v1/screener/reports/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { id } = req.params;
+
+  const report = await queryOne<{
+    id: string;
+    name: string | null;
+    results: any;
+    scanned_at: string;
+  }>(
+    `SELECT id, name, results, scanned_at
+     FROM scanner_reports WHERE id = $1 AND user_id = $2`,
+    [id, userId]
+  );
+
+  if (!report) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Report not found' },
+    });
+  }
+
+  const parsed = parseDecisionJson(report.results, {});
+
+  res.json({
+    success: true,
+    data: {
+      report: {
+        id: report.id,
+        name: report.name,
+        scannedAt: report.scanned_at,
+        results: parsed,
+      },
+    },
+  });
+});
 
 // ============================================
 // Backtesting API
@@ -667,6 +3234,8 @@ interface BacktestParams {
   endDate: string;
   initialCapital?: number;
   params?: Record<string, number>;
+  slippageBps?: number;
+  history?: HistoricalBar[];
 }
 
 interface BacktestTrade {
@@ -705,11 +3274,495 @@ interface BacktestResult {
   equityCurve: Array<{ date: string; value: number }>;
 }
 
+interface MonteCarloResult {
+  percentile5: number;
+  percentile25: number;
+  percentile50: number;
+  percentile75: number;
+  percentile95: number;
+  probabilityProfit: number;
+  expectedValue: number;
+}
+
+interface SlippageSensitivityPoint {
+  slippageBps: number;
+  totalReturnPct: number;
+  maxDrawdownPct: number;
+  winRate: number;
+  profitFactor: number;
+}
+
+interface StrategySimulationSummary {
+  strategyTag: string;
+  strategyType: string;
+  symbol: string;
+  backtest: {
+    totalTrades: number;
+    winRate: number;
+    avgWin: number;
+    avgLoss: number;
+    profitFactor: number;
+    maxDrawdownPct: number;
+    sharpeRatio: number;
+    totalReturn: number;
+    totalReturnPct: number;
+    finalCapital: number;
+    initialCapital: number;
+  };
+  monteCarlo: MonteCarloResult;
+  slippage: SlippageSensitivityPoint[];
+  fitnessScore: number;
+  drift: { status: 'STABLE' | 'QUARANTINED'; fitnessDelta: number | null; reasons: string[] };
+  status: 'ACTIVE' | 'QUARANTINED' | 'UNSUPPORTED';
+  evaluatedAt: string;
+}
+
+type StrategyPerformanceRow = {
+  id: string;
+  org_id: string | null;
+  user_id: string | null;
+  strategy_key: string;
+  strategy_tag: string;
+  strategy_type: string | null;
+  symbol: string;
+  status: string;
+  fitness_score: string | number | null;
+  drift_json: string | Record<string, unknown> | null;
+  metrics_json: string | Record<string, unknown> | null;
+  evaluated_at: string;
+  quarantined_at: string | null;
+  quarantine_reason: string | null;
+  created_at: string;
+  updated_at: string;
+};
+
+const SUPPORTED_STRATEGIES = new Set(['sma_crossover', 'mean_reversion', 'momentum']);
+const STRATEGY_SIM_CACHE_HOURS = Math.max(1, Number(process.env.STRATEGY_SIM_CACHE_HOURS || '12'));
+const STRATEGY_SIM_WINDOW_DAYS = Math.max(30, Number(process.env.STRATEGY_SIM_WINDOW_DAYS || '180'));
+
+function resolveStrategyType(strategyTag?: string | null, override?: string | null): string | null {
+  const candidate = (override || strategyTag || '').toLowerCase();
+  return SUPPORTED_STRATEGIES.has(candidate) ? candidate : null;
+}
+function resolveSimulationWindow(startDate?: string, endDate?: string) {
+  const end = endDate ? new Date(endDate) : new Date();
+  const safeEnd = Number.isFinite(end.getTime()) ? end : new Date();
+  const start = startDate ? new Date(startDate) : new Date(safeEnd.getTime() - STRATEGY_SIM_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const safeStart = Number.isFinite(start.getTime())
+    ? start
+    : new Date(safeEnd.getTime() - STRATEGY_SIM_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  return {
+    startKey: safeStart.toISOString().split('T')[0],
+    endKey: safeEnd.toISOString().split('T')[0],
+  };
+}
+
+function buildStrategyKey(orgId: string | null, strategyTag: string, symbol: string): string {
+  const org = orgId || 'GLOBAL';
+  return `${org}:${strategyTag.toUpperCase()}:${symbol.toUpperCase()}`;
+}
+
+function seedRandom(seed: string): () => number {
+  const hash = createHash('sha256').update(seed).digest();
+  let state = hash.readUInt32BE(0);
+  return () => {
+    state = (state * 1664525 + 1013904223) % 4294967296;
+    return state / 4294967296;
+  };
+}
+
+function percentile(values: number[], pct: number): number {
+  if (values.length === 0) return 0;
+  const index = Math.min(values.length - 1, Math.max(0, Math.floor(values.length * pct)));
+  return values[index];
+}
+
+function computeMonteCarlo(trades: BacktestTrade[], seed: string): MonteCarloResult {
+  const returns = trades.map((t) => t.pnlPercent / 100).filter((v) => Number.isFinite(v));
+  if (returns.length === 0) {
+    return { percentile5: 0, percentile25: 0, percentile50: 0, percentile75: 0, percentile95: 0, probabilityProfit: 0, expectedValue: 0 };
+  }
+
+  const rand = seedRandom(seed);
+  const iterations = 500;
+  const outcomes: number[] = [];
+
+  for (let i = 0; i < iterations; i++) {
+    let equity = 1;
+    for (let j = 0; j < returns.length; j++) {
+      const idx = Math.floor(rand() * returns.length);
+      equity *= (1 + returns[idx]);
+    }
+    outcomes.push((equity - 1) * 100);
+  }
+
+  outcomes.sort((a, b) => a - b);
+  const probabilityProfit = outcomes.filter((v) => v > 0).length / outcomes.length;
+  const expectedValue = outcomes.reduce((sum, v) => sum + v, 0) / outcomes.length;
+
+  return {
+    percentile5: Math.round(percentile(outcomes, 0.05) * 100) / 100,
+    percentile25: Math.round(percentile(outcomes, 0.25) * 100) / 100,
+    percentile50: Math.round(percentile(outcomes, 0.5) * 100) / 100,
+    percentile75: Math.round(percentile(outcomes, 0.75) * 100) / 100,
+    percentile95: Math.round(percentile(outcomes, 0.95) * 100) / 100,
+    probabilityProfit: Math.round(probabilityProfit * 10000) / 100,
+    expectedValue: Math.round(expectedValue * 100) / 100,
+  };
+}
+
+function summarizeBacktest(result: BacktestResult) {
+  return {
+    totalTrades: result.totalTrades,
+    winRate: result.winRate,
+    avgWin: result.avgWin,
+    avgLoss: result.avgLoss,
+    profitFactor: result.profitFactor,
+    maxDrawdownPct: result.maxDrawdownPct,
+    sharpeRatio: result.sharpeRatio,
+    totalReturn: result.totalReturn,
+    totalReturnPct: result.totalReturnPct,
+    finalCapital: result.finalCapital,
+    initialCapital: result.initialCapital,
+  };
+}
+
+function computeFitnessScore(summary: ReturnType<typeof summarizeBacktest>, slippage: SlippageSensitivityPoint[]): number {
+  const returnScore = Math.max(-1, Math.min(1, summary.totalReturnPct / 50));
+  const sharpeScore = Math.max(0, Math.min(1, summary.sharpeRatio / 2));
+  const winScore = Math.max(-1, Math.min(1, (summary.winRate - 50) / 50));
+  const drawdownScore = Math.max(-1, Math.min(1, 1 - summary.maxDrawdownPct / 30));
+
+  const baseline = slippage.find((s) => s.slippageBps === 0)?.totalReturnPct ?? summary.totalReturnPct;
+  const worst = slippage.length ? Math.min(...slippage.map((s) => s.totalReturnPct)) : baseline;
+  const slipPenalty = baseline === 0 ? (worst < 0 ? 1 : 0) : Math.min(1, Math.max(0, (baseline - worst) / Math.max(1, Math.abs(baseline))));
+
+  const weighted =
+    returnScore * 0.3 +
+    sharpeScore * 0.2 +
+    winScore * 0.2 +
+    drawdownScore * 0.2 +
+    (1 - slipPenalty) * 0.1;
+
+  return Math.max(0, Math.min(100, Math.round(weighted * 100)));
+}
+
+function evaluateStrategyDrift(summary: ReturnType<typeof summarizeBacktest>, fitnessScore: number, previous?: StrategyPerformanceRow | null) {
+  const reasons: string[] = [];
+  const prevFitness = previous?.fitness_score !== null && previous?.fitness_score !== undefined ? Number(previous.fitness_score) : null;
+  const fitnessDelta = prevFitness !== null ? Math.round((fitnessScore - prevFitness) * 100) / 100 : null;
+
+  if (fitnessDelta !== null && fitnessDelta <= -15) reasons.push('fitness_drop');
+  if (summary.maxDrawdownPct >= 30) reasons.push('drawdown_breach');
+  if (summary.totalTrades >= 10 && summary.winRate < 40) reasons.push('win_rate_low');
+  if (summary.totalTrades >= 10 && summary.profitFactor < 1) reasons.push('profit_factor_low');
+
+  return {
+    status: reasons.length > 0 ? 'QUARANTINED' : 'STABLE',
+    fitnessDelta,
+    reasons,
+  } as { status: 'STABLE' | 'QUARANTINED'; fitnessDelta: number | null; reasons: string[] };
+}
+
+function formatStrategyPerformance(row: StrategyPerformanceRow) {
+  return {
+    id: row.id,
+    strategyKey: row.strategy_key,
+    strategyTag: row.strategy_tag,
+    strategyType: row.strategy_type,
+    symbol: row.symbol,
+    status: row.status,
+    fitnessScore: row.fitness_score !== null ? Number(row.fitness_score) : null,
+    drift: parseDecisionJson(row.drift_json, null),
+    metrics: parseDecisionJson(row.metrics_json, null),
+    evaluatedAt: row.evaluated_at,
+    quarantinedAt: row.quarantined_at,
+    quarantineReason: row.quarantine_reason,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+  };
+}
+
+async function getStrategyPerformanceByKey(strategyKey: string) {
+  return await queryOne<StrategyPerformanceRow>(
+    `SELECT * FROM strategy_performance WHERE strategy_key = $1`,
+    [strategyKey]
+  );
+}
+
+async function upsertStrategyPerformance(params: {
+  strategyKey: string;
+  strategyTag: string;
+  strategyType: string | null;
+  symbol: string;
+  orgId?: string | null;
+  userId?: string | null;
+  status: 'ACTIVE' | 'QUARANTINED' | 'UNSUPPORTED';
+  fitnessScore: number | null;
+  drift: Record<string, unknown> | null;
+  metrics: Record<string, unknown> | null;
+  quarantinedAt?: string | null;
+  quarantineReason?: string | null;
+}): Promise<StrategyPerformanceRow> {
+  const {
+    strategyKey,
+    strategyTag,
+    strategyType,
+    symbol,
+    orgId,
+    userId,
+    status,
+    fitnessScore,
+    drift,
+    metrics,
+    quarantinedAt,
+    quarantineReason,
+  } = params;
+
+  return await queryOne<StrategyPerformanceRow>(
+    `INSERT INTO strategy_performance (
+        strategy_key, org_id, user_id, strategy_tag, strategy_type, symbol,
+        status, fitness_score, drift_json, metrics_json, evaluated_at, quarantined_at, quarantine_reason
+     ) VALUES ($1, $2, $3, $4, $5, $6,
+               $7, $8, $9, $10, NOW(), $11, $12)
+     ON CONFLICT (strategy_key) DO UPDATE SET
+       org_id = EXCLUDED.org_id,
+       user_id = EXCLUDED.user_id,
+       strategy_tag = EXCLUDED.strategy_tag,
+       strategy_type = EXCLUDED.strategy_type,
+       symbol = EXCLUDED.symbol,
+       status = EXCLUDED.status,
+       fitness_score = EXCLUDED.fitness_score,
+       drift_json = EXCLUDED.drift_json,
+       metrics_json = EXCLUDED.metrics_json,
+       evaluated_at = NOW(),
+       quarantined_at = EXCLUDED.quarantined_at,
+       quarantine_reason = EXCLUDED.quarantine_reason
+     RETURNING *`,
+    [
+      strategyKey,
+      orgId || null,
+      userId || null,
+      strategyTag,
+      strategyType,
+      symbol.toUpperCase(),
+      status,
+      fitnessScore,
+      drift ? JSON.stringify(drift) : null,
+      metrics ? JSON.stringify(metrics) : null,
+      quarantinedAt || null,
+      quarantineReason || null,
+    ]
+  );
+}
+
+async function computeStrategySimulation(params: {
+  strategyTag: string;
+  strategyType: string;
+  symbol: string;
+  startDate: string;
+  endDate: string;
+  initialCapital: number;
+  strategyParams?: Record<string, number>;
+}): Promise<{ summary: StrategySimulationSummary; metrics: Record<string, unknown> }> {
+  const { strategyTag, strategyType, symbol, startDate, endDate, initialCapital, strategyParams } = params;
+  const history = await getHistoricalData(symbol, startDate, endDate);
+
+  if (history.length < 50) {
+    throw new Error('Insufficient historical data for strategy simulation');
+  }
+
+  const baseBacktest = await runBacktest({
+    symbol,
+    strategyType,
+    startDate,
+    endDate,
+    initialCapital,
+    params: strategyParams,
+    slippageBps: 0,
+    history,
+  });
+
+  const slippagePoints: SlippageSensitivityPoint[] = [];
+  for (const bps of [0, 5, 10, 25]) {
+    const result = await runBacktest({
+      symbol,
+      strategyType,
+      startDate,
+      endDate,
+      initialCapital,
+      params: strategyParams,
+      slippageBps: bps,
+      history,
+    });
+    slippagePoints.push({
+      slippageBps: bps,
+      totalReturnPct: result.totalReturnPct,
+      maxDrawdownPct: result.maxDrawdownPct,
+      winRate: result.winRate,
+      profitFactor: result.profitFactor,
+    });
+  }
+
+  const summary = summarizeBacktest(baseBacktest);
+  const monteCarlo = computeMonteCarlo(baseBacktest.trades, `${strategyTag}:${symbol}:${startDate}:${endDate}`);
+  const fitnessScore = computeFitnessScore(summary, slippagePoints);
+
+  const drift = evaluateStrategyDrift(summary, fitnessScore);
+  const status = drift.status === 'QUARANTINED' ? 'QUARANTINED' : 'ACTIVE';
+  const evaluatedAt = new Date().toISOString();
+
+  const simulationSummary: StrategySimulationSummary = {
+    strategyTag,
+    strategyType,
+    symbol: symbol.toUpperCase(),
+    backtest: summary,
+    monteCarlo,
+    slippage: slippagePoints,
+    fitnessScore,
+    drift,
+    status,
+    evaluatedAt,
+  };
+
+  const metrics = {
+    backtest: summary,
+    monteCarlo,
+    slippage: slippagePoints,
+    fitnessScore,
+  };
+
+  return { summary: simulationSummary, metrics };
+}
+
+async function ensureStrategyPerformance(params: {
+  strategyTag: string;
+  strategyType: string | null;
+  symbol: string;
+  orgId?: string | null;
+  userId?: string | null;
+  startDate: string;
+  endDate: string;
+  initialCapital: number;
+  strategyParams?: Record<string, number>;
+}): Promise<StrategySimulationSummary | null> {
+  const { strategyTag, strategyType, symbol, orgId, userId, startDate, endDate, initialCapital, strategyParams } = params;
+
+  if (!strategyType) {
+    return {
+      strategyTag,
+      strategyType: strategyTag,
+      symbol: symbol.toUpperCase(),
+      backtest: {
+        totalTrades: 0,
+        winRate: 0,
+        avgWin: 0,
+        avgLoss: 0,
+        profitFactor: 0,
+        maxDrawdownPct: 0,
+        sharpeRatio: 0,
+        totalReturn: 0,
+        totalReturnPct: 0,
+        finalCapital: initialCapital,
+        initialCapital,
+      },
+      monteCarlo: { percentile5: 0, percentile25: 0, percentile50: 0, percentile75: 0, percentile95: 0, probabilityProfit: 0, expectedValue: 0 },
+      slippage: [],
+      fitnessScore: 0,
+      drift: { status: 'STABLE', fitnessDelta: null, reasons: ['unsupported_strategy'] },
+      status: 'UNSUPPORTED',
+      evaluatedAt: new Date().toISOString(),
+    };
+  }
+
+  const strategyKey = buildStrategyKey(orgId || null, strategyTag, symbol);
+  const previous = await getStrategyPerformanceByKey(strategyKey);
+
+  if (previous?.evaluated_at) {
+    const last = new Date(previous.evaluated_at).getTime();
+    if (Number.isFinite(last) && Date.now() - last < STRATEGY_SIM_CACHE_HOURS * 60 * 60 * 1000) {
+      const cached = formatStrategyPerformance(previous);
+      const metrics = cached.metrics as any;
+      return {
+        strategyTag: cached.strategyTag,
+        strategyType: cached.strategyType || strategyType,
+        symbol: cached.symbol,
+        backtest: metrics?.backtest || {
+          totalTrades: 0,
+          winRate: 0,
+          avgWin: 0,
+          avgLoss: 0,
+          profitFactor: 0,
+          maxDrawdownPct: 0,
+          sharpeRatio: 0,
+          totalReturn: 0,
+          totalReturnPct: 0,
+          finalCapital: initialCapital,
+          initialCapital,
+        },
+        monteCarlo: metrics?.monteCarlo || { percentile5: 0, percentile25: 0, percentile50: 0, percentile75: 0, percentile95: 0, probabilityProfit: 0, expectedValue: 0 },
+        slippage: metrics?.slippage || [],
+        fitnessScore: cached.fitnessScore || 0,
+        drift: (cached.drift as any) || { status: 'STABLE', fitnessDelta: null, reasons: [] },
+        status: cached.status as any,
+        evaluatedAt: cached.evaluatedAt,
+      };
+    }
+  }
+
+  const simulation = await computeStrategySimulation({
+    strategyTag,
+    strategyType,
+    symbol,
+    startDate,
+    endDate,
+    initialCapital,
+    strategyParams,
+  });
+
+  const drift = evaluateStrategyDrift(simulation.summary.backtest, simulation.summary.fitnessScore, previous);
+  const status = drift.status === 'QUARANTINED' ? 'QUARANTINED' : 'ACTIVE';
+
+  const record = await upsertStrategyPerformance({
+    strategyKey,
+    strategyTag,
+    strategyType,
+    symbol,
+    orgId: orgId || null,
+    userId: userId || null,
+    status,
+    fitnessScore: simulation.summary.fitnessScore,
+    drift,
+    metrics: simulation.metrics,
+    quarantinedAt: status === 'QUARANTINED' ? new Date().toISOString() : null,
+    quarantineReason: status === 'QUARANTINED' ? drift.reasons.join(',') : null,
+  });
+
+  const formatted = formatStrategyPerformance(record);
+  return {
+    strategyTag: formatted.strategyTag,
+    strategyType: formatted.strategyType || strategyType,
+    symbol: formatted.symbol,
+    backtest: simulation.summary.backtest,
+    monteCarlo: simulation.summary.monteCarlo,
+    slippage: simulation.summary.slippage,
+    fitnessScore: formatted.fitnessScore || simulation.summary.fitnessScore,
+    drift: drift,
+    status: status,
+    evaluatedAt: formatted.evaluatedAt,
+  };
+}
+
 async function runBacktest(params: BacktestParams): Promise<BacktestResult> {
-  const { symbol, strategyType, startDate, endDate, initialCapital = 100000, params: strategyParams = {} } = params;
+  const { symbol, strategyType, startDate, endDate, initialCapital = 100000, params: strategyParams = {}, slippageBps = 0 } = params;
   
   // Get historical data
-  const history = await getHistoricalData(symbol, startDate, endDate);
+  const history = params.history || await Promise.race<HistoricalBar[]>([
+    getHistoricalData(symbol, startDate, endDate),
+    new Promise<HistoricalBar[]>((_, reject) =>
+      setTimeout(() => reject(new Error('Historical market data unavailable on current data plan. Candles require paid provider access.')), 10000)
+    ),
+  ]);
   
   if (history.length < 50) {
     throw new Error('Insufficient historical data for backtest');
@@ -730,6 +3783,8 @@ async function runBacktest(params: BacktestParams): Promise<BacktestResult> {
   
   const prices = history.map(d => d.close);
   
+  const slippageFactor = Math.max(0, slippageBps) / 10000;
+
   for (let i = 50; i < history.length; i++) {
     const currentPrice = history[i].close;
     const currentDate = history[i].date;
@@ -778,19 +3833,21 @@ async function runBacktest(params: BacktestParams): Promise<BacktestResult> {
     
     // Execute trades based on signals
     if (signal === 'BUY' && !position) {
-      const size = Math.floor(capital / currentPrice);
+      const entryPrice = currentPrice * (1 + slippageFactor);
+      const size = Math.floor(capital / entryPrice);
       if (size > 0) {
-        position = { side: 'LONG', entryPrice: currentPrice, entryDate: currentDate, size };
+        position = { side: 'LONG', entryPrice, entryDate: currentDate, size };
       }
     } else if (signal === 'SELL' && position?.side === 'LONG') {
-      const pnl = (currentPrice - position.entryPrice) * position.size;
-      const pnlPercent = ((currentPrice - position.entryPrice) / position.entryPrice) * 100;
+      const exitPrice = currentPrice * (1 - slippageFactor);
+      const pnl = (exitPrice - position.entryPrice) * position.size;
+      const pnlPercent = ((exitPrice - position.entryPrice) / position.entryPrice) * 100;
       
       trades.push({
         entryDate: position.entryDate,
         exitDate: currentDate,
         entryPrice: position.entryPrice,
-        exitPrice: currentPrice,
+        exitPrice,
         side: 'LONG',
         pnl: Math.round(pnl * 100) / 100,
         pnlPercent: Math.round(pnlPercent * 100) / 100,
@@ -816,15 +3873,16 @@ async function runBacktest(params: BacktestParams): Promise<BacktestResult> {
   // Close any open position at end
   if (position) {
     const finalPrice = history[history.length - 1].close;
-    const pnl = (finalPrice - position.entryPrice) * position.size;
+    const exitPrice = finalPrice * (1 - slippageFactor);
+    const pnl = (exitPrice - position.entryPrice) * position.size;
     trades.push({
       entryDate: position.entryDate,
       exitDate: history[history.length - 1].date,
       entryPrice: position.entryPrice,
-      exitPrice: finalPrice,
+      exitPrice,
       side: 'LONG',
       pnl: Math.round(pnl * 100) / 100,
-      pnlPercent: Math.round(((finalPrice - position.entryPrice) / position.entryPrice) * 100 * 100) / 100,
+      pnlPercent: Math.round(((exitPrice - position.entryPrice) / position.entryPrice) * 100 * 100) / 100,
     });
     capital += pnl;
   }
@@ -896,25 +3954,37 @@ app.post('/v1/backtest', authMiddleware, async (req: AuthenticatedRequest, res: 
   }
   
   try {
-    const result = await runBacktest({ symbol, strategyType, startDate, endDate, initialCapital, params });
-    
-    // Save to database
-    await query(
-      `INSERT INTO backtest_results (id, user_id, org_id, name, symbol, strategy_type, strategy_params, 
-                                     start_date, end_date, initial_capital, final_capital, total_return, 
-                                     total_return_pct, max_drawdown, max_drawdown_pct, sharpe_ratio, win_rate,
-                                     total_trades, winning_trades, losing_trades, avg_win, avg_loss, profit_factor,
-                                     trades_json, equity_curve_json, status)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'COMPLETED')`,
-      [result.id, userId, orgId, name || result.name, result.symbol, result.strategyType, JSON.stringify(result.params),
-       result.startDate, result.endDate, result.initialCapital, result.finalCapital, result.totalReturn,
-       result.totalReturnPct, result.maxDrawdown, result.maxDrawdownPct, result.sharpeRatio, result.winRate,
-       result.totalTrades, result.winningTrades, result.losingTrades, result.avgWin, result.avgLoss, result.profitFactor,
-       JSON.stringify(result.trades), JSON.stringify(result.equityCurve)]
-    );
-    
-    await incrementUsage(userId, 'backtest');
-    
+    const result = await Promise.race<BacktestResult>([
+      (async () => {
+        const computed = await runBacktest({ symbol, strategyType, startDate, endDate, initialCapital, params });
+
+        // Save to database
+        await query(
+          `INSERT INTO backtest_results (id, user_id, org_id, name, symbol, strategy_type, strategy_params, 
+                                         start_date, end_date, initial_capital, final_capital, total_return, 
+                                         total_return_pct, max_drawdown, max_drawdown_pct, sharpe_ratio, win_rate,
+                                         total_trades, winning_trades, losing_trades, avg_win, avg_loss, profit_factor,
+                                         trades_json, equity_curve_json, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, 'COMPLETED')`,
+          [computed.id, userId, orgId, name || computed.name, computed.symbol, computed.strategyType, JSON.stringify(computed.params),
+           computed.startDate, computed.endDate, computed.initialCapital, computed.finalCapital, computed.totalReturn,
+           computed.totalReturnPct, computed.maxDrawdown, computed.maxDrawdownPct, computed.sharpeRatio, computed.winRate,
+           computed.totalTrades, computed.winningTrades, computed.losingTrades, computed.avgWin, computed.avgLoss, computed.profitFactor,
+           JSON.stringify(computed.trades), JSON.stringify(computed.equityCurve)]
+        );
+
+        await incrementUsage(userId, 'backtest');
+        return computed;
+      })(),
+      new Promise<BacktestResult>((_, reject) =>
+        setTimeout(
+          () => reject(new Error('Historical market data unavailable on current data plan. Candles require paid provider access.')),
+          12000
+        )
+      ),
+    ]);
+
+
     res.json({
       success: true,
       data: {
@@ -1084,6 +4154,203 @@ app.get('/v1/backtest/strategies', authMiddleware, async (_req: AuthenticatedReq
   });
 });
 
+// ============================================
+// Strategy Simulator & Performance
+// ============================================
+
+app.post('/v1/strategy-simulator', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { symbol, strategyType, strategyTag, startDate, endDate, initialCapital, params } = req.body || {};
+
+  if (!symbol || !strategyType) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Missing required fields: symbol, strategyType' },
+    });
+  }
+
+  const resolvedType = resolveStrategyType(strategyTag || strategyType, strategyType);
+  if (!resolvedType) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Unsupported strategy type' },
+    });
+  }
+
+  const quota = await checkQuota(userId, 'backtest');
+  if (!quota.allowed) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: { code: 'QUOTA_EXCEEDED', message: quota.message },
+    });
+  }
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+
+  const window = resolveSimulationWindow(startDate, endDate);
+  const tag = typeof strategyTag === 'string' && strategyTag.trim() ? strategyTag : resolvedType;
+  const capital = Number(initialCapital) || 100000;
+
+  try {
+    const simulation = await computeStrategySimulation({
+      strategyTag: tag,
+      strategyType: resolvedType,
+      symbol: String(symbol).toUpperCase(),
+      startDate: window.startKey,
+      endDate: window.endKey,
+      initialCapital: capital,
+      strategyParams: params,
+    });
+
+    const strategyKey = buildStrategyKey(orgId || null, tag, String(symbol));
+    const previous = await getStrategyPerformanceByKey(strategyKey);
+    const drift = evaluateStrategyDrift(simulation.summary.backtest, simulation.summary.fitnessScore, previous);
+    const status = drift.status === 'QUARANTINED' ? 'QUARANTINED' : 'ACTIVE';
+
+    const record = await upsertStrategyPerformance({
+      strategyKey,
+      strategyTag: tag,
+      strategyType: resolvedType,
+      symbol: String(symbol),
+      orgId,
+      userId,
+      status,
+      fitnessScore: simulation.summary.fitnessScore,
+      drift,
+      metrics: simulation.metrics,
+      quarantinedAt: status === 'QUARANTINED' ? new Date().toISOString() : null,
+      quarantineReason: status === 'QUARANTINED' ? drift.reasons.join(',') : null,
+    });
+
+    await incrementUsage(userId, 'backtest');
+
+    const simulationPayload: any = { ...simulation.summary, drift, status };
+    if (analyticsDepth <= 0) {
+      const expectancy = typeof simulation.summary?.monteCarlo?.expectedValue === 'number'
+        ? simulation.summary.monteCarlo.expectedValue
+        : null;
+      simulationPayload.expectancy = expectancy;
+      delete simulationPayload.monteCarlo;
+      delete simulationPayload.slippage;
+      simulationPayload.analytics = { depth: analyticsDepth, locked: true };
+    } else {
+      simulationPayload.analytics = { depth: analyticsDepth, locked: false };
+    }
+
+    const performancePayload = formatStrategyPerformance(record);
+    if (analyticsDepth <= 0 && performancePayload?.metrics) {
+      const metrics = performancePayload.metrics as any;
+      const expectancy = typeof metrics?.monteCarlo?.expectedValue === 'number' ? metrics.monteCarlo.expectedValue : null;
+      performancePayload.metrics = {
+        backtest: metrics?.backtest,
+        fitnessScore: performancePayload.fitnessScore,
+        expectancy,
+        analyticsLocked: true,
+      };
+    }
+    res.json({
+      success: true,
+      data: {
+        simulation: simulationPayload,
+        performance: performancePayload,
+        window,
+        analyticsDepth,
+      },
+      disclaimer: 'Backtested performance is hypothetical and not a guarantee of future results.',
+    });
+  } catch (error) {
+    logger.error('Strategy simulation failed', error as Error);
+    res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'STRATEGY_SIM_FAILED', message: (error as Error).message },
+    });
+  }
+});
+
+app.get('/v1/strategy-performance', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { symbol, strategyTag, status, limit = '50', offset = '0' } = req.query;
+
+  let whereClause = 'WHERE (org_id IS NULL OR org_id = $1)';
+  const params: (string | number)[] = [orgId];
+  let paramIndex = 2;
+
+  if (symbol) {
+    whereClause += ` AND symbol = $${paramIndex++}`;
+    params.push(String(symbol).toUpperCase());
+  }
+  if (strategyTag) {
+    whereClause += ` AND strategy_tag = $${paramIndex++}`;
+    params.push(String(strategyTag));
+  }
+  if (status) {
+    whereClause += ` AND status = $${paramIndex++}`;
+    params.push(String(status).toUpperCase());
+  }
+
+  const limitValue = Math.min(200, Math.max(1, parseInt(limit as string, 10) || 50));
+  const offsetValue = Math.max(0, parseInt(offset as string, 10) || 0);
+  params.push(limitValue, offsetValue);
+
+  const result = await query<StrategyPerformanceRow>(
+    `SELECT * FROM strategy_performance
+     ${whereClause}
+     ORDER BY updated_at DESC
+     LIMIT $${paramIndex++} OFFSET $${paramIndex}`,
+    params
+  );
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+  const strategies = result.rows.map((row) => {
+    const formatted = formatStrategyPerformance(row);
+    if (analyticsDepth <= 0 && formatted.metrics) {
+      const metrics = formatted.metrics as any;
+      const expectancy = typeof metrics?.monteCarlo?.expectedValue === 'number' ? metrics.monteCarlo.expectedValue : null;
+      formatted.metrics = {
+        backtest: metrics?.backtest,
+        fitnessScore: formatted.fitnessScore,
+        expectancy,
+        analyticsLocked: true,
+      };
+    }
+    return formatted;
+  });
+
+  res.json({ success: true, data: { strategies, analyticsDepth } });
+});
+app.get('/v1/strategy-performance/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { id } = req.params;
+
+  const record = await queryOne<StrategyPerformanceRow>(
+    `SELECT * FROM strategy_performance
+     WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+
+  if (!record) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Strategy performance not found' },
+    });
+  }
+
+  const formatted = formatStrategyPerformance(record);
+  const { plan, limits } = await getUserPlan(userId);
+  const analyticsDepth = resolveAnalyticsDepth(plan, limits);
+  if (analyticsDepth <= 0 && formatted.metrics) {
+    const metrics = formatted.metrics as any;
+    const expectancy = typeof metrics?.monteCarlo?.expectedValue === 'number' ? metrics.monteCarlo.expectedValue : null;
+    formatted.metrics = {
+      backtest: metrics?.backtest,
+      fitnessScore: formatted.fitnessScore,
+      expectancy,
+      analyticsLocked: true,
+    };
+  }
+
+  res.json({ success: true, data: { strategy: formatted, analyticsDepth } });
+});
 // ============================================
 // AI Thesis Generator
 // ============================================
@@ -1390,6 +4657,303 @@ app.post('/v1/thesis', authMiddleware, async (req: AuthenticatedRequest, res: Re
   });
 });
 
+// ============================================
+// Alpaca Broker API (per-user)
+// ============================================
+
+app.get('/v1/alpaca/status', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const connection = await getActiveAlpacaConnection(userId);
+  const liveTradingEnabled = process.env.FEATURE_LIVE_TRADING === 'true';
+
+  if (!connection) {
+    return res.json({ success: true, data: { connected: false, liveTradingEnabled } });
+  }
+
+  res.json({
+    success: true,
+    data: {
+      connected: true,
+      endpoint: connection.endpoint,
+      environment: connection.environment,
+      keyLast4: connection.key_last4,
+      lastVerifiedAt: connection.last_verified_at,
+      liveTradingEnabled,
+    },
+  });
+});
+
+app.post('/v1/alpaca/connect', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { apiKey, apiSecret, environment, endpoint } = req.body || {};
+
+  if (!apiKey || !apiSecret) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'apiKey and apiSecret are required' },
+    });
+  }
+
+  const env: 'paper' | 'live' = environment === 'live' ? 'live' : 'paper';
+  const resolvedEndpoint = resolveAlpacaEndpoint(env, endpoint);
+
+  try {
+    const client = new AlpacaClient({ apiKey, apiSecret, endpoint: resolvedEndpoint });
+    const account = await client.getAccount();
+
+    const keyLast4 = String(apiKey).slice(-4);
+    const now = new Date().toISOString();
+
+    await query(
+      `INSERT INTO broker_connections (user_id, org_id, provider, api_key_enc, api_secret_enc, endpoint, environment, key_last4, last_verified_at, is_active)
+       VALUES ($1, $2, 'ALPACA', $3, $4, $5, $6, $7, $8, true)
+       ON CONFLICT (user_id, provider) DO UPDATE SET
+         api_key_enc = EXCLUDED.api_key_enc,
+         api_secret_enc = EXCLUDED.api_secret_enc,
+         endpoint = EXCLUDED.endpoint,
+         environment = EXCLUDED.environment,
+         key_last4 = EXCLUDED.key_last4,
+         last_verified_at = EXCLUDED.last_verified_at,
+         is_active = true,
+         updated_at = NOW()`,
+      [
+        userId,
+        orgId,
+        encryptSecret(String(apiKey)),
+        encryptSecret(String(apiSecret)),
+        resolvedEndpoint,
+        env,
+        keyLast4,
+        now,
+      ]
+    );
+
+    emitEvent(orgId, 'USER', userId, EVENT_TYPES.BROKER_CONNECTED, {
+      provider: 'ALPACA',
+      environment: env,
+      endpoint: resolvedEndpoint,
+      keyLast4,
+      accountId: account.id,
+    });
+
+    res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      data: {
+        connected: true,
+        endpoint: resolvedEndpoint,
+        environment: env,
+        keyLast4,
+        accountNumber: account.account_number,
+      },
+    });
+  } catch (error) {
+    logger.warn('Alpaca connect failed', { userId, error: (error as Error).message });
+    res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'ALPACA_CONNECT_FAILED', message: (error as Error).message },
+    });
+  }
+});
+
+app.delete('/v1/alpaca/connect', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+
+  await query(
+    `DELETE FROM broker_connections WHERE user_id = $1 AND provider = 'ALPACA'`,
+    [userId]
+  );
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.BROKER_DISCONNECTED, { provider: 'ALPACA' });
+
+  res.json({ success: true, data: { disconnected: true } });
+});
+
+app.get('/v1/alpaca/account', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const connection = await getActiveAlpacaConnection(userId);
+
+  if (!connection) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+    });
+  }
+
+  try {
+    const client = buildAlpacaClient(connection);
+    const account = await client.getAccount();
+    res.json({ success: true, data: { account } });
+  } catch (error) {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'ALPACA_UNAVAILABLE', message: (error as Error).message },
+    });
+  }
+});
+
+app.get('/v1/alpaca/positions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const connection = await getActiveAlpacaConnection(userId);
+
+  if (!connection) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+    });
+  }
+
+  try {
+    const client = buildAlpacaClient(connection);
+    const positions = await client.getPositions();
+    res.json({ success: true, data: { positions } });
+  } catch (error) {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'ALPACA_UNAVAILABLE', message: (error as Error).message },
+    });
+  }
+});
+
+app.get('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const status = (req.query.status as 'open' | 'closed' | 'all') || 'all';
+  const connection = await getActiveAlpacaConnection(userId);
+
+  if (!connection) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+    });
+  }
+
+  try {
+    const client = buildAlpacaClient(connection);
+    const orders = await client.getOrders(status);
+    res.json({ success: true, data: { orders } });
+  } catch (error) {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'ALPACA_UNAVAILABLE', message: (error as Error).message },
+    });
+  }
+});
+
+app.post('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { symbol, qty, side, type, time_in_force, limit_price, stop_price } = req.body || {};
+
+  if (!symbol || !qty || !side) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Missing required fields: symbol, qty, side' },
+    });
+  }
+
+  const connection = await getActiveAlpacaConnection(userId);
+  if (!connection) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+    });
+  }
+
+  if (connection.environment === 'live' && process.env.FEATURE_LIVE_TRADING !== 'true') {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: { code: 'LIVE_TRADING_DISABLED', message: 'Live trading is disabled by policy' },
+    });
+  }
+
+  try {
+    const client = buildAlpacaClient(connection);
+    const order = await client.placeOrder({
+      symbol: String(symbol).toUpperCase(),
+      qty: Number(qty),
+      side,
+      type,
+      time_in_force,
+      limit_price: limit_price ? Number(limit_price) : undefined,
+      stop_price: stop_price ? Number(stop_price) : undefined,
+    });
+
+    emitEvent(orgId, 'USER', userId, EVENT_TYPES.BROKER_ORDER_PLACED, {
+      provider: 'ALPACA',
+      symbol: String(symbol).toUpperCase(),
+      side,
+      qty: Number(qty),
+      orderId: order.id,
+    });
+
+    res.status(HTTP_STATUS.CREATED).json({ success: true, data: { order } });
+  } catch (error) {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'ALPACA_ORDER_FAILED', message: (error as Error).message },
+    });
+  }
+});
+
+app.get('/v1/alpaca/history', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const connection = await getActiveAlpacaConnection(userId);
+
+  if (!connection) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+    });
+  }
+
+  const { plan } = await getUserPlan(userId);
+  const requestedPeriod = typeof req.query.period === 'string' ? req.query.period : undefined;
+  const requestedTimeframe = typeof req.query.timeframe === 'string' ? req.query.timeframe : '1D';
+
+  const allowedPeriods = ['1M', '3M', '6M', '1A', 'all'];
+  const normalizedPeriod = requestedPeriod?.toUpperCase();
+
+  let period: string;
+  if (plan === 'PRO') {
+    period = normalizedPeriod && allowedPeriods.includes(normalizedPeriod) ? normalizedPeriod : 'all';
+  } else if (plan === 'LITE') {
+    period = normalizedPeriod && ['1M', '3M', '6M'].includes(normalizedPeriod) ? normalizedPeriod : '3M';
+  } else {
+    period = '1M';
+  }
+
+  try {
+    const client = buildAlpacaClient(connection);
+    const history = await client.getPortfolioHistory({ period, timeframe: requestedTimeframe });
+
+    const points = history.timestamp.map((ts, idx) => ({
+      timestamp: new Date(ts * 1000).toISOString(),
+      equity: history.equity[idx],
+      profitLoss: history.profit_loss[idx],
+      profitLossPct: history.profit_loss_pct[idx],
+    }));
+
+    emitEvent(orgId, 'USER', userId, EVENT_TYPES.BROKER_HISTORY_FETCHED, {
+      provider: 'ALPACA',
+      period,
+      timeframe: requestedTimeframe,
+      points: points.length,
+    });
+
+    res.json({
+      success: true,
+      data: {
+        period,
+        timeframe: requestedTimeframe,
+        plan,
+        history: points,
+      },
+    });
+  } catch (error) {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'ALPACA_UNAVAILABLE', message: (error as Error).message },
+    });
+  }
+});
 // ============================================
 // Portfolio API
 // ============================================

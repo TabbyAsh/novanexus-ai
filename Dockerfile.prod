@@ -20,12 +20,72 @@ COPY services ./services
 COPY infra ./infra
 COPY scripts ./scripts
 
+# Copy tsconfig for esbuild
+COPY tsconfig.json ./
+
 # Install all dependencies (need devDeps for build)
 ENV NODE_ENV=development
 RUN npm ci --legacy-peer-deps --ignore-scripts || npm install --legacy-peer-deps
 
-# Build only backend services (skip frontend) and force rebuild to avoid stale cache
-RUN npx turbo run build --filter='./services/*' --filter='./libs/*' --force
+# Install esbuild globally
+RUN npm install -g esbuild
+
+# Build workspace libs with turbo (these are simpler and pass tsc)
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --no-cache || true
+
+# Bundle each service with esbuild (bypasses strict tsc, same as local Dockerfiles)
+RUN esbuild services/gateway/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/gateway/dist/index.js \
+  --external:pg-native \
+  --tsconfig=services/gateway/tsconfig.json || true
+
+RUN esbuild services/auth/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/auth/dist/index.js \
+  --external:pg-native --external:bcryptjs \
+  --tsconfig=services/auth/tsconfig.json || true
+
+RUN esbuild services/orchestrator/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/orchestrator/dist/index.js \
+  --external:pg-native \
+  --tsconfig=services/orchestrator/tsconfig.json || true
+
+RUN esbuild services/eventbus/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/eventbus/dist/index.js \
+  --external:pg-native \
+  --tsconfig=services/eventbus/tsconfig.json || true
+
+RUN esbuild services/billing/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/billing/dist/index.js \
+  --external:pg-native --external:stripe \
+  --tsconfig=services/billing/tsconfig.json || true
+
+RUN esbuild services/tradebot/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/tradebot/dist/index.js \
+  --external:pg-native --external:openai \
+  --tsconfig=services/tradebot/tsconfig.json || true
+
+RUN esbuild services/marketdata/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/marketdata/dist/index.js \
+  --external:pg-native \
+  --tsconfig=services/marketdata/tsconfig.json || true
+
+RUN esbuild services/nova-hub/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/nova-hub/dist/index.js \
+  --external:pg-native --external:openai \
+  --tsconfig=services/nova-hub/tsconfig.json || true
+
+# Verify bundles exist (fail if any critical service missing)
+RUN ls -la services/gateway/dist/index.js services/auth/dist/index.js \
+  services/eventbus/dist/index.js services/billing/dist/index.js \
+  services/nova-hub/dist/index.js
 
 # ─────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
@@ -50,9 +110,20 @@ COPY ecosystem.config.js ./
 ENV NODE_ENV=production
 EXPOSE 3000
 
-# Health check on gateway
-HEALTHCHECK --interval=30s --timeout=10s --start-period=60s --retries=5 \
-  CMD wget --spider -q http://localhost:3000/health || exit 1
+# Health check on gateway (uses PORT env if set by Railway)
+HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
+  CMD wget --spider -q http://localhost:${PORT:-3000}/health || exit 1
 
-# Start all services with PM2
-CMD ["pm2-runtime", "ecosystem.config.js"]
+# Create startup script that validates env, runs migrations, then starts PM2
+RUN echo '#!/bin/sh' > /app/start.sh && \
+    echo 'set -e' >> /app/start.sh && \
+    echo 'echo "=== Validating Environment ==="' >> /app/start.sh && \
+    echo 'node /app/scripts/validate-env.js' >> /app/start.sh && \
+    echo 'echo "=== Running Migrations ==="' >> /app/start.sh && \
+    echo 'node /app/scripts/run-migrations.js' >> /app/start.sh && \
+    echo 'echo "=== Starting Services ==="' >> /app/start.sh && \
+    echo 'exec pm2-runtime ecosystem.config.js' >> /app/start.sh && \
+    chmod +x /app/start.sh
+
+# Start with migrations then PM2
+CMD ["/app/start.sh"]

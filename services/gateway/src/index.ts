@@ -62,11 +62,6 @@ const PUBLIC_ROUTES = [
   '/v1/nexus/initialize',
   '/v1/nexus/analyze',
   '/v1/nexus/ledger',
-  // Alpaca status - public
-  '/v1/alpaca/status',
-  '/v1/alpaca/account',
-  '/v1/alpaca/positions',
-  '/v1/alpaca/orders',
   // AI Screener - public for demo
   '/v1/ai-screener/',
   // Market scanning - public for demo
@@ -80,6 +75,8 @@ const PREMIUM_FEATURES: Record<string, string> = {
   '/v1/trade/paper-trades': 'paper_trading',
   '/v1/watchlists': 'watchlists',
   '/v1/signals': 'alerts',
+  '/v1/decisions': 'decisions',
+  '/v1/screener': 'scanner',
   // NOTE: Basic market data (quotes/candles) must remain available after login.
   // Paywall specific advanced features instead of the entire /v1/market/* surface.
   '/v1/market/indicators': 'scanner',
@@ -630,35 +627,117 @@ app.get('/v1/export/theses.csv', requireScopes(['trade.read']), (req: Request, r
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/export/theses.csv', req, res);
 });
 
-// Store routes -> StoreBot
-app.get('/v1/store/products', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.storebot, '/api/products', req, res);
+// Store routes -> StoreBot (NOT PART OF MVP - return structured empty states)
+// These endpoints return empty but valid responses since storebot is not deployed
+app.get('/v1/store/products', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { products: [] },
+    trace: { 
+      service: 'storebot', 
+      status: 'not_deployed',
+      reason: 'E-commerce module not included in MVP', 
+      nextAction: 'Contact sales to enable marketplace features'
+    }
+  });
 });
 
-app.get('/v1/store/alerts', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.storebot, '/api/inventory/alerts', req, res);
+app.get('/v1/store/products/catalog', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { products: [] },
+    trace: { 
+      service: 'storebot', 
+      status: 'not_deployed',
+      reason: 'E-commerce module not included in MVP'
+    }
+  });
 });
 
-app.get('/v1/store/pricing-recommendations', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.storebot, '/api/pricing/recommendations', req, res);
+app.get('/v1/store/alerts', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { alerts: [] },
+    trace: { 
+      service: 'storebot', 
+      status: 'not_deployed',
+      reason: 'E-commerce module not included in MVP'
+    }
+  });
 });
 
-app.all('/v1/store/*', (req: Request, res: Response) => {
-  // StoreBot uses /api/* routes; rewrite to keep a stable public /v1/store/* contract.
-  proxyRequestRewrite(
-    SERVICE_URLS.storebot,
-    req.originalUrl.replace('/v1/store', '/api'),
-    req,
-    res
-  );
+app.get('/v1/store/pricing-recommendations', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { recommendations: [] },
+    trace: { 
+      service: 'storebot', 
+      status: 'not_deployed',
+      reason: 'E-commerce module not included in MVP'
+    }
+  });
 });
 
-app.all('/v1/products*', (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.storebot, req, res);
+app.get('/v1/store/pricing/analyze', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { recommendations: [], analyzedAt: new Date().toISOString() },
+    trace: { 
+      service: 'storebot', 
+      status: 'not_deployed',
+      reason: 'E-commerce module not included in MVP'
+    }
+  });
 });
 
-app.all('/v1/orders*', requireScopes(['store.orders']), (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.storebot, req, res);
+app.post('/v1/store/pricing/apply', (_req: Request, res: Response) => {
+  res.json({
+    success: false,
+    error: {
+      code: 'SERVICE_NOT_AVAILABLE',
+      message: 'E-commerce module not included in MVP',
+      nextAction: 'Contact sales to enable marketplace features'
+    }
+  });
+});
+
+app.post('/v1/store/products/appraise', (_req: Request, res: Response) => {
+  res.json({
+    success: false,
+    error: {
+      code: 'SERVICE_NOT_AVAILABLE',
+      message: 'E-commerce module not included in MVP',
+      nextAction: 'Contact sales to enable marketplace features'
+    }
+  });
+});
+
+// Catch-all for other store routes
+app.all('/v1/store/*', (_req: Request, res: Response) => {
+  res.json({
+    success: false,
+    error: {
+      code: 'SERVICE_NOT_AVAILABLE',
+      message: 'E-commerce module not included in MVP',
+      nextAction: 'Contact sales to enable marketplace features'
+    }
+  });
+});
+
+app.all('/v1/products*', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { products: [] },
+    trace: { service: 'storebot', status: 'not_deployed' }
+  });
+});
+
+app.all('/v1/orders*', requireScopes(['store.orders']), (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: { orders: [] },
+    trace: { service: 'storebot', status: 'not_deployed' }
+  });
 });
 
 // Social routes -> SocialBot
@@ -714,8 +793,28 @@ app.all('/v1/ops/*', requireScopes(['ops.read']), (req: Request, res: Response) 
 app.all('/v1/journal*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
+app.all('/v1/decisions*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/decision-cards*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/guided*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/usage', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
 
 app.all('/v1/backtest*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/strategy-performance*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/strategy-simulator*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
@@ -728,6 +827,12 @@ app.all('/v1/portfolio*', (req: Request, res: Response) => {
 });
 
 app.all('/v1/alerts*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/screener*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/alpaca*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
@@ -794,29 +899,6 @@ app.all('/v1/nexus/stop', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/stop', req, res);
 });
 
-// ============================================
-// Alpaca Trading Routes -> TradeBot
-// ============================================
-
-app.all('/v1/alpaca/status', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/status', req, res);
-});
-
-app.all('/v1/alpaca/account', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/account', req, res);
-});
-
-app.all('/v1/alpaca/positions', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/positions', req, res);
-});
-
-app.all('/v1/alpaca/orders', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/alpaca/orders', req, res);
-});
-
-app.all('/v1/alpaca/orders/:id', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.tradebot, `/api/alpaca/orders/${req.params.id}`, req, res);
-});
 
 // ============================================
 // AI Screener Routes -> TradeBot

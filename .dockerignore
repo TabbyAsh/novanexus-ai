@@ -1,0 +1,52 @@
+# Dependencies
+node_modules
+**/node_modules
+
+# Build artifacts
+dist
+**/dist
+.next
+**/.next
+.turbo
+**/.turbo
+
+# Version control
+.git
+.gitignore
+
+# IDE/Editor
+.vscode
+.idea
+*.swp
+*.swo
+
+# Test/Coverage
+coverage
+**/coverage
+*.test.ts
+*.test.js
+*.spec.ts
+*.spec.js
+__tests__
+
+# Logs
+*.log
+npm-debug.log*
+
+# Environment (keep .env.dev for compose reference)
+.env
+.env.local
+.env.production
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Docs (not needed in images)
+docs
+ADRs
+*.md
+!README.md
+
+# Terraform / infra scripts not needed in app images
+terraform

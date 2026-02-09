@@ -12,10 +12,16 @@ import {
   Wallet,
 } from 'lucide-react';
 import { api } from '@/lib/api';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 
 type TradingData = {
   portfolioValue: number;
   dayChange: number;
+  periodChange?: number;
+  periodChangePct?: number;
+  periodHigh?: number;
+  periodLow?: number;
+  period?: string;
   fetchedAt: string;
 };
 
@@ -29,7 +35,10 @@ export default function AnalyticsDashboard() {
     setError(null);
 
     try {
-      const alpacaData = await api.getAlpacaAccount();
+      const [alpacaData, historyData] = await Promise.all([
+        api.getAlpacaAccount(),
+        api.getAlpacaHistory({ timeframe: '1D' }),
+      ]);
 
       if (alpacaData.success && alpacaData.data?.account) {
         const account = alpacaData.data.account;
@@ -42,9 +51,34 @@ export default function AnalyticsDashboard() {
           throw new Error('Trading data unavailable (invalid numeric values)');
         }
 
+        let periodChange: number | undefined;
+        let periodChangePct: number | undefined;
+        let periodHigh: number | undefined;
+        let periodLow: number | undefined;
+        let period: string | undefined;
+
+        if (historyData.success && historyData.data?.history?.length) {
+          const points = historyData.data.history;
+          const equities = points.map((p) => Number(p.equity)).filter(Number.isFinite);
+          if (equities.length >= 2) {
+            const first = equities[0];
+            const last = equities[equities.length - 1];
+            periodChange = last - first;
+            periodChangePct = first !== 0 ? (periodChange / first) * 100 : undefined;
+            periodHigh = Math.max(...equities);
+            periodLow = Math.min(...equities);
+            period = historyData.data.period;
+          }
+        }
+
         setTradingData({
           portfolioValue,
           dayChange: equity - lastEquity,
+          periodChange,
+          periodChangePct,
+          periodHigh,
+          periodLow,
+          period,
           fetchedAt: new Date().toISOString(),
         });
       } else {
@@ -72,9 +106,10 @@ export default function AnalyticsDashboard() {
 
 
   return (
-    <div className="p-8 bg-gray-950 min-h-screen">
+    <DashboardLayout>
+      <div className="space-y-6">
       {/* Header */}
-      <div className="flex items-center justify-between mb-8">
+      <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-white">Business Intelligence</h1>
           <p className="text-gray-400 mt-1">
@@ -133,6 +168,23 @@ export default function AnalyticsDashboard() {
                   Day Change: {formatCurrency(tradingData.dayChange)}
                 </p>
               </div>
+              {typeof tradingData.periodChange === 'number' && (
+                <div className="text-sm text-gray-300">
+                  {tradingData.period || 'Period'} Change:{' '}
+                  <span className={tradingData.periodChange >= 0 ? 'text-green-400' : 'text-red-400'}>
+                    {formatCurrency(tradingData.periodChange)}
+                    {typeof tradingData.periodChangePct === 'number'
+                      ? ` (${tradingData.periodChangePct >= 0 ? '+' : ''}${tradingData.periodChangePct.toFixed(2)}%)`
+                      : ''}
+                  </span>
+                </div>
+              )}
+              {typeof tradingData.periodHigh === 'number' && typeof tradingData.periodLow === 'number' && (
+                <div className="text-xs text-gray-500">
+                  {tradingData.period || 'Period'} range: {formatCurrency(tradingData.periodLow)} –{' '}
+                  {formatCurrency(tradingData.periodHigh)}
+                </div>
+              )}
             </div>
           ) : (
             <div className="text-gray-400 text-sm">
@@ -164,7 +216,7 @@ export default function AnalyticsDashboard() {
         </div>
       </div>
 
-      <div className="mt-6 bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
         <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
           <BarChart3 className="w-5 h-5 text-purple-400" />
           Profit & Loss (Ledger)
@@ -173,6 +225,7 @@ export default function AnalyticsDashboard() {
           Unavailable — accounting ledger not initialized. This section will populate from the double-entry ledger once activated.
         </p>
       </div>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

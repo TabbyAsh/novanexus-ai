@@ -11,7 +11,8 @@ module.exports = {
       exec_mode: 'fork',
       env: {
         NODE_ENV: 'production',
-        PORT: 3000,
+        // Use Railway's PORT env var, fallback to 3000
+        PORT: process.env.PORT || 3000,
         // Internal service URLs (same container, localhost)
         AUTH_SERVICE_URL: 'http://localhost:3001',
         ORCHESTRATOR_URL: 'http://localhost:3002',
@@ -101,19 +102,7 @@ module.exports = {
       wait_ready: true,
       listen_timeout: 10000,
     },
-    {
-      name: 'storebot',
-      script: './services/storebot/dist/index.js',
-      instances: 1,
-      exec_mode: 'fork',
-      env: {
-        NODE_ENV: 'production',
-        PORT: 3011,
-        ORCHESTRATOR_URL: 'http://localhost:3002',
-      },
-      wait_ready: true,
-      listen_timeout: 10000,
-    },
+    // storebot removed - not part of MVP
     {
       name: 'nova-hub',
       script: './services/nova-hub/dist/index.js',

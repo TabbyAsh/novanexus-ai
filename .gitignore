@@ -126,3 +126,7 @@ ENV/
 # Turbo (cache + daemon logs)
 .turbo/
 .env*.local
+
+# Local/generated env files (Phase 5.2)
+.env.dev
+.env.prod
