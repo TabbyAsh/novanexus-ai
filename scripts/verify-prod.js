@@ -14,7 +14,7 @@ const http = require('http');
 // Configuration
 const API_URL = process.argv.find(a => a.startsWith('--url='))?.split('=')[1]
   || process.env.PROD_API_URL
-  || 'https://api.novanexus-ai.com';
+  || 'https://abackend-production.up.railway.app';
 
 const WEB_URL = process.env.PROD_WEB_URL || 'https://novanexus-ai.vercel.app';
 const TIMEOUT = 15000;
@@ -61,6 +61,28 @@ const TESTS = [
     body: JSON.stringify({ symbols: ['SPY'] }),
     headers: { 'Content-Type': 'application/json' },
     expect: { status: [200, 401, 403] }, // 200 if demo allowed, 401/403 if gated
+  },
+  // Phase 5.3: Simulator checks
+  {
+    name: 'Simulator Health',
+    url: `${API_URL}/v1/sim/health`,
+    method: 'GET',
+    expect: { status: 200, json: true },
+  },
+  // Phase 5.3: Marketplace/Appraisal checks
+  {
+    name: 'Marketplace Health',
+    url: `${API_URL}/v1/marketplace/health`,
+    method: 'GET',
+    expect: { status: 200, json: true },
+  },
+  {
+    name: 'Marketplace Appraisal',
+    url: `${API_URL}/v1/marketplace/appraise`,
+    method: 'POST',
+    body: JSON.stringify({ query: 'iPhone 15 Pro' }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: 200, json: true },
   },
 ];
 

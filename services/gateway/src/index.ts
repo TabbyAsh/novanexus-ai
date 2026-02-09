@@ -627,18 +627,12 @@ app.get('/v1/export/theses.csv', requireScopes(['trade.read']), (req: Request, r
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/export/theses.csv', req, res);
 });
 
-// Store routes -> StoreBot (NOT PART OF MVP - return structured empty states)
-// These endpoints return empty but valid responses since storebot is not deployed
+// Store routes -> StoreBot (basic inventory - still stub for MVP)
 app.get('/v1/store/products', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: { products: [] },
-    trace: { 
-      service: 'storebot', 
-      status: 'not_deployed',
-      reason: 'E-commerce module not included in MVP', 
-      nextAction: 'Contact sales to enable marketplace features'
-    }
+    trace: { service: 'storebot', status: 'stub', reason: 'Inventory module pending' }
   });
 });
 
@@ -646,11 +640,7 @@ app.get('/v1/store/products/catalog', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: { products: [] },
-    trace: { 
-      service: 'storebot', 
-      status: 'not_deployed',
-      reason: 'E-commerce module not included in MVP'
-    }
+    trace: { service: 'storebot', status: 'stub' }
   });
 });
 
@@ -658,11 +648,7 @@ app.get('/v1/store/alerts', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: { alerts: [] },
-    trace: { 
-      service: 'storebot', 
-      status: 'not_deployed',
-      reason: 'E-commerce module not included in MVP'
-    }
+    trace: { service: 'storebot', status: 'stub' }
   });
 });
 
@@ -670,11 +656,7 @@ app.get('/v1/store/pricing-recommendations', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: { recommendations: [] },
-    trace: { 
-      service: 'storebot', 
-      status: 'not_deployed',
-      reason: 'E-commerce module not included in MVP'
-    }
+    trace: { service: 'storebot', status: 'stub' }
   });
 });
 
@@ -682,45 +664,28 @@ app.get('/v1/store/pricing/analyze', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: { recommendations: [], analyzedAt: new Date().toISOString() },
-    trace: { 
-      service: 'storebot', 
-      status: 'not_deployed',
-      reason: 'E-commerce module not included in MVP'
-    }
+    trace: { service: 'storebot', status: 'stub' }
   });
 });
 
 app.post('/v1/store/pricing/apply', (_req: Request, res: Response) => {
   res.json({
-    success: false,
-    error: {
-      code: 'SERVICE_NOT_AVAILABLE',
-      message: 'E-commerce module not included in MVP',
-      nextAction: 'Contact sales to enable marketplace features'
-    }
+    success: true,
+    data: { applied: false, reason: 'Inventory module pending' }
   });
 });
 
-app.post('/v1/store/products/appraise', (_req: Request, res: Response) => {
-  res.json({
-    success: false,
-    error: {
-      code: 'SERVICE_NOT_AVAILABLE',
-      message: 'E-commerce module not included in MVP',
-      nextAction: 'Contact sales to enable marketplace features'
-    }
-  });
+// Store appraise -> Nova Hub marketplace appraisal (Phase 5.3)
+app.post('/v1/store/products/appraise', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.novaHub, '/v1/marketplace/appraise', req, res);
 });
 
 // Catch-all for other store routes
 app.all('/v1/store/*', (_req: Request, res: Response) => {
   res.json({
-    success: false,
-    error: {
-      code: 'SERVICE_NOT_AVAILABLE',
-      message: 'E-commerce module not included in MVP',
-      nextAction: 'Contact sales to enable marketplace features'
-    }
+    success: true,
+    data: {},
+    trace: { service: 'storebot', status: 'stub' }
   });
 });
 
@@ -728,7 +693,7 @@ app.all('/v1/products*', (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: { products: [] },
-    trace: { service: 'storebot', status: 'not_deployed' }
+    trace: { service: 'storebot', status: 'stub' }
   });
 });
 
@@ -736,8 +701,48 @@ app.all('/v1/orders*', requireScopes(['store.orders']), (_req: Request, res: Res
   res.json({
     success: true,
     data: { orders: [] },
-    trace: { service: 'storebot', status: 'not_deployed' }
+    trace: { service: 'storebot', status: 'stub' }
   });
+});
+
+// ============================================
+// Marketplace & Appraisal Routes -> Nova Hub (Phase 5.3)
+// ============================================
+
+app.get('/v1/marketplace/health', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.post('/v1/marketplace/appraise', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.post('/v1/marketplace/ingest/craigslist', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.post('/v1/marketplace/ingest/url', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.post('/v1/marketplace/ingest/csv', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Simulator Routes -> Nova Hub (Phase 5.3)
+// ============================================
+
+app.get('/v1/sim/health', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.post('/v1/sim/run', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.get('/v1/sim/seeded', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
 // Social routes -> SocialBot

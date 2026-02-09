@@ -10,6 +10,8 @@
   ],
   "scripts": {
     "dev": "turbo run dev",
+    "dev:all": "node scripts/nova-mvp.js",
+    "dev:nodocker": "node scripts/nova-mvp.js --no-docker",
     "build": "turbo run build",
     "test": "turbo run test",
     "lint": "turbo run lint",
@@ -25,10 +27,20 @@
     "nova:smoke": "node scripts/smoke-test.js --mvp",
     "nova:smoke:all": "node scripts/smoke-test.js",
     "nova:smoke:wait": "node scripts/smoke-test.js --mvp --wait",
+    "stack:ready": "node scripts/stack-ready.js --mvp",
+    "stack:ready:all": "node scripts/stack-ready.js",
     "nova:mvp": "node scripts/nova-mvp.js",
+    "verify": "node scripts/verify.js",
     "nova:mvp:up": "docker-compose -f docker-compose.mvp.yml up --build",
     "nova:mvp:down": "docker-compose -f docker-compose.mvp.yml down -v",
-    "nova:mvp:logs": "docker-compose -f docker-compose.mvp.yml logs -f"
+    "nova:mvp:logs": "docker-compose -f docker-compose.mvp.yml logs -f",
+    "verify:prod": "node scripts/verify-prod.js",
+    "seed:prod": "node scripts/seed-prod.js",
+    "deploy:railway": "node scripts/deploy-railway.js",
+    "db:migrate:prod": "railway run node scripts/run-migrations.js",
+    "validate:env": "node scripts/validate-env.js",
+    "prod:start": "node scripts/prod-start.js",
+    "docker:build:prod": "docker build -f Dockerfile.prod -t nova-backend ."
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^16.1.4",

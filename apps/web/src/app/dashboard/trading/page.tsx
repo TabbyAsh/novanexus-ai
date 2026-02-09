@@ -87,6 +87,7 @@ export default function TradingDashboard() {
     endpoint?: string;
     environment?: 'paper' | 'live';
   } | null>(null);
+  const [alpacaEnabled, setAlpacaEnabled] = useState<boolean | null>(null);
   const [alpacaError, setAlpacaError] = useState<string | null>(null);
 
   const [isLoading, setIsLoading] = useState(true);

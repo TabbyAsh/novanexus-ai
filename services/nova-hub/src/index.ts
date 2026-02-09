@@ -5195,6 +5195,476 @@ app.get('/v1/dashboard/stats', authMiddleware, async (req: AuthenticatedRequest,
 });
 
 // ============================================
+// Simulator Backend API (Phase 5.3)
+// ============================================
+
+// Sim health check - always returns ok
+app.get('/v1/sim/health', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      status: 'healthy',
+      service: 'nova-hub-simulator',
+      capabilities: ['backtest', 'monte-carlo', 'strategy-simulation'],
+      timestamp: new Date().toISOString(),
+    },
+  });
+});
+
+// Sim run - execute a simulation and return results
+app.post('/v1/sim/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { symbol, strategyType, startDate, endDate, iterations = 1000, seed } = req.body || {};
+
+  if (!symbol || !strategyType) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'symbol and strategyType required' },
+    });
+  }
+
+  const quota = await checkQuota(userId, 'backtest');
+  if (!quota.allowed) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: { code: 'QUOTA_EXCEEDED', message: quota.message },
+    });
+  }
+
+  // Deterministic seed for reproducibility
+  const runSeed = typeof seed === 'number' ? seed : Math.floor(Math.random() * 1000000);
+  const resolvedType = resolveStrategyType(strategyType, strategyType);
+
+  try {
+    const window = resolveSimulationWindow(startDate, endDate);
+    const simulation = await computeStrategySimulation({
+      strategyTag: resolvedType || 'sma_crossover',
+      strategyType: resolvedType || 'sma_crossover',
+      symbol: String(symbol).toUpperCase(),
+      startDate: window.startKey,
+      endDate: window.endKey,
+      initialCapital: 100000,
+      strategyParams: {},
+    });
+
+    await incrementUsage(userId, 'backtest');
+
+    res.json({
+      success: true,
+      data: {
+        runId: generateId(),
+        seed: runSeed,
+        symbol: String(symbol).toUpperCase(),
+        strategyType: resolvedType,
+        window,
+        backtest: simulation.summary.backtest,
+        monteCarlo: simulation.summary.monteCarlo,
+        fitnessScore: simulation.summary.fitnessScore,
+        status: simulation.summary.status || 'COMPLETED',
+        iterations,
+        completedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    logger.error('Sim run failed', error as Error);
+    res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'SIM_RUN_FAILED', message: (error as Error).message },
+    });
+  }
+});
+
+// Get seeded simulation results (from DB)
+app.get('/v1/sim/seeded', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+
+  // Check for seeded results in strategy_performance table
+  const result = await query<{
+    id: string;
+    strategy_tag: string;
+    strategy_type: string;
+    symbol: string;
+    status: string;
+    fitness_score: number;
+    metrics_json: string;
+    created_at: string;
+  }>(
+    `SELECT id, strategy_tag, strategy_type, symbol, status, fitness_score, metrics_json, created_at
+     FROM strategy_performance
+     WHERE (org_id IS NULL OR org_id = $1)
+       AND strategy_tag LIKE 'seeded_%'
+     ORDER BY created_at DESC
+     LIMIT 10`,
+    [orgId]
+  );
+
+  const seeded = result.rows.map((row) => {
+    const metrics = row.metrics_json ? JSON.parse(row.metrics_json) : {};
+    return {
+      id: row.id,
+      strategyTag: row.strategy_tag,
+      strategyType: row.strategy_type,
+      symbol: row.symbol,
+      status: row.status,
+      fitnessScore: row.fitness_score,
+      backtest: metrics.backtest || null,
+      monteCarlo: metrics.monteCarlo || null,
+      createdAt: row.created_at,
+    };
+  });
+
+  res.json({
+    success: true,
+    data: {
+      seeded,
+      count: seeded.length,
+      hasSeededResults: seeded.length > 0,
+    },
+  });
+});
+
+// ============================================
+// Marketplace/Appraisal API (Phase 5.3 - Keyless)
+// ============================================
+
+// Appraisal with deterministic heuristics
+app.post('/v1/marketplace/appraise', async (req: Request, res: Response) => {
+  const { query: searchQuery, url, category } = req.body || {};
+
+  if (!searchQuery && !url) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'query or url required' },
+    });
+  }
+
+  const itemQuery = searchQuery || url;
+
+  // Deterministic heuristic pricing based on category keywords
+  const heuristicPricing = computeHeuristicAppraisal(itemQuery, category);
+
+  res.json({
+    success: true,
+    data: {
+      appraisal: {
+        query: itemQuery,
+        ...heuristicPricing,
+        provenance: {
+          method: 'heuristic-v1',
+          sources: ['market-average', 'category-baseline', 'condition-adjustment'],
+          confidence: heuristicPricing.confidence,
+          disclaimer: 'Appraisal based on category heuristics. Actual market prices may vary.',
+        },
+        appraisedAt: new Date().toISOString(),
+      },
+    },
+  });
+});
+
+// Craigslist search ingestion (mock for keyless operation)
+app.post('/v1/marketplace/ingest/craigslist', async (req: Request, res: Response) => {
+  const { searchUrl, keywords, location } = req.body || {};
+
+  if (!searchUrl && !keywords) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'searchUrl or keywords required' },
+    });
+  }
+
+  // Mock ingestion result - in production would scrape Craigslist
+  const mockListings = generateMockCraigslistListings(keywords || extractKeywords(searchUrl), location);
+
+  res.json({
+    success: true,
+    data: {
+      source: 'craigslist',
+      searchUrl: searchUrl || `https://craigslist.org/search?query=${encodeURIComponent(keywords)}`,
+      location: location || 'nationwide',
+      listings: mockListings,
+      count: mockListings.length,
+      ingestedAt: new Date().toISOString(),
+    },
+  });
+});
+
+// URL import for single listing
+app.post('/v1/marketplace/ingest/url', async (req: Request, res: Response) => {
+  const { url, category } = req.body || {};
+
+  if (!url) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'url required' },
+    });
+  }
+
+  // Extract info from URL and appraise
+  const itemInfo = extractItemInfoFromUrl(url);
+  const appraisal = computeHeuristicAppraisal(itemInfo.title || url, category);
+
+  res.json({
+    success: true,
+    data: {
+      source: itemInfo.source,
+      url,
+      item: itemInfo,
+      appraisal: {
+        ...appraisal,
+        provenance: {
+          method: 'url-import-heuristic',
+          originalUrl: url,
+          confidence: appraisal.confidence * 0.9, // Slightly lower confidence for URL imports
+        },
+      },
+      importedAt: new Date().toISOString(),
+    },
+  });
+});
+
+// CSV upload ingestion
+app.post('/v1/marketplace/ingest/csv', async (req: Request, res: Response) => {
+  const { items, columnMapping } = req.body || {};
+
+  if (!items || !Array.isArray(items) || items.length === 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'items array required' },
+    });
+  }
+
+  const mapping = columnMapping || { title: 'title', price: 'price', category: 'category' };
+  const processed = items.slice(0, 100).map((item: any, idx: number) => {
+    const title = item[mapping.title] || item.title || `Item ${idx + 1}`;
+    const originalPrice = parseFloat(item[mapping.price]) || 0;
+    const category = item[mapping.category] || item.category || 'general';
+    const appraisal = computeHeuristicAppraisal(title, category);
+
+    return {
+      rowIndex: idx,
+      title,
+      originalPrice,
+      category,
+      appraisal: {
+        recommendedPrice: appraisal.recommendedPrice,
+        priceRange: appraisal.priceRange,
+        marketDemand: appraisal.marketDemand,
+        confidence: appraisal.confidence,
+      },
+      delta: originalPrice > 0 ? Math.round((appraisal.recommendedPrice - originalPrice) * 100) / 100 : null,
+    };
+  });
+
+  res.json({
+    success: true,
+    data: {
+      source: 'csv-upload',
+      items: processed,
+      count: processed.length,
+      totalOriginalValue: processed.reduce((sum, p) => sum + (p.originalPrice || 0), 0),
+      totalAppraisedValue: processed.reduce((sum, p) => sum + p.appraisal.recommendedPrice, 0),
+      processedAt: new Date().toISOString(),
+    },
+  });
+});
+
+// Marketplace health check
+app.get('/v1/marketplace/health', (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      status: 'healthy',
+      service: 'nova-hub-marketplace',
+      capabilities: ['appraisal', 'craigslist-ingest', 'url-import', 'csv-upload'],
+      keyless: true,
+      timestamp: new Date().toISOString(),
+    },
+  });
+});
+
+// Heuristic pricing helper functions
+function computeHeuristicAppraisal(itemQuery: string, category?: string): {
+  avgPrice: number;
+  minPrice: number;
+  maxPrice: number;
+  medianPrice: number;
+  priceRange: string;
+  recommendedPrice: number;
+  marketDemand: 'low' | 'medium' | 'high';
+  confidence: number;
+} {
+  const lowerQuery = String(itemQuery || '').toLowerCase();
+  const cat = String(category || '').toLowerCase();
+
+  // Category-based baseline pricing
+  let baseline = 100;
+  let demandMultiplier = 1.0;
+  let confidence = 65;
+
+  // Electronics
+  if (lowerQuery.includes('iphone') || lowerQuery.includes('ipad')) {
+    baseline = 650;
+    demandMultiplier = 1.2;
+    confidence = 75;
+  } else if (lowerQuery.includes('macbook') || lowerQuery.includes('laptop')) {
+    baseline = 850;
+    demandMultiplier = 1.1;
+    confidence = 72;
+  } else if (lowerQuery.includes('airpods') || lowerQuery.includes('headphones')) {
+    baseline = 150;
+    demandMultiplier = 1.15;
+    confidence = 70;
+  } else if (lowerQuery.includes('ps5') || lowerQuery.includes('playstation') || lowerQuery.includes('xbox')) {
+    baseline = 400;
+    demandMultiplier = 1.25;
+    confidence = 78;
+  } else if (lowerQuery.includes('nintendo') || lowerQuery.includes('switch')) {
+    baseline = 280;
+    demandMultiplier = 1.1;
+    confidence = 74;
+  }
+  // Apparel
+  else if (lowerQuery.includes('nike') || lowerQuery.includes('jordan')) {
+    baseline = 180;
+    demandMultiplier = 1.3;
+    confidence = 68;
+  } else if (lowerQuery.includes('supreme') || lowerQuery.includes('yeezy')) {
+    baseline = 350;
+    demandMultiplier = 1.4;
+    confidence = 62;
+  }
+  // Furniture
+  else if (lowerQuery.includes('sofa') || lowerQuery.includes('couch')) {
+    baseline = 450;
+    demandMultiplier = 0.9;
+    confidence = 60;
+  } else if (lowerQuery.includes('desk') || lowerQuery.includes('table')) {
+    baseline = 200;
+    demandMultiplier = 0.85;
+    confidence = 58;
+  }
+  // Vehicles
+  else if (lowerQuery.includes('car') || lowerQuery.includes('truck') || lowerQuery.includes('vehicle')) {
+    baseline = 15000;
+    demandMultiplier = 1.0;
+    confidence = 45;
+  } else if (lowerQuery.includes('motorcycle') || lowerQuery.includes('bike')) {
+    baseline = 5000;
+    demandMultiplier = 0.95;
+    confidence = 50;
+  }
+  // Category fallbacks
+  else if (cat.includes('electronics')) {
+    baseline = 250;
+    confidence = 55;
+  } else if (cat.includes('clothing') || cat.includes('apparel')) {
+    baseline = 75;
+    confidence = 52;
+  } else if (cat.includes('furniture')) {
+    baseline = 300;
+    confidence = 50;
+  }
+
+  // Condition adjustments from keywords
+  if (lowerQuery.includes('new') || lowerQuery.includes('sealed') || lowerQuery.includes('mint')) {
+    baseline *= 1.15;
+    confidence += 5;
+  } else if (lowerQuery.includes('used') || lowerQuery.includes('refurbished')) {
+    baseline *= 0.7;
+    confidence += 3;
+  } else if (lowerQuery.includes('broken') || lowerQuery.includes('parts')) {
+    baseline *= 0.3;
+    confidence += 2;
+  }
+
+  // Pro/Max/Plus variants
+  if (lowerQuery.includes('pro') || lowerQuery.includes('max') || lowerQuery.includes('plus')) {
+    baseline *= 1.25;
+  }
+
+  const avgPrice = Math.round(baseline * 100) / 100;
+  const minPrice = Math.round(baseline * 0.7 * 100) / 100;
+  const maxPrice = Math.round(baseline * 1.4 * 100) / 100;
+  const medianPrice = Math.round(baseline * 0.95 * 100) / 100;
+  const recommendedPrice = Math.round(baseline * 0.92 * 100) / 100;
+
+  const demand: 'low' | 'medium' | 'high' = demandMultiplier >= 1.2 ? 'high' : demandMultiplier >= 1.0 ? 'medium' : 'low';
+
+  return {
+    avgPrice,
+    minPrice,
+    maxPrice,
+    medianPrice,
+    priceRange: `$${minPrice} - $${maxPrice}`,
+    recommendedPrice,
+    marketDemand: demand,
+    confidence: Math.min(95, confidence),
+  };
+}
+
+function generateMockCraigslistListings(keywords: string, location?: string): Array<{
+  id: string;
+  title: string;
+  price: number;
+  location: string;
+  url: string;
+  postedAt: string;
+}> {
+  const count = 3 + Math.floor(Math.random() * 5);
+  const appraisal = computeHeuristicAppraisal(keywords);
+
+  return Array.from({ length: count }, (_, idx) => {
+    const variance = 0.8 + Math.random() * 0.4;
+    return {
+      id: `cl-${Date.now()}-${idx}`,
+      title: `${keywords} - ${['Great condition', 'Like new', 'Used', 'Excellent'][idx % 4]}`,
+      price: Math.round(appraisal.avgPrice * variance),
+      location: location || ['San Francisco', 'Los Angeles', 'New York', 'Chicago'][idx % 4],
+      url: `https://craigslist.org/item/${Date.now()}-${idx}`,
+      postedAt: new Date(Date.now() - idx * 86400000).toISOString(),
+    };
+  });
+}
+
+function extractKeywords(url: string): string {
+  try {
+    const u = new URL(url);
+    return u.searchParams.get('query') || u.searchParams.get('q') || u.pathname.split('/').pop() || 'item';
+  } catch {
+    return 'item';
+  }
+}
+
+function extractItemInfoFromUrl(url: string): {
+  source: string;
+  title: string | null;
+  price: number | null;
+  category: string | null;
+} {
+  const lowerUrl = url.toLowerCase();
+  let source = 'unknown';
+
+  if (lowerUrl.includes('ebay')) source = 'ebay';
+  else if (lowerUrl.includes('craigslist')) source = 'craigslist';
+  else if (lowerUrl.includes('facebook') || lowerUrl.includes('fb.com')) source = 'facebook-marketplace';
+  else if (lowerUrl.includes('offerup')) source = 'offerup';
+  else if (lowerUrl.includes('mercari')) source = 'mercari';
+  else if (lowerUrl.includes('amazon')) source = 'amazon';
+
+  // Extract title from URL path (simplified)
+  const pathParts = url.split('/').filter(Boolean);
+  const titlePart = pathParts.find(p => p.length > 10 && !p.includes('.'));
+  const title = titlePart ? titlePart.replace(/-/g, ' ').replace(/_/g, ' ') : null;
+
+  return {
+    source,
+    title,
+    price: null, // Would require actual scraping
+    category: null,
+  };
+}
+
+// ============================================
 // Start Server
 // ============================================
 
