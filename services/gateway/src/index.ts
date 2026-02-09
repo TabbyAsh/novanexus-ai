@@ -66,6 +66,12 @@ const PUBLIC_ROUTES = [
   '/v1/ai-screener/',
   // Market scanning - public for demo
   '/v1/trade/scan',
+  // Simulator - health check public (Phase 5.3)
+  '/v1/sim/health',
+  // Marketplace - public for demo (Phase 5.3)
+  '/v1/marketplace/health',
+  '/v1/marketplace/appraise',
+  '/v1/marketplace/ingest/',
 ];
 
 // Premium features that require paid plan (LITE or higher)
