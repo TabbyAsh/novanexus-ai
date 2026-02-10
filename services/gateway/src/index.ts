@@ -51,6 +51,7 @@ const ROUTE_SCOPES: Record<string, Scope[]> = {
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
   '/health',
+  '/version',
   '/v1/auth/register',
   '/v1/auth/signup',
   '/v1/auth/login',
@@ -428,6 +429,27 @@ app.get('/metrics', (_req: Request, res: Response) => {
       rss: Math.round(memUsage.rss / 1024 / 1024),
     },
     timestamp: new Date().toISOString(),
+  });
+});
+
+// Version endpoint for deployment tracking
+const BUILD_SHA = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || 'dev';
+const BUILD_TIME = process.env.RAILWAY_DEPLOYMENT_TIMESTAMP || new Date().toISOString();
+
+app.get('/version', (_req: Request, res: Response) => {
+  res.json({
+    service: 'nova-nexus-api',
+    version: '1.0.0',
+    build: BUILD_SHA.substring(0, 7),
+    commitSha: BUILD_SHA,
+    deployedAt: BUILD_TIME,
+    environment: process.env.NODE_ENV || 'development',
+    features: {
+      progressiveBroker: true,
+      serverManagedAlpaca: !!(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY),
+      marketplace: true,
+      simulator: true,
+    },
   });
 });
 

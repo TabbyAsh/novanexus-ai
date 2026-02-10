@@ -28,6 +28,25 @@ const TESTS = [
     expect: { status: 200 },
   },
   {
+    name: 'API Version',
+    url: `${API_URL}/version`,
+    method: 'GET',
+    expect: { status: 200, json: true },
+    customCheck: (res) => {
+      try {
+        const data = JSON.parse(res.body);
+        const build = data.build || 'unknown';
+        const features = data.features || {};
+        const notes = [`build: ${build}`];
+        if (features.serverManagedAlpaca) notes.push('alpaca: server');
+        if (features.progressiveBroker) notes.push('broker: progressive');
+        return { ok: true, note: notes.join(', ') };
+      } catch {
+        return { ok: false, error: 'Invalid version response' };
+      }
+    },
+  },
+  {
     name: 'Web UI Reachable',
     url: WEB_URL,
     method: 'GET',
@@ -155,6 +174,29 @@ const TESTS = [
       } catch {
         return { ok: false, error: 'Invalid JSON' };
       }
+    },
+  },
+  // Bot identity validation: ensure undefined botId is rejected
+  {
+    name: 'Bot Tasks (Invalid botId Rejected)',
+    url: `${API_URL}/v1/bots/undefined/tasks`,
+    method: 'GET',
+    expect: { status: [400, 401, 404] }, // 400 expected (invalid botId), 401 if auth required, 404 acceptable
+    customCheck: (res) => {
+      // We want to confirm the system rejects 'undefined' cleanly, not with 500
+      if (res.status === 500 || res.status === 502) {
+        return { ok: false, error: 'Server error on invalid botId - bot identity fix needed' };
+      }
+      if (res.status === 400) {
+        return { ok: true, note: 'Invalid botId rejected (400)' };
+      }
+      if (res.status === 401) {
+        return { ok: true, note: 'Auth required (expected)' };
+      }
+      if (res.status === 404) {
+        return { ok: true, note: 'Bot not found (404)' };
+      }
+      return { ok: true, note: `Status ${res.status}` };
     },
   },
 ];
