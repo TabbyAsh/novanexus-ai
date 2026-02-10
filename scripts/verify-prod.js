@@ -16,7 +16,7 @@ const API_URL = process.argv.find(a => a.startsWith('--url='))?.split('=')[1]
   || process.env.PROD_API_URL
   || 'https://abackend-production.up.railway.app';
 
-const WEB_URL = process.env.PROD_WEB_URL || 'https://novanexus-ai.vercel.app';
+const WEB_URL = process.env.PROD_WEB_URL || 'https://novanexus-ai.com';
 const TIMEOUT = 15000;
 
 // Test definitions
