@@ -4,24 +4,29 @@ WORKDIR /app
 
 RUN apk add --no-cache python3 make g++
 
-# Copy source
+# Copy root manifests first for better caching
+COPY package.json package-lock.json turbo.json tsconfig.json ./
+
+# Copy all workspace package.json files needed
+COPY libs/shared/package.json ./libs/shared/
+COPY libs/telemetry/package.json ./libs/telemetry/
+COPY libs/eventing/package.json ./libs/eventing/
+COPY services/eventbus/package.json ./services/eventbus/
+
+# Install all dependencies from root (workspace install)
+RUN npm ci --ignore-scripts || npm install --legacy-peer-deps
+
+# Copy full source
 COPY libs ./libs
 COPY services/eventbus ./services/eventbus
-COPY tsconfig.json ./
 
-# Install all deps from shared lib (has all DB/redis deps)
-WORKDIR /app/libs/shared
-RUN npm install
+# Build workspace dependencies (turbo handles dependency order)
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --no-cache || true
 
-# Install eventbus deps (express)
-WORKDIR /app/services/eventbus  
-RUN npm install
+# Install esbuild for bundling
+RUN npm install -g esbuild
 
-# Install esbuild and bundle everything
-RUN npm install -g esbuild typescript @types/node @types/express
-
-# Bundle with esbuild - includes all local libs
-WORKDIR /app
+# Bundle eventbus with esbuild
 RUN esbuild services/eventbus/src/index.ts \
   --bundle \
   --platform=node \

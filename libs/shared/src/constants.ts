@@ -58,6 +58,13 @@ export const EVENT_TYPES = {
   PAPER_TRADE_CLOSED: 'trade.paper.closed',
   LIVE_TRADE_OPENED: 'trade.live.opened',
   LIVE_TRADE_CLOSED: 'trade.live.closed',
+  DECISION_CREATED: 'trade.decision.created',
+  DECISION_EVENT_APPENDED: 'trade.decision.event.appended',
+  DECISION_REPLAYED: 'trade.decision.replayed',
+  BROKER_CONNECTED: 'trade.broker.connected',
+  BROKER_DISCONNECTED: 'trade.broker.disconnected',
+  BROKER_HISTORY_FETCHED: 'trade.broker.history.fetched',
+  BROKER_ORDER_PLACED: 'trade.broker.order.placed',
 
   // Store events
   PRODUCT_CREATED: 'store.product.created',

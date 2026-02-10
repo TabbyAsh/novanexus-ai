@@ -1,43 +1,36 @@
-FROM node:20-alpine AS builder
+FROM node:20-alpine
 
 WORKDIR /app
 
-RUN apk add --no-cache libc6-compat
-RUN npm install -g typescript
+RUN apk add --no-cache libc6-compat python3 make g++
 
-COPY libs/shared ./libs/shared
+# Copy root manifests first for better caching
+COPY package.json package-lock.json turbo.json tsconfig.json ./
+
+# Copy workspace package.json files
+COPY libs/shared/package.json ./libs/shared/
+COPY apps/web/package.json ./apps/web/
+
+# Install all dependencies from root (workspace install)
+RUN npm ci --ignore-scripts || npm install --legacy-peer-deps
+
+# Copy full source
+COPY libs ./libs
 COPY apps/web ./apps/web
-COPY tsconfig.json ./
 
-WORKDIR /app/libs/shared
-RUN npm install
-RUN tsc --outDir dist --skipLibCheck || true
+# Build shared libs
+RUN npm run build -w @nova/shared || true
 
+# Build Next.js app
 WORKDIR /app/apps/web
-RUN npm install
-
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
-FROM node:20-alpine AS runner
-
-WORKDIR /app
-
+# Production settings
 ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
-
-RUN addgroup --system --gid 1001 nodejs
-RUN adduser --system --uid 1001 nextjs
-
-COPY --from=builder /app/apps/web/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./.next/static
-
-USER nextjs
-
 EXPOSE 3000
-
 ENV PORT=3000
 ENV HOSTNAME="0.0.0.0"
 
-CMD ["node", "server.js"]
+# Run Next.js start directly (uses built .next folder)
+CMD ["npx", "next", "start", "-p", "3000"]

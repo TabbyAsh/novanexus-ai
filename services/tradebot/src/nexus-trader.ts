@@ -46,6 +46,7 @@ export interface TradingThesis {
   confidence: number;
   reasoning: string;
   indicators: Record<string, unknown>;
+  dataIntegrity?: Record<string, unknown>;
   createdAt: string;
   expiresAt: string;
 }
@@ -644,9 +645,13 @@ export class NexusTrader {
   /**
    * Execute an AI-governed trade
    */
-  async executeAITrade(thesis: TradingThesis, autoExecute: boolean = false): Promise<TradeExecution> {
-    // First evaluate
-    const decision = await this.evaluateTrade(thesis);
+  async executeAITrade(
+    thesis: TradingThesis,
+    autoExecute: boolean = false,
+    precomputedDecision?: TradeDecision
+  ): Promise<TradeExecution> {
+    // First evaluate (unless provided)
+    const decision = precomputedDecision ?? await this.evaluateTrade(thesis);
     
     const execution: TradeExecution = {
       decision,
@@ -705,7 +710,7 @@ export class NexusTrader {
       } else if (command.status === CommandStatus.AWAITING_APPROVAL) {
         execution.error = 'Awaiting human approval';
       } else if (command.status === CommandStatus.RATE_LIMITED) {
-        execution.error = 'Rate limited - try again later';
+        execution.error = 'Rate limited - try again soon';
       } else {
         execution.error = command.lastError || 'Execution failed';
       }

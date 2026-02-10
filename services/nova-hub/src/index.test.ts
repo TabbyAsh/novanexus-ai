@@ -4,6 +4,7 @@
  */
 
 import { describe, it, expect, beforeEach } from 'vitest';
+import { buildGuidedThesis, evaluateExecutionGate, pruneStrategyAnalytics } from './guided';
 
 // Mock journal entry P/L calculation
 function calculatePnL(entry: {
@@ -230,5 +231,90 @@ describe('Trade Metrics', () => {
     const grossLoss = Math.abs(trades.filter(t => t.pnl < 0).reduce((sum, t) => sum + t.pnl, 0));
     const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : Infinity;
     expect(profitFactor).toBeCloseTo(2.33, 1); // 175 / 75
+  });
+});
+
+describe('Guided Flow Gating', () => {
+  const integrity = {
+    source_type: 'primary',
+    source_identifier: 'test',
+    latency_class: 'low',
+    confidence_score: 0.9,
+    timestamp_range: {
+      start: new Date().toISOString(),
+      end: new Date().toISOString(),
+      expected: 10,
+      actual: 10,
+      missing: 0,
+    },
+  };
+
+  it('allows live execution when confidence and integrity are strong', () => {
+    const gate = evaluateExecutionGate({ signalConfidence: 0.85, integrity });
+    expect(gate.mode).toBe('live');
+    expect(gate.reasons.length).toBe(0);
+  });
+
+  it('demotes to paper when integrity is missing', () => {
+    const gate = evaluateExecutionGate({ signalConfidence: 0.85, integrity: null });
+    expect(gate.mode).toBe('paper');
+    expect(gate.reasons).toContain('integrity_missing');
+  });
+
+  it('blocks execution when confidence is below paper threshold', () => {
+    const gate = evaluateExecutionGate({ signalConfidence: 0.1, integrity });
+    expect(gate.mode).toBe('blocked');
+    expect(gate.reasons).toContain('paper_confidence_low');
+  });
+});
+
+describe('Guided Thesis Builder', () => {
+  const integrity = {
+    source_type: 'primary',
+    source_identifier: 'test',
+    latency_class: 'low',
+    confidence_score: 0.9,
+    timestamp_range: {
+      start: new Date().toISOString(),
+      end: new Date().toISOString(),
+      expected: 10,
+      actual: 10,
+      missing: 0,
+    },
+  };
+
+  it('builds a thesis with correct risk reward and direction', () => {
+    const thesis = buildGuidedThesis({
+      symbol: 'AAPL',
+      direction: 'SELL',
+      entry: 100,
+      target: 90,
+      stopLoss: 105,
+      confidence: 80,
+      reasoning: 'Test reasoning',
+    }, integrity);
+
+    expect(thesis.signal).toBe('SHORT');
+    expect(thesis.riskRewardRatio).toBeCloseTo(2);
+    expect(thesis.dataIntegrity).toEqual(integrity);
+  });
+});
+
+describe('Strategy Analytics Pruning', () => {
+  it('strips monte carlo and slippage when depth is zero', () => {
+    const strategy = {
+      status: 'ACTIVE',
+      fitnessScore: 74,
+      drift: { status: 'ACTIVE' },
+      evaluatedAt: '2026-02-08T00:00:00Z',
+      monteCarlo: { expectedValue: 4.2, probabilityProfit: 58 },
+      slippage: [{ slippageBps: 10, totalReturnPct: 1.2 }],
+    };
+
+    const pruned = pruneStrategyAnalytics(strategy, 0) as any;
+    expect(pruned.analyticsLocked).toBe(true);
+    expect(pruned.expectancy).toBe(4.2);
+    expect(pruned.monteCarlo).toBeUndefined();
+    expect(pruned.slippage).toBeUndefined();
   });
 });

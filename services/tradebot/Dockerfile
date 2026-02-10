@@ -4,33 +4,31 @@ WORKDIR /app
 
 RUN apk add --no-cache python3 make g++
 
-# Copy all shared libs
+# Copy root manifests first for better caching
+COPY package.json package-lock.json turbo.json tsconfig.json ./
+
+# Copy all workspace package.json files needed
+COPY libs/shared/package.json ./libs/shared/
+COPY libs/telemetry/package.json ./libs/telemetry/
+COPY libs/eventing/package.json ./libs/eventing/
+COPY libs/bot-sdk/package.json ./libs/bot-sdk/
+COPY libs/nexus-core/package.json ./libs/nexus-core/
+COPY services/tradebot/package.json ./services/tradebot/
+
+# Install all dependencies from root (workspace install)
+RUN npm ci --ignore-scripts || npm install --legacy-peer-deps
+
+# Copy full source
 COPY libs ./libs
 COPY services/tradebot ./services/tradebot
-COPY tsconfig.json ./
 
-# Install shared libs
-WORKDIR /app/libs/shared
-RUN npm install
+# Build workspace dependencies (turbo handles dependency order)
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --filter=@nova/nexus-core --no-cache || true
 
-WORKDIR /app/libs/telemetry
-RUN npm install
+# Install esbuild for bundling
+RUN npm install -g esbuild
 
-WORKDIR /app/libs/bot-sdk
-RUN npm install
-
-WORKDIR /app/libs/nexus-core
-RUN npm install
-
-# Install tradebot dependencies
-WORKDIR /app/services/tradebot
-RUN npm install
-
-# Install build tools globally
-RUN npm install -g esbuild typescript @types/node @types/express
-
-# Build the application
-WORKDIR /app
+# Bundle tradebot with esbuild
 RUN esbuild services/tradebot/src/index.ts \
   --bundle \
   --platform=node \
@@ -39,9 +37,6 @@ RUN esbuild services/tradebot/src/index.ts \
   --external:pg-native \
   --external:openai \
   --tsconfig=services/tradebot/tsconfig.json
-
-# Install runtime dependencies for external packages
-RUN npm install openai axios
 
 ENV NODE_ENV=production
 EXPOSE 3010

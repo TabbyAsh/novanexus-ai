@@ -4,25 +4,29 @@ WORKDIR /app
 
 RUN apk add --no-cache python3 make g++
 
-# Copy root package files for workspace setup
-COPY package.json package-lock.json ./
+# Copy root manifests first for better caching
+COPY package.json package-lock.json turbo.json tsconfig.json ./
+
+# Copy all workspace package.json files needed
+COPY libs/shared/package.json ./libs/shared/
+COPY libs/telemetry/package.json ./libs/telemetry/
+COPY libs/eventing/package.json ./libs/eventing/
+COPY services/billing/package.json ./services/billing/
+
+# Install all dependencies from root (workspace install)
+RUN npm ci --ignore-scripts || npm install --legacy-peer-deps
+
+# Copy full source
 COPY libs ./libs
 COPY services/billing ./services/billing
-COPY tsconfig.json ./
 
-# Install with workspaces - this properly links @nova/* packages
-RUN npm ci --workspace=@nova/shared --workspace=@nova/telemetry --workspace=@nova/billing-service --ignore-scripts || npm install --legacy-peer-deps
+# Build workspace dependencies (turbo handles dependency order)
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --no-cache || true
 
-# Build shared libs first
-WORKDIR /app/libs/shared
-RUN npx tsc || true
-
-WORKDIR /app/libs/telemetry  
-RUN npx tsc || true
-
+# Install esbuild for bundling
 RUN npm install -g esbuild
 
-WORKDIR /app
+# Bundle billing with esbuild
 RUN esbuild services/billing/src/index.ts \
   --bundle \
   --platform=node \

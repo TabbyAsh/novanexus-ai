@@ -1,10 +1,28 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
+import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
-import GlassCard, { GradientText } from '@/components/ui/GlassCard';
+import { GradientText } from '@/components/ui/GlassCard';
+import TrustPanel from '@/components/trading/TrustPanel';
 import { api } from '@/lib/api';
+
+type ConfidenceTag = 'high' | 'medium' | 'low';
+
+type CandleProvenance = {
+  source: string;
+  method: 'primary' | 'fallback' | 'synthetic' | string;
+  confidence: ConfidenceTag | string;
+  confidenceScore: number;
+  note?: string;
+};
+
+type SignalProvenance = {
+  candles?: CandleProvenance | null;
+  quoteSource?: string | null;
+  model?: string;
+};
 
 interface Signal {
   symbol: string;
@@ -12,6 +30,8 @@ interface Signal {
   type: 'bullish' | 'bearish' | 'neutral';
   pattern: string;
   confidence: number;
+  confidenceTag?: ConfidenceTag;
+  rawConfidence?: number;
   entry: number;
   target: number;
   stopLoss: number;
@@ -19,13 +39,18 @@ interface Signal {
   reasoning: string;
   timeframe: string;
   indicators?: {
-    rsi: number;
-    sma20: number;
-    sma50: number;
-    priceVsSma20: number;
-    priceVsSma50: number;
+    rsi: number | null;
+    sma20?: number | null;
+    sma50?: number | null;
+    sma200?: number | null;
+    volumeRatio?: number;
+    atr?: number;
+    priceVsSma20?: number | null;
+    priceVsSma50?: number | null;
+    macdHistogram?: number | null;
   };
-  timestamp: string;
+  timestamp?: string;
+  provenance?: SignalProvenance;
 }
 
 interface ScanStatus {
@@ -35,17 +60,110 @@ interface ScanStatus {
   totalCount: number;
   foundSignals: number;
 }
+interface PaperTradeStats {
+  totalTrades: number;
+  openTrades: number;
+  closedTrades: number;
+  winRate: number;
+  totalPnl: number;
+  portfolioValue: number | null;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  totalFees: number;
+  avgSlippageBps: number;
+  maxDrawdown: number;
+}
+type UsageSnapshot = {
+  plan: string;
+  limits: Record<string, number>;
+  analyticsDepth: number;
+  usage: Record<string, number>;
+  remaining: Record<string, number>;
+  upgradeUrl?: string;
+};
+
+type GuidedFlowState = {
+  thesis: any;
+  decisionCard: any;
+  gate: any;
+  analytics: { depth: number; locked: boolean; reason?: string | null };
+};
+
+type PaperTrade = {
+  id: string;
+  thesisId: string;
+  decisionCardId?: string | null;
+  symbol: string;
+  side: string;
+  quantity: number;
+  entryPrice: number;
+  status: string;
+  pnl?: number;
+  pnlPercent?: number;
+};
+
+const confidenceColors: Record<ConfidenceTag, string> = {
+  high: 'bg-green-500/20 text-green-300 border-green-500/40',
+  medium: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+  low: 'bg-red-500/20 text-red-300 border-red-500/40',
+};
+
+const classifyConfidence = (score: number): ConfidenceTag => {
+  if (score >= 75) return 'high';
+  if (score >= 55) return 'medium';
+  return 'low';
+};
+
+const formatModelName = (model?: string) => {
+  if (!model) return null;
+  if (model.startsWith('openai:')) {
+    return `OpenAI ${model.split(':')[1]}`;
+  }
+  if (model === 'deterministic') return 'Deterministic';
+  return model;
+};
+
+const formatConfidenceScore = (score?: number) => {
+  if (typeof score !== 'number' || Number.isNaN(score)) return null;
+  const normalized = score <= 1 ? score * 100 : score;
+  return `${Math.round(normalized)}%`;
+};
+
+const normalizeSignals = (rawSignals: any[], source: 'ai' | 'deterministic'): Signal[] => {
+  return rawSignals.map((signal) => {
+    const parsedConfidence = Number(signal.confidence ?? signal.score ?? 0);
+    const confidence = Number.isFinite(parsedConfidence) ? parsedConfidence : 0;
+    const rawConfidence = typeof signal.rawConfidence === 'number' ? signal.rawConfidence : confidence;
+    const confidenceTag = signal.confidenceTag || classifyConfidence(confidence);
+    const provenance = signal.provenance || (source === 'deterministic' ? { model: 'deterministic' } : undefined);
+
+    return {
+      ...signal,
+      confidence,
+      rawConfidence,
+      confidenceTag,
+      provenance,
+    } as Signal;
+  });
+};
 
 // Signal Card Component with enhanced visuals
-function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: { 
+function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow }: { 
   signal: Signal; 
   index: number;
   onAddToWatchlist: (symbol: string) => void;
   onPaperTrade: (signal: Signal) => void;
+  onStartGuidedFlow: (signal: Signal) => Promise<void> | void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [isPaperTrading, setIsPaperTrading] = useState(false);
+  const [isGuidedFlow, setIsGuidedFlow] = useState(false);
+  const confidenceLabel = signal.confidenceTag || classifyConfidence(signal.confidence);
+  const modelLabel = formatModelName(signal.provenance?.model);
+  const candleProvenance = signal.provenance?.candles || null;
+  const candleScore = formatConfidenceScore(candleProvenance?.confidenceScore);
+  const isAI = (signal.provenance?.model || '').startsWith('openai');
   
   const typeColors = {
     bullish: { 
@@ -75,6 +193,10 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
   };
   
   const colors = typeColors[signal.type];
+  const priceVsSma20 = signal.indicators?.priceVsSma20;
+  const priceVsSma50 = signal.indicators?.priceVsSma50;
+  const hasSma20 = typeof priceVsSma20 === 'number';
+  const hasSma50 = typeof priceVsSma50 === 'number';
   
   return (
     <motion.div
@@ -123,7 +245,10 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
           
           <div className="text-right">
             <div className="flex items-center gap-2 mb-1">
-              <span className="text-gray-400 text-sm">AI Confidence</span>
+              <span className="text-gray-400 text-sm">Signal Score</span>
+              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${confidenceColors[confidenceLabel]}`}>
+                {confidenceLabel.toUpperCase()}
+              </span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-24 h-3 bg-white/10 rounded-full overflow-hidden">
@@ -138,7 +263,15 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
                 {signal.confidence}%
               </span>
             </div>
+            {typeof signal.rawConfidence === 'number' && signal.rawConfidence !== signal.confidence && (
+              <p className="text-gray-500 text-[11px] mt-1">Adj. from {Math.round(signal.rawConfidence)}%</p>
+            )}
             <p className="text-gray-500 text-xs mt-2 font-medium">{signal.pattern}</p>
+            {candleProvenance && (
+              <p className="text-gray-500 text-[11px] mt-1">
+                Data: {candleProvenance.source} · {candleProvenance.confidence || 'unknown'}{candleScore ? ` (${candleScore})` : ''}
+              </p>
+            )}
           </div>
         </div>
         
@@ -168,14 +301,14 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
         {/* Indicators if available */}
         {signal.indicators && (
           <div className="flex gap-4 mb-4 text-xs">
-            <div className={`px-3 py-1 rounded-full ${signal.indicators.rsi < 30 ? 'bg-green-500/20 text-green-400' : signal.indicators.rsi > 70 ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>
-              RSI: {signal.indicators.rsi.toFixed(1)}
+            <div className={`px-3 py-1 rounded-full ${signal.indicators.rsi !== null && signal.indicators.rsi < 30 ? 'bg-green-500/20 text-green-400' : signal.indicators.rsi !== null && signal.indicators.rsi > 70 ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>
+              RSI: {signal.indicators.rsi !== null ? signal.indicators.rsi.toFixed(1) : '—'}
             </div>
-            <div className={`px-3 py-1 rounded-full ${signal.indicators.priceVsSma20 > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-              vs SMA20: {signal.indicators.priceVsSma20 > 0 ? '+' : ''}{signal.indicators.priceVsSma20.toFixed(1)}%
+            <div className={`px-3 py-1 rounded-full ${hasSma20 ? (priceVsSma20! > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400') : 'bg-gray-500/20 text-gray-400'}`}>
+              vs SMA20: {hasSma20 ? `${priceVsSma20! > 0 ? '+' : ''}${priceVsSma20!.toFixed(1)}%` : '—'}
             </div>
-            <div className={`px-3 py-1 rounded-full ${signal.indicators.priceVsSma50 > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
-              vs SMA50: {signal.indicators.priceVsSma50 > 0 ? '+' : ''}{signal.indicators.priceVsSma50.toFixed(1)}%
+            <div className={`px-3 py-1 rounded-full ${hasSma50 ? (priceVsSma50! > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400') : 'bg-gray-500/20 text-gray-400'}`}>
+              vs SMA50: {hasSma50 ? `${priceVsSma50! > 0 ? '+' : ''}${priceVsSma50!.toFixed(1)}%` : '—'}
             </div>
           </div>
         )}
@@ -187,7 +320,7 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
             animate={{ x: expanded ? 0 : [0, 3, 0] }}
             transition={{ duration: 1.5, repeat: Infinity }}
           >
-            {expanded ? '▲ Hide Analysis' : '▼ Show AI Analysis'}
+            {expanded ? '▲ Hide Explanation' : '▼ Show Explanation'}
           </motion.span>
         </div>
       </div>
@@ -204,15 +337,38 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
             <div className="p-6 bg-gradient-to-br from-cyan-500/10 to-purple-500/10">
               <div className="flex items-start gap-4">
                 <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-                  <span className="text-2xl">🧠</span>
+                  <span className="text-2xl">🧭</span>
                 </div>
                 <div className="flex-1">
-                  <p className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400 font-bold text-lg mb-2">AI Analysis</p>
+                  <p className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400 font-bold text-lg mb-2">
+                    {isAI ? 'AI Explanation' : 'Rule-based Explanation'}
+                  </p>
                   <p className="text-gray-300 leading-relaxed text-sm">{signal.reasoning}</p>
                 </div>
               </div>
+
+              {signal.provenance && (
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-4 text-xs">
+                  {modelLabel && (
+                    <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300">
+                      Model: {modelLabel}
+                    </div>
+                  )}
+                  {signal.provenance.quoteSource && (
+                    <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300">
+                      Quote: {signal.provenance.quoteSource}
+                    </div>
+                  )}
+                  {candleProvenance && (
+                    <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300">
+                      Candles: {candleProvenance.source} · {candleProvenance.confidence || 'unknown'}{candleScore ? ` (${candleScore})` : ''}
+                    </div>
+                  )}
+                </div>
+              )}
               
-                              <div className="flex gap-3 mt-6">
+                              <div className="flex flex-col gap-3 mt-6">
+                                <div className="flex gap-3">
                                 <motion.button 
                                   whileHover={{ scale: isAddingToWatchlist ? 1 : 1.02 }}
                                   whileTap={{ scale: isAddingToWatchlist ? 1 : 0.98 }}
@@ -249,6 +405,36 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
                                 >
                                   {isPaperTrading ? '⏳ Opening...' : '📊 Paper Trade'}
                                 </motion.button>
+                                </div>
+                                <motion.button
+                                  whileHover={{ scale: isGuidedFlow ? 1 : 1.02 }}
+                                  whileTap={{ scale: isGuidedFlow ? 1 : 0.98 }}
+                                  disabled={isGuidedFlow}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setIsGuidedFlow(true);
+                                    try {
+                                      await onStartGuidedFlow(signal);
+                                    } finally {
+                                      setIsGuidedFlow(false);
+                                    }
+                                  }}
+                                  className={`w-full py-3 rounded-xl text-white font-semibold text-sm transition-all ${
+                                    isGuidedFlow
+                                      ? 'bg-gray-600 cursor-not-allowed'
+                                      : 'bg-gradient-to-r from-purple-500 to-pink-600 hover:shadow-lg hover:shadow-purple-500/30'
+                                  }`}
+                                >
+                                  {isGuidedFlow ? '⏳ Starting...' : '🧭 Start Guided Flow'}
+                                </motion.button>
+                                {/* Phase 6.1: Direct thesis generation link */}
+                                <Link
+                                  href={`/dashboard/thesis?symbol=${signal.symbol}`}
+                                  onClick={(e) => e.stopPropagation()}
+                                  className="w-full py-3 rounded-xl text-white font-semibold text-sm text-center transition-all bg-gradient-to-r from-amber-500 to-orange-600 hover:shadow-lg hover:shadow-amber-500/30"
+                                >
+                                  💡 Generate Thesis
+                                </Link>
                               </div>
             </div>
           </motion.div>
@@ -259,7 +445,8 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade }: {
 }
 
 // Scanning progress component
-function ScanProgress({ status }: { status: ScanStatus }) {
+function ScanProgress({ status, mode }: { status: ScanStatus; mode: 'ai' | 'deterministic' }) {
+  const isAI = mode === 'ai';
   return (
     <motion.div
       initial={{ opacity: 0, y: -20 }}
@@ -274,8 +461,10 @@ function ScanProgress({ status }: { status: ScanStatus }) {
             className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent"
           />
           <div>
-            <p className="text-white font-semibold">AI Scanning Markets...</p>
-            <p className="text-gray-400 text-sm">Analyzing {status.totalCount} stocks with OpenAI</p>
+            <p className="text-white font-semibold">{isAI ? 'Running AI screener...' : 'Running deterministic fallback...'}</p>
+            <p className="text-gray-400 text-sm">
+              Analyzing {status.totalCount} stocks with {isAI ? 'AI + market data' : 'rule-based'} signals
+            </p>
           </div>
         </div>
         <div className="text-right">
@@ -299,6 +488,8 @@ function ScanProgress({ status }: { status: ScanStatus }) {
 
 export default function ScreenerPage() {
   const [signals, setSignals] = useState<Signal[] | null>(null);
+  const [scanSource, setScanSource] = useState<'ai' | 'deterministic' | null>(null);
+  const [scanMode, setScanMode] = useState<'ai' | 'deterministic'>('ai');
   const [scanStatus, setScanStatus] = useState<ScanStatus>({
     scanning: false,
     progress: 0,
@@ -308,44 +499,251 @@ export default function ScreenerPage() {
   });
   const [error, setError] = useState<string | null>(null);
   const [lastScan, setLastScan] = useState<string | null>(null);
+  const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+  const [savedReportId, setSavedReportId] = useState<string | null>(null);
+  const [paperStats, setPaperStats] = useState<PaperTradeStats | null>(null);
+  const [paperError, setPaperError] = useState<string | null>(null);
+  const [alpacaStatus, setAlpacaStatus] = useState<{
+    connected: boolean;
+    environment?: 'paper' | 'live';
+    liveTradingEnabled?: boolean;
+  } | null>(null);
   const [settings, setSettings] = useState({
     maxStocks: 50,
     minConfidence: 65,
     signalType: 'all' as 'all' | 'bullish' | 'bearish',
   });
+  const [usage, setUsage] = useState<UsageSnapshot | null>(null);
+  const [usageError, setUsageError] = useState<string | null>(null);
+  const [guidedFlow, setGuidedFlow] = useState<GuidedFlowState | null>(null);
+  const [guidedSignal, setGuidedSignal] = useState<Signal | null>(null);
+  const [guidedStep, setGuidedStep] = useState(0);
+  const [guidedLoading, setGuidedLoading] = useState(false);
+  const [guidedError, setGuidedError] = useState<string | null>(null);
+  const [paperTrade, setPaperTrade] = useState<PaperTrade | null>(null);
+  const [paperTradeError, setPaperTradeError] = useState<string | null>(null);
+  const [paperTradeLoading, setPaperTradeLoading] = useState(false);
+
+  const formatCurrency = (value: number | null | undefined) => {
+    if (value === null || value === undefined || Number.isNaN(value)) return '—';
+    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+  };
+  const formatQuotaValue = (value?: number) => {
+    if (value === undefined || value === null) return '—';
+    return value === -1 ? '∞' : value;
+  };
+  const formatPrice = (value?: number | null) => {
+    if (typeof value !== 'number' || Number.isNaN(value)) return '—';
+    return `$${value.toFixed(2)}`;
+  };
+
+  const loadPaperStats = useCallback(async () => {
+    setPaperError(null);
+    const res = await api.getPaperTrades();
+    if (res.success && res.data?.stats) {
+      setPaperStats(res.data.stats as PaperTradeStats);
+      return;
+    }
+    setPaperStats(null);
+    setPaperError(res.error?.message || 'Paper trade stats unavailable');
+  }, []);
+
+  const loadAlpacaStatus = useCallback(async () => {
+    const res = await api.getAlpacaStatus();
+    if (res.success && res.data) {
+      setAlpacaStatus({
+        connected: res.data.connected,
+        environment: res.data.environment,
+        liveTradingEnabled: res.data.liveTradingEnabled,
+      });
+      return;
+    }
+    setAlpacaStatus(null);
+  }, []);
+  const loadUsage = useCallback(async () => {
+    setUsageError(null);
+    const res = await api.getUsage();
+    if (res.success && res.data) {
+      setUsage(res.data as UsageSnapshot);
+      return;
+    }
+    setUsage(null);
+    setUsageError(res.error?.message || 'Usage unavailable');
+  }, []);
+
+  const resetGuidedFlow = useCallback(() => {
+    setGuidedFlow(null);
+    setGuidedSignal(null);
+    setGuidedStep(0);
+    setGuidedError(null);
+    setPaperTrade(null);
+    setPaperTradeError(null);
+    setPaperTradeLoading(false);
+  }, []);
+
+  const handleStartGuidedFlow = useCallback(async (signal: Signal) => {
+    setGuidedLoading(true);
+    setGuidedError(null);
+    setPaperTrade(null);
+    setPaperTradeError(null);
+    setGuidedSignal(signal);
+    setGuidedStep(0);
+
+    try {
+      const result = await api.startGuidedFlow({
+        signal: {
+          symbol: signal.symbol,
+          type: signal.type,
+          direction: signal.type === 'bearish' ? 'SHORT' : 'LONG',
+          entry: signal.entry,
+          target: signal.target,
+          stopLoss: signal.stopLoss,
+          confidence: signal.confidence,
+          reasoning: signal.reasoning,
+          pattern: signal.pattern,
+          timeframe: signal.timeframe,
+          indicators: signal.indicators,
+        },
+      });
+
+      if (result.success && result.data?.flow) {
+        setGuidedFlow(result.data.flow as GuidedFlowState);
+        await loadUsage();
+      } else {
+        setGuidedFlow(null);
+        setGuidedError(result.error?.message || 'Guided flow failed');
+      }
+    } catch (err) {
+      setGuidedFlow(null);
+      setGuidedError((err as Error).message || 'Guided flow failed');
+    } finally {
+      setGuidedLoading(false);
+    }
+  }, [loadUsage]);
+
+  const handleGuidedPaperTrade = useCallback(async () => {
+    if (!guidedFlow?.thesis) return;
+    setPaperTradeLoading(true);
+    setPaperTradeError(null);
+
+    try {
+      const thesisResult = await api.createThesis({
+        symbol: guidedFlow.thesis.symbol,
+        entryPrice: guidedFlow.thesis.entryPrice,
+        targetPrice: guidedFlow.thesis.targetPrice,
+        stopLoss: guidedFlow.thesis.stopLoss,
+        direction: guidedFlow.thesis.signal,
+        confidence: guidedFlow.thesis.confidence,
+        reasoning: guidedFlow.thesis.reasoning,
+        decisionCardId: guidedFlow.decisionCard?.id,
+      });
+
+      if (!thesisResult.success || !thesisResult.data?.thesis) {
+        setPaperTradeError(thesisResult.error?.message || 'Failed to create thesis');
+        return;
+      }
+
+      const tradeResult = await api.createPaperTrade(thesisResult.data.thesis.id, 10);
+      if (tradeResult.success && tradeResult.data?.trade) {
+        setPaperTrade(tradeResult.data.trade as PaperTrade);
+        loadPaperStats();
+      } else {
+        setPaperTradeError(tradeResult.error?.message || 'Failed to open paper trade');
+      }
+    } catch (err) {
+      setPaperTradeError((err as Error).message || 'Paper trade failed');
+    } finally {
+      setPaperTradeLoading(false);
+    }
+  }, [guidedFlow, loadPaperStats]);
 
   // Fetch real signals from the backend
   const runScan = useCallback(async () => {
     setScanStatus(s => ({ ...s, scanning: true, progress: 0, scannedCount: 0, foundSignals: 0, totalCount: settings.maxStocks }));
     setSignals(null);
     setError(null);
+    setSaveState('idle');
+    setSavedReportId(null);
+    setScanSource(null);
+    setScanMode('ai');
+
+    const finalizeSuccess = (results: Signal[], scannedAt?: string, source?: 'ai' | 'deterministic') => {
+      setSignals(results);
+      setScanSource(source || null);
+      setLastScan(scannedAt || new Date().toISOString());
+      setScanStatus(s => ({
+        ...s,
+        scanning: false,
+        progress: 100,
+        scannedCount: s.totalCount,
+        foundSignals: results.length,
+      }));
+    };
     
     try {
-      const data = await api.runAIScreener(settings);
+      const ai = await api.runAIScreener({
+        maxStocks: settings.maxStocks,
+        minConfidence: settings.minConfidence,
+        signalType: settings.signalType,
+      });
 
-      if (data.success && data.data?.signals) {
-        setSignals(data.data.signals);
-        setLastScan(new Date().toISOString());
-        setScanStatus(s => ({
-          ...s,
-          scanning: false,
-          progress: 100,
-          scannedCount: s.totalCount,
-          foundSignals: data.data!.signals.length,
-        }));
-      } else {
-        throw new Error(data.error?.message || 'Scan failed');
+      if (ai.success && ai.data?.signals) {
+        const normalized = normalizeSignals(ai.data.signals, 'ai');
+        finalizeSuccess(normalized, ai.data.scannedAt, 'ai');
+        return;
       }
+      throw new Error(ai.error?.message || 'AI screener unavailable');
     } catch (err) {
-      setError((err as Error).message);
-      setSignals(null);
-      setScanStatus(s => ({ ...s, scanning: false, progress: 0, scannedCount: 0, foundSignals: 0 }));
+      setScanMode('deterministic');
+      try {
+        const fallback = await api.runScreener({
+          maxSymbols: settings.maxStocks,
+          minConfidence: settings.minConfidence,
+          signalType: settings.signalType,
+        });
+
+        if (fallback.success && fallback.data?.signals) {
+          const normalized = normalizeSignals(fallback.data.signals, 'deterministic');
+          finalizeSuccess(normalized, fallback.data.scannedAt, 'deterministic');
+          return;
+        }
+        throw new Error(fallback.error?.message || 'Scan failed');
+      } catch (fallbackErr) {
+        setError((fallbackErr as Error).message);
+        setSignals(null);
+        setScanStatus(s => ({ ...s, scanning: false, progress: 0, scannedCount: 0, foundSignals: 0 }));
+      }
     }
   }, [settings]);
+
+  const handleSaveReport = useCallback(async () => {
+    if (!signals || signals.length === 0) return;
+    setSaveState('saving');
+    setError(null);
+
+    const reportName = `Scan ${new Date().toLocaleString('en-US')}`;
+    const result = await api.saveScreenerReport({
+      name: reportName,
+      signals,
+      settings,
+      scannedAt: lastScan || new Date().toISOString(),
+    });
+
+    if (result.success && result.data) {
+      setSaveState('saved');
+      setSavedReportId(result.data.reportId);
+    } else {
+      setSaveState('error');
+      setError(result.error?.message || 'Failed to save scan');
+    }
+  }, [signals, settings, lastScan]);
 
   // Initial load
   useEffect(() => {
     runScan();
+    loadPaperStats();
+    loadAlpacaStatus();
+    loadUsage();
   }, []);
 
   // Handler for adding signal to watchlist
@@ -372,12 +770,27 @@ export default function ScreenerPage() {
       }, 10);
       if (result.success) {
         console.log(`Opened paper trade for ${signal.symbol}`);
+        loadPaperStats();
         // Could show a toast notification here
       }
     } catch (err) {
       console.error('Failed to open paper trade:', err);
     }
-  }, []);
+  }, [loadPaperStats]);
+
+  const liveTradingAllowed = !!(alpacaStatus?.connected && alpacaStatus.environment === 'live' && alpacaStatus.liveTradingEnabled);
+  const executionModeLabel = liveTradingAllowed ? 'LIVE' : 'PAPER';
+  const executionModeDescription = !alpacaStatus
+    ? 'Alpaca status unavailable.'
+    : !alpacaStatus.connected
+      ? 'Connect Alpaca to unlock live execution.'
+      : alpacaStatus.environment !== 'live'
+        ? 'Switch Alpaca to live environment to enable execution.'
+        : alpacaStatus.liveTradingEnabled
+          ? 'Live execution is enabled.'
+          : 'Live trading disabled by policy (FEATURE_LIVE_TRADING=false).';
+  const guidedSteps = ['Thesis', 'Decision', 'Paper Result', 'Review'];
+  const canAdvanceGuided = guidedStep < 2 || (guidedStep === 2 && !!paperTrade);
 
   return (
     <DashboardLayout>
@@ -390,10 +803,10 @@ export default function ScreenerPage() {
         >
           <div>
             <h1 className="text-4xl font-bold text-white mb-2">
-              AI Market <GradientText>Screener</GradientText>
+              AI <GradientText>Screener</GradientText>
             </h1>
             <p className="text-gray-400">
-              Real-time pattern recognition scanning {settings.maxStocks}+ stocks with OpenAI-powered analysis
+              AI-first market screening across {settings.maxStocks}+ symbols with provenance-tagged signals
             </p>
           </div>
           
@@ -401,12 +814,356 @@ export default function ScreenerPage() {
             {error && (
               <span className="text-yellow-400 text-sm">⚠️ Unavailable</span>
             )}
+            {scanSource === 'deterministic' && (
+              <span className="text-yellow-300 text-sm">Fallback active</span>
+            )}
             <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/30">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
-              <span className="text-cyan-400 text-sm font-medium">Real-Time AI Analysis</span>
+              <span className="text-cyan-400 text-sm font-medium">
+                {scanSource === 'deterministic' ? 'Deterministic Fallback' : 'AI Signals'}
+              </span>
             </div>
           </div>
         </motion.div>
+
+        {/* Execution Mode + Performance */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+          <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-3">
+              <div>
+                <p className="text-gray-400 text-xs uppercase tracking-wide">Execution Mode</p>
+                <p className="text-white font-semibold mt-1">{executionModeLabel} Trading</p>
+              </div>
+              <span className={`text-xs px-3 py-1 rounded-full border ${liveTradingAllowed ? 'border-green-500/40 text-green-300 bg-green-500/10' : 'border-yellow-500/40 text-yellow-300 bg-yellow-500/10'}`}>
+                {executionModeLabel}
+              </span>
+            </div>
+            <p className="text-gray-400 text-sm">{executionModeDescription}</p>
+            {!alpacaStatus?.connected && (
+              <Link
+                href="/dashboard/settings"
+                className="inline-flex mt-4 px-3 py-2 text-xs rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+              >
+                Connect Alpaca
+              </Link>
+            )}
+          </div>
+
+          <div className="lg:col-span-2 backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
+            <div className="flex items-center justify-between mb-4">
+              <div>
+                <p className="text-gray-400 text-xs uppercase tracking-wide">Paper Performance</p>
+                <p className="text-white font-semibold mt-1">Paper trading results</p>
+              </div>
+              <button
+                onClick={loadPaperStats}
+                className="px-3 py-1.5 text-xs rounded-lg border border-white/10 text-gray-300 hover:border-cyan-500/50"
+              >
+                Refresh
+              </button>
+            </div>
+
+            {paperStats ? (
+              <div className="grid grid-cols-2 md:grid-cols-6 gap-4 text-sm">
+                <div>
+                  <p className="text-gray-500 text-xs">Total Trades</p>
+                  <p className="text-white font-semibold">{paperStats.totalTrades}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 text-xs">Open</p>
+                  <p className="text-white font-semibold">{paperStats.openTrades}</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 text-xs">Win Rate</p>
+                  <p className="text-white font-semibold">{paperStats.winRate}%</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 text-xs">Total P&L</p>
+                  <p className={`font-semibold ${paperStats.totalPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                    {formatCurrency(paperStats.totalPnl)}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-gray-500 text-xs">Max Drawdown</p>
+                  <p className="text-white font-semibold">{paperStats.maxDrawdown.toFixed(2)}%</p>
+                </div>
+                <div>
+                  <p className="text-gray-500 text-xs">Avg Slippage</p>
+                  <p className="text-white font-semibold">{paperStats.avgSlippageBps.toFixed(2)} bps</p>
+                </div>
+              </div>
+            ) : (
+              <p className="text-gray-400 text-sm">{paperError || 'Loading paper trade stats…'}</p>
+            )}
+          </div>
+        </div>
+
+        {/* Plan Usage */}
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
+          <div className="flex items-center justify-between mb-4">
+            <div>
+              <p className="text-gray-400 text-xs uppercase tracking-wide">Plan Usage</p>
+              <p className="text-white font-semibold mt-1">{usage?.plan || '—'} Plan</p>
+            </div>
+            {usage?.upgradeUrl && usage?.plan === 'FREE' && (
+              <Link
+                href={usage.upgradeUrl}
+                className="inline-flex px-3 py-2 text-xs rounded-lg border border-cyan-500/40 text-cyan-300 hover:bg-cyan-500/10"
+              >
+                Upgrade
+              </Link>
+            )}
+          </div>
+
+          {usage ? (
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+              <div>
+                <p className="text-gray-500 text-xs">Decision Cards</p>
+                <p className="text-white font-semibold">
+                  {formatQuotaValue(usage.remaining?.decisionCards)} / {formatQuotaValue(usage.limits?.daily_decision_cards)}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs">Sim Runs</p>
+                <p className="text-white font-semibold">
+                  {formatQuotaValue(usage.remaining?.backtest)} / {formatQuotaValue(usage.limits?.daily_backtests)}
+                </p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs">Analytics Depth</p>
+                <p className="text-white font-semibold">{formatQuotaValue(usage.analyticsDepth)}</p>
+              </div>
+              <div>
+                <p className="text-gray-500 text-xs">Mode</p>
+                <p className="text-white font-semibold">{usage.analyticsDepth > 0 ? 'Full' : 'Summary-only'}</p>
+              </div>
+            </div>
+          ) : (
+            <p className="text-gray-400 text-sm">{usageError || 'Loading usage…'}</p>
+          )}
+        </div>
+
+        {/* Guided Workflow */}
+        <div className="backdrop-blur-xl bg-white/5 border border-white/10 rounded-2xl p-6">
+          <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4 mb-4">
+            <div>
+              <p className="text-gray-400 text-xs uppercase tracking-wide">Guided Workflow</p>
+              <p className="text-white font-semibold mt-1">Scan → Thesis → Decision → Paper Result → Review</p>
+              {guidedSignal && (
+                <p className="text-xs text-gray-500 mt-1">Active signal: {guidedSignal.symbol} ({guidedSignal.type.toUpperCase()})</p>
+              )}
+            </div>
+            {guidedFlow && (
+              <button
+                onClick={resetGuidedFlow}
+                className="px-3 py-2 text-xs rounded-lg border border-gray-700 text-gray-200 hover:border-cyan-500/50"
+              >
+                Reset Flow
+              </button>
+            )}
+          </div>
+
+          {guidedError && (
+            <div className="mb-4 p-3 rounded-lg bg-red-500/10 border border-red-500/30 text-red-200 text-sm">
+              {guidedError}
+            </div>
+          )}
+
+          {guidedLoading && (
+            <p className="text-gray-400 text-sm">Starting guided flow…</p>
+          )}
+
+          {!guidedLoading && !guidedFlow && (
+            <p className="text-gray-400 text-sm">Select a signal and click “Start Guided Flow” to begin.</p>
+          )}
+
+          {guidedFlow && (
+            <div className="space-y-4">
+              <div className="flex flex-wrap gap-2">
+                {guidedSteps.map((step, idx) => {
+                  const isActive = guidedStep === idx;
+                  const isComplete = guidedStep > idx;
+                  return (
+                    <button
+                      key={step}
+                      onClick={() => setGuidedStep(idx)}
+                      className={`flex items-center gap-2 px-3 py-2 rounded-full text-xs border transition ${
+                        isActive
+                          ? 'border-cyan-500/60 bg-cyan-500/10 text-cyan-200'
+                          : isComplete
+                            ? 'border-green-500/40 bg-green-500/10 text-green-200'
+                            : 'border-gray-700 text-gray-300'
+                      }`}
+                    >
+                      <span className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] ${
+                        isComplete ? 'bg-green-500/30 text-green-200' : isActive ? 'bg-cyan-500/30 text-cyan-200' : 'bg-gray-700/40 text-gray-300'
+                      }`}>
+                        {idx + 1}
+                      </span>
+                      {step}
+                    </button>
+                  );
+                })}
+              </div>
+
+              <div className="rounded-xl border border-white/10 bg-white/5 p-4">
+                {guidedStep === 0 && (
+                  <div className="space-y-3 text-sm text-gray-300">
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                      <div className="p-3 rounded-lg bg-white/5">
+                        <p className="text-gray-500 text-xs">Entry</p>
+                        <p className="text-white font-semibold">{formatPrice(guidedFlow.thesis?.entryPrice)}</p>
+                      </div>
+                      <div className="p-3 rounded-lg bg-green-500/10 border border-green-500/30">
+                        <p className="text-green-300 text-xs">Target</p>
+                        <p className="text-green-300 font-semibold">{formatPrice(guidedFlow.thesis?.targetPrice)}</p>
+                      </div>
+                      <div className="p-3 rounded-lg bg-red-500/10 border border-red-500/30">
+                        <p className="text-red-300 text-xs">Stop</p>
+                        <p className="text-red-300 font-semibold">{formatPrice(guidedFlow.thesis?.stopLoss)}</p>
+                      </div>
+                      <div className="p-3 rounded-lg bg-cyan-500/10 border border-cyan-500/30">
+                        <p className="text-cyan-300 text-xs">R/R</p>
+                        <p className="text-cyan-300 font-semibold">{guidedFlow.thesis?.riskRewardRatio ?? '—'}</p>
+                      </div>
+                    </div>
+                    <div className="flex flex-wrap gap-3 text-xs">
+                      <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10">Signal: {guidedFlow.thesis?.signal || '—'}</span>
+                      <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10">Confidence: {guidedFlow.thesis?.confidence ?? '—'}%</span>
+                      {guidedFlow.thesis?.expiresAt && (
+                        <span className="px-2 py-1 rounded-full bg-white/5 border border-white/10">Expires {new Date(guidedFlow.thesis.expiresAt).toLocaleString()}</span>
+                      )}
+                    </div>
+                    {guidedFlow.thesis?.reasoning?.length ? (
+                      <div className="text-xs text-gray-400">
+                        <p className="text-gray-500 mb-1">Reasoning</p>
+                        <ul className="list-disc list-inside space-y-1">
+                          {guidedFlow.thesis.reasoning.map((reason: string, idx: number) => (
+                            <li key={`${reason}-${idx}`}>{reason}</li>
+                          ))}
+                        </ul>
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-500">No reasoning provided.</p>
+                    )}
+                  </div>
+                )}
+
+                {guidedStep === 1 && (
+                  <div className="space-y-3 text-sm text-gray-300">
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Decision Card</span>
+                      <span className="text-white">{guidedFlow.decisionCard?.id || '—'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Status</span>
+                      <span className="text-white">{guidedFlow.decisionCard?.status || '—'}</span>
+                    </div>
+                    <div className="flex items-center justify-between">
+                      <span className="text-gray-400">Execution Gate</span>
+                      <span className="text-white">{guidedFlow.gate?.mode?.toUpperCase?.() || '—'}</span>
+                    </div>
+                    <div>
+                      <p className="text-gray-500 mb-1">Gate Reasons</p>
+                      {guidedFlow.gate?.reasons?.length ? (
+                        <ul className="list-disc list-inside text-xs text-gray-300 space-y-1">
+                          {guidedFlow.gate.reasons.map((reason: string) => (
+                            <li key={reason}>{reason.replace(/_/g, ' ')}</li>
+                          ))}
+                        </ul>
+                      ) : (
+                        <p className="text-xs text-gray-500">No gate constraints.</p>
+                      )}
+                    </div>
+                    {guidedFlow.analytics?.locked && (
+                      <div className="text-xs text-yellow-300 bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-2">
+                        Analytics locked: {guidedFlow.analytics?.reason || 'Upgrade to unlock full analytics.'}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {guidedStep === 2 && (
+                  <div className="space-y-3 text-sm text-gray-300">
+                    {paperTrade ? (
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                        <div className="p-3 rounded-lg bg-white/5">
+                          <p className="text-gray-500 text-xs">Status</p>
+                          <p className="text-white font-semibold">{paperTrade.status}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-white/5">
+                          <p className="text-gray-500 text-xs">Entry</p>
+                          <p className="text-white font-semibold">{formatPrice(paperTrade.entryPrice)}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-white/5">
+                          <p className="text-gray-500 text-xs">P&amp;L</p>
+                          <p className={`font-semibold ${typeof paperTrade.pnl === 'number' && paperTrade.pnl >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                            {typeof paperTrade.pnl === 'number' ? paperTrade.pnl.toFixed(2) : '—'}
+                          </p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-white/5">
+                          <p className="text-gray-500 text-xs">Return</p>
+                          <p className={`font-semibold ${typeof paperTrade.pnlPercent === 'number' && paperTrade.pnlPercent >= 0 ? 'text-green-300' : 'text-red-300'}`}>
+                            {typeof paperTrade.pnlPercent === 'number' ? `${paperTrade.pnlPercent.toFixed(2)}%` : '—'}
+                          </p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-gray-400 text-sm">Run a paper execution to capture observed outcomes for this decision card.</p>
+                        <button
+                          onClick={handleGuidedPaperTrade}
+                          disabled={paperTradeLoading}
+                          className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${paperTradeLoading ? 'bg-gray-600 text-gray-300 cursor-not-allowed' : 'bg-gradient-to-r from-green-500 to-emerald-600 text-white'}`}
+                        >
+                          {paperTradeLoading ? 'Executing…' : '📊 Paper Execute'}
+                        </button>
+                      </div>
+                    )}
+                    {paperTradeError && (
+                      <div className="text-xs text-red-300 bg-red-500/10 border border-red-500/30 rounded-lg p-2">
+                        {paperTradeError}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {guidedStep === 3 && (
+                  <div className="space-y-4">
+                    <TrustPanel
+                      title="Guided Review"
+                      gate={guidedFlow.gate}
+                      integrity={guidedFlow.thesis?.dataIntegrity || null}
+                      strategy={guidedFlow.decisionCard?.score?.strategy}
+                      expectedValue={guidedFlow.decisionCard?.score?.expectedValue ?? null}
+                      observedReturn={paperTrade?.pnlPercent ?? null}
+                      observedPnl={paperTrade?.pnl ?? null}
+                      analyticsDepth={guidedFlow.analytics?.depth}
+                      analyticsLocked={guidedFlow.analytics?.locked}
+                    />
+                  </div>
+                )}
+              </div>
+
+              <div className="flex items-center justify-between">
+                <button
+                  onClick={() => setGuidedStep((prev) => Math.max(0, prev - 1))}
+                  disabled={guidedStep === 0}
+                  className={`px-4 py-2 rounded-lg text-xs border ${guidedStep === 0 ? 'border-gray-700 text-gray-500 cursor-not-allowed' : 'border-gray-600 text-gray-200 hover:border-cyan-500/50'}`}
+                >
+                  Back
+                </button>
+                <button
+                  onClick={() => setGuidedStep((prev) => Math.min(guidedSteps.length - 1, prev + 1))}
+                  disabled={!canAdvanceGuided || guidedStep === guidedSteps.length - 1}
+                  className={`px-4 py-2 rounded-lg text-xs border ${!canAdvanceGuided || guidedStep === guidedSteps.length - 1 ? 'border-gray-700 text-gray-500 cursor-not-allowed' : 'border-cyan-500/50 text-cyan-200 hover:bg-cyan-500/10'}`}
+                >
+                  {guidedStep === guidedSteps.length - 1 ? 'Done' : 'Next'}
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
         
         {/* Scan Controls */}
         <motion.div
@@ -482,11 +1239,28 @@ export default function ScreenerPage() {
                 '🧠 Run AI Scan'
               )}
             </motion.button>
+
+            <motion.button
+              onClick={handleSaveReport}
+              disabled={scanStatus.scanning || !signals || signals.length === 0 || saveState === 'saving'}
+              whileHover={{ scale: scanStatus.scanning ? 1 : 1.02 }}
+              whileTap={{ scale: scanStatus.scanning ? 1 : 0.98 }}
+              className={`
+                px-6 py-3 rounded-xl font-semibold text-sm transition-all
+                ${scanStatus.scanning || !signals || signals.length === 0
+                  ? 'bg-gray-700/40 text-gray-400 cursor-not-allowed'
+                  : saveState === 'saved'
+                    ? 'bg-green-600 text-white'
+                    : 'bg-gray-900 border border-gray-700 text-white hover:border-cyan-500/50'}
+              `}
+            >
+              {saveState === 'saving' ? 'Saving…' : saveState === 'saved' ? '✓ Saved' : 'Save Scan'}
+            </motion.button>
           </div>
         </motion.div>
         
         {/* Scan Progress */}
-        {scanStatus.scanning && <ScanProgress status={scanStatus} />}
+        {scanStatus.scanning && <ScanProgress status={scanStatus} mode={scanMode} />}
         
         {/* Signals */}
         <div className="space-y-4">
@@ -500,6 +1274,11 @@ export default function ScreenerPage() {
               </span>
             )}
           </div>
+          {saveState === 'saved' && savedReportId && (
+            <div className="text-xs text-green-400">
+              Saved report ID: {savedReportId}
+            </div>
+          )}
           
           {signals === null ? (
             <div className="text-center py-12 text-gray-400">
@@ -535,6 +1314,7 @@ export default function ScreenerPage() {
                 index={i}
                 onAddToWatchlist={handleAddToWatchlist}
                 onPaperTrade={handlePaperTrade}
+                onStartGuidedFlow={handleStartGuidedFlow}
               />
             ))
           )}

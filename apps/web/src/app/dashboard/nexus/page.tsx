@@ -22,6 +22,17 @@ function shortHash(hash: string | undefined | null, n: number = 12) {
   if (!hash) return '—';
   return hash.length > n ? `${hash.slice(0, n)}…` : hash;
 }
+function formatTimestamp(value: string | undefined | null) {
+  if (!value) return '—';
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
+}
+
+function formatIntegrityScore(score: number | undefined | null) {
+  if (typeof score !== 'number' || !Number.isFinite(score)) return '—';
+  const pct = Math.round(score <= 1 ? score * 100 : score);
+  return `${pct}%`;
+}
 
 export default function NexusDashboardPage() {
   const [status, setStatus] = useState<NexusStatusPayload | null>(null);
@@ -154,6 +165,8 @@ export default function NexusDashboardPage() {
     const approved = card?.decision?.approved;
     return typeof approved === 'boolean' ? approved : null;
   }, [card]);
+
+  const thesisIntegrity = (card as any)?.thesis?.dataIntegrity ?? (card as any)?.thesis?.integrity;
 
   const analyze = useCallback(async () => {
     setIsAnalyzing(true);
@@ -496,6 +509,36 @@ export default function NexusDashboardPage() {
                       </ul>
                     ) : (
                       <p className="text-sm text-gray-500 mt-2">None</p>
+                    )}
+                  </div>
+
+                  <div className="mt-4">
+                    <p className="text-sm text-gray-400">Data Integrity</p>
+                    {thesisIntegrity ? (
+                      <div className="mt-2 bg-gray-900 border border-gray-800 rounded-lg p-3 text-sm">
+                        <div className="flex items-center justify-between">
+                          <span className="text-gray-500">Source</span>
+                          <span className="text-gray-200">
+                            {thesisIntegrity.source_type} ({thesisIntegrity.source_identifier})
+                          </span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-gray-500">Latency</span>
+                          <span className="text-gray-200">{thesisIntegrity.latency_class ?? '—'}</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-gray-500">Confidence</span>
+                          <span className="text-gray-200">{formatIntegrityScore(thesisIntegrity.confidence_score)}</span>
+                        </div>
+                        <div className="flex items-center justify-between mt-1">
+                          <span className="text-gray-500">Window</span>
+                          <span className="text-gray-200">
+                            {formatTimestamp(thesisIntegrity.timestamp_range?.start)} → {formatTimestamp(thesisIntegrity.timestamp_range?.end)}
+                          </span>
+                        </div>
+                      </div>
+                    ) : (
+                      <p className="text-sm text-gray-500 mt-2">No integrity metadata.</p>
                     )}
                   </div>
 

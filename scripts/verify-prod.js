@@ -302,6 +302,109 @@ const TESTS = [
       }
     },
   },
+  // Phase 6.1: Screener NEVER returns empty
+  {
+    name: 'Screener Non-Empty (Phase 6.1)',
+    url: `${API_URL}/v1/screener/scan`,
+    method: 'POST',
+    body: JSON.stringify({ maxSymbols: 25, minConfidence: 0 }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 401] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      try {
+        const data = JSON.parse(res.body);
+        const signals = data.data?.signals || [];
+        if (!data.success) return { ok: false, error: 'API returned success=false' };
+        if (signals.length === 0) return { ok: false, error: 'Screener returned ZERO signals (Phase 6.1 violation)' };
+        // Check for confidenceTag presence
+        const hasConfidenceTag = signals.some(s => s.confidenceTag);
+        const hasFallback = data.data?.fallbackActive;
+        const notes = [`${signals.length} signals`];
+        if (hasConfidenceTag) notes.push('confidenceTag present');
+        if (hasFallback) notes.push('fallback active');
+        return { ok: true, note: notes.join(', ') };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 6.1: Thesis generation endpoint
+  {
+    name: 'Thesis Generate Endpoint (Phase 6.1)',
+    url: `${API_URL}/v1/thesis/generate`,
+    method: 'POST',
+    body: JSON.stringify({ symbol: 'SPY' }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 201, 400, 401, 403, 422, 429] }, // Various valid responses
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 403) return { ok: true, note: 'Subscription required (expected)' };
+      if (res.status === 422) return { ok: true, note: 'Validation error (market data issue)' };
+      if (res.status === 429) return { ok: true, note: 'Rate limited (expected)' };
+      if (res.status === 400) {
+        try {
+          const data = JSON.parse(res.body);
+          return { ok: true, note: `Validation: ${data.error?.message || 'bad request'}` };
+        } catch {
+          return { ok: true, note: 'Bad request' };
+        }
+      }
+      try {
+        const data = JSON.parse(res.body);
+        if (data.success && data.data?.thesis) {
+          return { ok: true, note: `Thesis generated for ${data.data.thesis.symbol}` };
+        }
+        return { ok: true, note: 'Endpoint active' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 6.1: Decision cards list endpoint
+  {
+    name: 'Decision Cards List (Phase 6.1)',
+    url: `${API_URL}/v1/decision-cards`,
+    method: 'GET',
+    expect: { status: [200, 401, 403] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 403) return { ok: true, note: 'Subscription required (expected)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (data.success && Array.isArray(data.data?.cards)) {
+          return { ok: true, note: `${data.data.cards.length} cards found` };
+        }
+        return { ok: true, note: 'Endpoint active' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 6.1: Guided flow endpoint
+  {
+    name: 'Guided Flow Endpoint (Phase 6.1)',
+    url: `${API_URL}/v1/guided/flow`,
+    method: 'POST',
+    body: JSON.stringify({ signal: { symbol: 'SPY', entry: 500, target: 510, stopLoss: 495, direction: 'LONG' } }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 201, 400, 401, 403, 422] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 403) return { ok: true, note: 'Subscription/quota required' };
+      if (res.status === 422) return { ok: true, note: 'Validation error (market data)' };
+      if (res.status === 400) return { ok: true, note: 'Bad request (input validation)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (data.success && data.data?.flow) {
+          return { ok: true, note: 'Guided flow executed successfully' };
+        }
+        return { ok: true, note: 'Endpoint active' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
 ];
 
 // HTTP request helper

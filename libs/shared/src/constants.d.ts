@@ -42,6 +42,13 @@ export declare const EVENT_TYPES: {
     readonly PAPER_TRADE_CLOSED: "trade.paper.closed";
     readonly LIVE_TRADE_OPENED: "trade.live.opened";
     readonly LIVE_TRADE_CLOSED: "trade.live.closed";
+    readonly DECISION_CREATED: "trade.decision.created";
+    readonly DECISION_EVENT_APPENDED: "trade.decision.event.appended";
+    readonly DECISION_REPLAYED: "trade.decision.replayed";
+    readonly BROKER_CONNECTED: "trade.broker.connected";
+    readonly BROKER_DISCONNECTED: "trade.broker.disconnected";
+    readonly BROKER_HISTORY_FETCHED: "trade.broker.history.fetched";
+    readonly BROKER_ORDER_PLACED: "trade.broker.order.placed";
     readonly PRODUCT_CREATED: "store.product.created";
     readonly PRODUCT_UPDATED: "store.product.updated";
     readonly LISTING_PUBLISHED: "store.listing.published";

@@ -1,5 +1,10 @@
+x-env-file: &default-env
+  env_file:
+    - ./.env.dev
+
 services:
   postgres:
+    <<: *default-env
     image: postgres:16-alpine
     container_name: nova-postgres
     environment:
@@ -18,6 +23,7 @@ services:
       retries: 10
 
   redis:
+    <<: *default-env
     image: redis:7-alpine
     container_name: nova-redis
     ports:
@@ -29,6 +35,7 @@ services:
       retries: 10
 
   eventbus:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/eventbus/Dockerfile
@@ -53,6 +60,7 @@ services:
       retries: 5
 
   auth:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/auth/Dockerfile
@@ -80,6 +88,7 @@ services:
       retries: 5
 
   orchestrator:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/orchestrator/Dockerfile
@@ -107,6 +116,7 @@ services:
       retries: 5
 
   billing:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/billing/Dockerfile
@@ -130,6 +140,7 @@ services:
       retries: 5
 
   gateway:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/gateway/Dockerfile
@@ -171,6 +182,7 @@ services:
       retries: 5
 
   marketdata:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/marketdata/Dockerfile
@@ -196,6 +208,7 @@ services:
       retries: 5
 
   tradebot:
+    <<: *default-env
     build:
       context: .
       dockerfile: services/tradebot/Dockerfile
@@ -211,6 +224,8 @@ services:
       - DATABASE_URL=postgresql://nova:nova_dev_password@postgres:5432/nova
       - JWT_SECRET=${JWT_SECRET:-nova_jwt_secret_change_in_prod_32chars}
       - REDIS_URL=redis://redis:6379
+      - NOVA_HUB_URL=http://nova-hub:3030
+      - INTERNAL_DECISION_CARDS_TOKEN=${INTERNAL_DECISION_CARDS_TOKEN:-}
       - POLYGON_API_KEY=${POLYGON_API_KEY:-}
       - FINNHUB_API_KEY=${FINNHUB_API_KEY:-}
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
@@ -229,6 +244,7 @@ services:
       retries: 5
 
   nova-hub:
+    <<: *default-env
     build:
       context: .
       dockerfile: Dockerfile.ws
@@ -246,6 +262,11 @@ services:
       - MARKETDATA_URL=http://marketdata:3020
       - BILLING_URL=http://billing:3006
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - INTERNAL_VERIFY_ENABLED=true
+      - INTERNAL_VERIFY_TOKEN=${INTERNAL_VERIFY_TOKEN:-}
+      - INTERNAL_VERIFY_SYMBOL=${INTERNAL_VERIFY_SYMBOL:-SPY}
+      - INTERNAL_VERIFY_DAYS=${INTERNAL_VERIFY_DAYS:-10}
+      - INTERNAL_DECISION_CARDS_TOKEN=${INTERNAL_DECISION_CARDS_TOKEN:-}
     depends_on:
       postgres:
         condition: service_healthy
@@ -262,6 +283,7 @@ services:
       retries: 5
 
   web:
+    <<: *default-env
     build:
       context: .
       dockerfile: apps/web/Dockerfile

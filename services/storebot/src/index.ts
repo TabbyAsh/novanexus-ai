@@ -38,12 +38,60 @@ interface InventoryAlert {
   severity: 'HIGH' | 'MEDIUM' | 'LOW';
   createdAt: string;
 }
+async function checkInventory(): Promise<InventoryAlert[]> {
+  try {
+    const products = await pricingEngine.getProducts();
+    if (!products.length) return [];
+
+    const alerts: InventoryAlert[] = [];
+
+    for (const product of products) {
+      if (product.stock_quantity <= 0) {
+        alerts.push({
+          id: generateId(),
+          productId: product.id,
+          sku: product.sku,
+          title: product.name,
+          alertType: 'OUT_OF_STOCK',
+          message: 'Product is out of stock',
+          severity: 'HIGH',
+          createdAt: nowTimestamp(),
+        });
+      } else if (product.reorder_point > 0 && product.stock_quantity <= product.reorder_point) {
+        alerts.push({
+          id: generateId(),
+          productId: product.id,
+          sku: product.sku,
+          title: product.name,
+          alertType: 'LOW_STOCK',
+          message: `Low stock (${product.stock_quantity} units)`,
+          severity: 'MEDIUM',
+          createdAt: nowTimestamp(),
+        });
+      }
+    }
+
+    return alerts;
+  } catch (error) {
+    logger.error('Inventory check failed', error as Error);
+    return [];
+  }
+}
+
+async function analyzePricing(): Promise<PriceRecommendation[]> {
+  try {
+    return await pricingEngine.analyzeAllProducts();
+  } catch (error) {
+    logger.error('Pricing analysis failed', error as Error);
+    return [];
+  }
+}
 
 // ============================================================================
 // Bot Setup
 // ============================================================================
 
-const botConfig = createBotConfig('STORE', [
+const botConfig = createBotConfig('storebot', [
   { name: 'inventory', version: '1.0.0', description: 'Inventory monitoring and alerts' },
   { name: 'pricing', version: '1.0.0', description: 'Dynamic pricing optimization' },
 ], { orchestratorUrl: ORCHESTRATOR_URL });
@@ -54,7 +102,7 @@ bot.registerTaskHandler('CHECK_INVENTORY', async (_task: TaskDefinition, ctx: Ta
   ctx.logger.info('Checking inventory levels');
   await ctx.reportProgress(50, 'Analyzing inventory...');
   
-  const alerts = checkInventory();
+  const alerts = await checkInventory();
   
   for (const alert of alerts) {
     await ctx.emit('INVENTORY_ALERT', { ...alert });
@@ -71,7 +119,7 @@ bot.registerTaskHandler('ANALYZE_PRICING', async (_task: TaskDefinition, ctx: Ta
   ctx.logger.info('Analyzing pricing');
   await ctx.reportProgress(50, 'Computing recommendations...');
   
-  const recommendations = analyzePricing();
+  const recommendations = await analyzePricing();
   
   return {
     success: true,

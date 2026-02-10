@@ -2,7 +2,7 @@
 # Nova Enterprises - Development Commands
 # ============================================
 
-.PHONY: help install dev build test lint clean docker-up docker-down docker-logs migrate seed
+.PHONY: help install dev verify build test lint clean docker-up docker-down docker-logs migrate seed
 
 # Default target
 help:
@@ -11,7 +11,8 @@ help:
 	@echo ""
 	@echo "Development:"
 	@echo "  make install      - Install all dependencies"
-	@echo "  make dev          - Start development servers"
+	@echo "  make dev          - Start full stack (deterministic)"
+	@echo "  make verify       - Run deterministic verification"
 	@echo "  make build        - Build all services"
 	@echo "  make test         - Run all tests"
 	@echo "  make lint         - Run linters"
@@ -51,7 +52,10 @@ install:
 	done
 
 dev:
-	npm run dev
+	npm run dev:all
+
+verify:
+	npm run verify
 
 build:
 	npm run build

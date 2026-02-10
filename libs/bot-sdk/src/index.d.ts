@@ -1,5 +1,5 @@
 import { Logger, Metrics } from '@nova/telemetry';
-export type BotType = 'TRADE' | 'STORE' | 'SOCIAL' | 'ANALYTICS' | 'CUSTOM';
+export type BotType = 'tradebot' | 'storebot' | 'socialbot' | 'researchbot' | 'opsbot' | 'forgebot';
 export type BotStatus = 'STARTING' | 'READY' | 'BUSY' | 'STOPPING' | 'STOPPED' | 'ERROR';
 export type TaskStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELLED';
 export interface BotCapability {

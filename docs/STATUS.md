@@ -1,12 +1,12 @@
 # Nova Hub - Status Report
 
-**Last Updated:** 2026-01-20
-**Current Phase:** Phase 1 - Sellable MVP
-**Current Milestone:** Milestone 5 In Progress
+**Last Updated:** 2026-02-08
+**Current Phase:** Phase 1 - ACTIVE (Live Candles + Integrity + Paper Loop + Execution Gating)
+**Current Milestone:** Phase 1 ACTIVE
 
 ## Summary
 
-Nova Hub is a production-grade, monetizable system with event-sourced architecture, bot framework, and RBAC permission system. Milestone 5 (Nova Hub UI + Task-Driven Bot Control) is in progress.
+Phase 1 is ACTIVE with live candle reliability, integrity propagation, paper trading performance metrics, and strict execution gating in place.
 
 ## Current State
 

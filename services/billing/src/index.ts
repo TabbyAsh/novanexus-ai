@@ -194,9 +194,9 @@ function getDefaultFeatures(plan: Entitlement['plan']): string[] {
     case 'FREE':
       return ['basic_scanner', 'watchlist_1'];
     case 'LITE':
-      return ['scanner', 'reports', 'alerts', 'watchlists', 'paper_trading', 'thesis_cards', 'csv_export'];
+      return ['scanner', 'reports', 'alerts', 'watchlists', 'paper_trading', 'thesis_cards', 'csv_export', 'decisions', 'decision_replay'];
     case 'PRO':
-      return ['scanner', 'reports', 'alerts', 'watchlists', 'paper_trading', 'thesis_cards', 'csv_export', 'pdf_export', 'api_access', 'priority_support'];
+      return ['scanner', 'reports', 'alerts', 'watchlists', 'paper_trading', 'thesis_cards', 'csv_export', 'pdf_export', 'api_access', 'priority_support', 'decisions', 'decision_replay'];
     default:
       return [];
   }

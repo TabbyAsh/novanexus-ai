@@ -72,6 +72,20 @@
 | **audit** | 3004 | Audit logging | ✅ Implemented |
 | **notifier** | 3005 | Notifications | ✅ Implemented |
 
+## Bot Type Taxonomy (Canonical)
+
+Canonical bot types (stored in DB and used for routing):
+- `tradebot`
+- `storebot`
+- `socialbot`
+- `researchbot`
+- `opsbot`
+- `forgebot`
+
+Normalization behavior:
+- Orchestrator normalizes legacy uppercase or shorthand tokens (e.g., `TRADE`, `TRADEBOT`) to canonical lowercase and logs a warning.
+- Unknown bot types are rejected.
+
 ### Infrastructure
 
 | Component | Port | Purpose |

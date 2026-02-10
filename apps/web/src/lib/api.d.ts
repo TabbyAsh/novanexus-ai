@@ -12,6 +12,47 @@ interface ApiResponse<T> {
         total?: number;
     };
 }
+type CandleIntegrity = {
+    source_type: string;
+    source_identifier: string;
+    latency_class: string;
+    confidence_score: number;
+    timestamp_range: {
+        start: string;
+        end: string;
+        expected: number;
+        actual: number;
+        missing: number;
+        gapFill?: boolean;
+        gapFillCount?: number;
+    };
+    note?: string;
+};
+type UsageSnapshot = {
+    plan: 'FREE' | 'LITE' | 'PRO' | string;
+    limits: Record<string, number>;
+    analyticsDepth: number;
+    usage: Record<string, number>;
+    remaining: Record<string, number>;
+    upgradeUrl?: string;
+};
+type GuidedFlowResponse = {
+    flow: {
+        thesis: any;
+        decisionCard: any;
+        gate: any;
+        analytics: {
+            depth: number;
+            locked: boolean;
+            reason?: string | null;
+        };
+    };
+    usage?: {
+        plan: string;
+        remaining: Record<string, number>;
+        upgradeUrl?: string;
+    };
+};
 declare class ApiClient {
     private accessToken;
     private refreshToken;
@@ -63,6 +104,10 @@ declare class ApiClient {
         role: string;
         scopes: string[];
     }>>;
+    getUsage(): Promise<ApiResponse<UsageSnapshot>>;
+    startGuidedFlow(input: {
+        signal: Record<string, unknown>;
+    } | Record<string, unknown>): Promise<ApiResponse<GuidedFlowResponse>>;
     getStats(): Promise<ApiResponse<{
         goals: Record<string, number>;
         tasks: Record<string, number>;
@@ -217,6 +262,7 @@ declare class ApiClient {
             signal: string;
             score: number;
             indicators: Record<string, unknown>;
+            integrity?: CandleIntegrity;
             quote: {
                 symbol: string;
                 price: number;
@@ -226,6 +272,130 @@ declare class ApiClient {
             };
         }>;
         scannedAt: string;
+    }>>;
+    runScreener(params?: {
+        symbols?: string[];
+        maxSymbols?: number;
+        minConfidence?: number;
+        signalType?: 'all' | 'bullish' | 'bearish';
+        save?: boolean;
+        name?: string;
+    }): Promise<ApiResponse<{
+        signals: any[];
+        scannedAt: string;
+        reportId?: string;
+    }>>;
+    saveScreenerReport(params: {
+        name?: string;
+        signals: any[];
+        settings?: any;
+        scannedAt?: string;
+    }): Promise<ApiResponse<{
+        reportId: string;
+        scannedAt: string;
+    }>>;
+    getScreenerReports(): Promise<ApiResponse<{
+        reports: any[];
+    }>>;
+    getScreenerReport(reportId: string): Promise<ApiResponse<{
+        report: any;
+    }>>;
+    getDecisions(params?: {
+        status?: string;
+        symbol?: string;
+        limit?: number;
+        offset?: number;
+    }): Promise<ApiResponse<{
+        decisions: Array<{
+            id: string;
+            symbol: string;
+            direction: string;
+            intent: string;
+            status: string;
+            source: string;
+            journalEntryId: string | null;
+            constraints: Record<string, unknown>;
+            rationale: Record<string, unknown>;
+            createdAt: string;
+            updatedAt: string;
+            eventCount: number;
+            lastEventAt: string | null;
+        }>;
+    }>>;
+    createDecision(params: {
+        symbol: string;
+        direction: 'LONG' | 'SHORT' | 'BUY' | 'SELL';
+        intent: string;
+        constraints?: Record<string, unknown>;
+        rationale?: Record<string, unknown>;
+        journalEntryId?: string | null;
+        source?: string;
+    }): Promise<ApiResponse<{
+        decision: any;
+    }>>;
+    appendDecisionEvent(decisionId: string, eventType: string, payload?: Record<string, unknown>): Promise<ApiResponse<{
+        event: {
+            decisionId: string;
+            eventType: string;
+            seq: number;
+        };
+    }>>;
+    replayDecision(decisionId: string): Promise<ApiResponse<{
+        decision: any;
+        events: any[];
+    }>>;
+    getDecisionCards(params?: {
+        symbol?: string;
+        strategy?: string;
+        sourceType?: string;
+        latencyClass?: string;
+        regime?: string;
+        status?: string;
+        minConfidence?: number;
+        maxConfidence?: number;
+        limit?: number;
+        offset?: number;
+    }): Promise<ApiResponse<{
+        cards: any[];
+        analyticsDepth?: number;
+    }>>;
+    getDecisionCard(cardId: string): Promise<ApiResponse<{
+        card: any;
+        analyticsDepth?: number;
+    }>>;
+    replayDecisionCard(cardId: string): Promise<ApiResponse<{
+        cardId: string;
+        stored: any;
+        recomputed: any;
+        drift: any;
+    }>>;
+    runStrategySimulation(params: {
+        symbol: string;
+        strategyType: string;
+        strategyTag?: string;
+        startDate?: string;
+        endDate?: string;
+        initialCapital?: number;
+        params?: Record<string, number>;
+    }): Promise<ApiResponse<{
+        simulation: any;
+        performance: any;
+        window: any;
+        analyticsDepth?: number;
+        disclaimer?: string;
+    }>>;
+    getStrategyPerformance(params?: {
+        symbol?: string;
+        strategyTag?: string;
+        status?: string;
+        limit?: number;
+        offset?: number;
+    }): Promise<ApiResponse<{
+        strategies: any[];
+        analyticsDepth?: number;
+    }>>;
+    getStrategyPerformanceDetail(id: string): Promise<ApiResponse<{
+        strategy: any;
     }>>;
     getTheses(): Promise<ApiResponse<{
         theses: Array<{
@@ -240,9 +410,21 @@ declare class ApiClient {
             reasoning: string[];
             createdAt: string;
             expiresAt: string;
+            dataIntegrity?: CandleIntegrity;
+            decisionCardId?: string | null;
         }>;
     }>>;
-    createThesis(symbol: string): Promise<ApiResponse<{
+    createThesis(input: string | {
+        symbol: string;
+        entryPrice?: number;
+        targetPrice?: number;
+        stopLoss?: number;
+        direction?: string;
+        signal?: string;
+        confidence?: number;
+        reasoning?: string | string[];
+        decisionCardId?: string | null;
+    }): Promise<ApiResponse<{
         thesis: {
             id: string;
             symbol: string;
@@ -252,21 +434,32 @@ declare class ApiClient {
             stopLoss: number;
             confidence: number;
             reasoning: string[];
+            dataIntegrity?: CandleIntegrity;
+            decisionCardId?: string | null;
         };
     }>>;
     getPaperTrades(): Promise<ApiResponse<{
         trades: Array<{
             id: string;
             thesisId: string;
+            decisionCardId?: string | null;
             symbol: string;
             side: string;
             quantity: number;
             entryPrice: number;
+            entryPriceRaw?: number;
             currentPrice?: number;
             exitPrice?: number;
+            exitPriceRaw?: number;
             status: string;
             pnl?: number;
             pnlPercent?: number;
+            fees?: number;
+            entryFees?: number;
+            exitFees?: number;
+            entrySlippageBps?: number;
+            exitSlippageBps?: number;
+            dataIntegrity?: CandleIntegrity;
             openedAt: string;
             closedAt?: string;
         }>;
@@ -276,7 +469,12 @@ declare class ApiClient {
             closedTrades: number;
             winRate: number;
             totalPnl: number;
-            portfolioValue: number;
+            realizedPnl: number;
+            unrealizedPnl: number;
+            totalFees: number;
+            avgSlippageBps: number;
+            maxDrawdown: number;
+            portfolioValue: number | null;
         };
         portfolio: {
             cash: number;
@@ -288,6 +486,59 @@ declare class ApiClient {
     }>>;
     closePaperTrade(tradeId: string): Promise<ApiResponse<{
         trade: Record<string, unknown>;
+    }>>;
+    getAlpacaStatus(): Promise<ApiResponse<{
+        connected: boolean;
+        endpoint?: string;
+        environment?: 'paper' | 'live';
+        keyLast4?: string | null;
+        lastVerifiedAt?: string | null;
+    }>>;
+    connectAlpaca(params: {
+        apiKey: string;
+        apiSecret: string;
+        environment?: 'paper' | 'live';
+        endpoint?: string;
+    }): Promise<ApiResponse<{
+        connected: boolean;
+        endpoint: string;
+        environment: 'paper' | 'live';
+        keyLast4?: string;
+        accountNumber?: string;
+    }>>;
+    disconnectAlpaca(): Promise<ApiResponse<{
+        disconnected: boolean;
+    }>>;
+    getAlpacaAccount(): Promise<ApiResponse<{
+        account: any;
+    }>>;
+    getAlpacaPositions(): Promise<ApiResponse<{
+        positions: any[];
+    }>>;
+    getAlpacaOrders(status?: 'open' | 'closed' | 'all'): Promise<ApiResponse<{
+        orders: any[];
+    }>>;
+    placeAlpacaOrder(params: {
+        symbol: string;
+        qty: number;
+        side: 'buy' | 'sell';
+        type?: string;
+    }): Promise<ApiResponse<{
+        order: any;
+    }>>;
+    getAlpacaHistory(params?: {
+        period?: string;
+        timeframe?: string;
+    }): Promise<ApiResponse<{
+        period: string;
+        timeframe: string;
+        plan: string;
+        history: Array<{
+            timestamp: string;
+            equity: number;
+            profitLoss: number;
+            profitLossPct: number;
+        }>;
     }>>;
     getProducts(): Promise<ApiResponse<{
         products: Array<{

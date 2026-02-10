@@ -6,14 +6,86 @@
 
 | Action | Command |
 |--------|--------|
-| Start Full Stack | `docker compose up -d` |
-| Start MVP Only | `npm run nova:mvp:up` |
-| Stop Services | `docker compose down` |
-| Stop + Delete Data | `docker compose down -v` |
-| View Logs | `docker compose logs -f` |
+| Start Full Stack (deterministic) | `npm run dev:all` |
+| No-Docker Core Stack | `npm run dev:nodocker` |
+| Wait for Readiness | `npm run stack:ready` |
+| Verify | `npm run verify` |
+| Start MVP Only | `npm run nova:mvp` |
+| Stop Services | `npm run nova:down` |
+| Stop + Delete Data | `npm run nova:mvp:down` |
+| View Logs | `npm run nova:mvp:logs` |
 | Smoke Test | `npm run nova:smoke` |
 | Health Check | `curl http://localhost:3000/health` |
 | Metrics | `curl http://localhost:3000/metrics` |
+
+## Production Deployment (Railway)
+
+### Prerequisites
+```bash
+# Install Railway CLI
+npm install -g @railway/cli
+
+# Login to Railway
+railway login
+```
+
+### Deploy Commands
+| Action | Command |
+|--------|--------|
+| Deploy to Railway | `npm run deploy:railway` |
+| Run Migrations (Prod) | `npm run db:migrate:prod` |
+| Verify Production | `npm run verify:prod` |
+| Build Prod Docker Image | `npm run docker:build:prod` |
+| Validate Environment | `npm run validate:env` |
+
+**Human Touch Required:** The deploy script opens a browser for Railway OAuth login. Click "Approve" once. This is the ONLY manual step.
+
+### First-Time Setup
+```bash
+# 1. Initialize Railway project (in repo root)
+railway init
+
+# 2. Add PostgreSQL database
+# In Railway dashboard: New → Database → PostgreSQL
+
+# 3. Add Redis
+# In Railway dashboard: New → Database → Redis
+
+# 4. Set required environment variables in Railway dashboard:
+#    DATABASE_URL - auto-filled if linked to PostgreSQL
+#    REDIS_URL - auto-filled if linked to Redis
+#    JWT_SECRET - generate with: openssl rand -hex 32
+#    STRIPE_SECRET_KEY - from Stripe dashboard
+#    POLYGON_API_KEY - for market data
+
+# 5. Deploy
+npm run deploy:railway
+
+# 6. Verify production
+npm run verify:prod
+```
+
+### Production Verification
+```bash
+# Default URLs (api.novanexus-ai.com)
+npm run verify:prod
+
+# Custom API URL
+npm run verify:prod -- --url=https://your-app.railway.app
+
+# Or via environment variable
+PROD_API_URL=https://your-app.railway.app npm run verify:prod
+```
+
+### Onboarding Loop Validation (Production)
+After deployment, manually verify the full user flow:
+1. Sign up at https://novanexus-ai.vercel.app/signup
+2. Complete screener guided flow
+3. Generate thesis card
+4. Create decision card
+5. Execute paper trade
+6. Review trade in dashboard
+7. Verify plan gating (FREE user hits limits, LITE user bypasses)
 
 ## Required Environment Variables
 
@@ -48,6 +120,21 @@ POLYGON_API_KEY=your-polygon-api-key
 ```
 
 ## Startup Procedure
+
+### Deterministic Local Boot (recommended)
+```bash
+npm run dev:all
+npm run verify
+```
+
+`dev:all` bootstraps `.env.dev`, starts the MVP Docker stack, runs migrations, and waits for readiness. If readiness fails, `stack:ready` prints a status table with exact URLs, connection results, and likely causes.
+Before starting Docker Compose, it verifies Docker Engine is reachable. If not, it exits with:
+"Start Docker Desktop and wait until Engine is running."
+
+`dev:nodocker` starts a reduced core stack (gateway, nova-hub, tradebot, web) via local processes and sets `STACK_PROFILE=core`
+for verification. It requires local Postgres + Redis (and `psql`) and does not start optional services like auth, billing, or marketdata.
+
+### Manual Step-by-Step (advanced)
 
 ### 1. Prerequisites Check
 ```bash
@@ -143,6 +230,62 @@ curl http://localhost:3000/v1/events/chain/verify
 # Expected: {"valid":true,"eventCount":N}
 ```
 
+## Internal Verification (Phase 1)
+System-level verification (no user auth) for:
+- Market candles return non-null data with integrity tagging
+- Alpaca history returns data and enforces plan windows (informational)
+- Marketdata provider health snapshot (informational)
+
+### Enable (time-boxed)
+Set these environment variables on **nova-hub**:
+```
+INTERNAL_VERIFY_ENABLED=true
+INTERNAL_VERIFY_TOKEN=your-secure-token
+INTERNAL_VERIFY_USER_ID=optional-user-id-with-alpaca-connection
+INTERNAL_VERIFY_SYMBOL=SPY
+INTERNAL_VERIFY_DAYS=10
+INTERNAL_VERIFY_PLAN=FREE|LITE|PRO (optional override)
+INTERNAL_VERIFY_ALPACA_KEY=optional-service-key
+INTERNAL_VERIFY_ALPACA_SECRET=optional-service-secret
+INTERNAL_VERIFY_ALPACA_ENDPOINT=optional-endpoint
+```
+
+### Run
+```
+curl -H "x-internal-verify-token: $INTERNAL_VERIFY_TOKEN" \
+  "http://localhost:3030/internal/verify"
+```
+
+Optional overrides:
+```
+http://localhost:3030/internal/verify?symbol=SPY&days=10&alpacaPeriod=all&alpacaTimeframe=1D
+```
+
+### Output (PASS/FAIL)
+Example:
+```json
+{
+  "success": true,
+  "data": {
+    "status": "PASS",
+    "checks": [
+      { "name": "market_candles", "status": "PASS" },
+      { "name": "alpaca_history", "status": "PASS" },
+      { "name": "alpaca_plan_window", "status": "PASS" }
+    ]
+  }
+}
+```
+
+Overall status is `PASS` when `market_candles` passes; other checks are informational-only.
+Market candles verification requires integrity tags: `source_type`, `source_identifier`, `latency_class`, `confidence_score`, and `timestamp_range`. Synthetic fallback is allowed but must be tagged.
+
+### Disable (after green)
+Unset or set:
+```
+INTERNAL_VERIFY_ENABLED=false
+```
+
 ## Common Issues
 
 ### Database Connection Failed
@@ -217,6 +360,22 @@ curl -X POST http://localhost:3000/v1/ops/demo/reset \
 # Via UI
 # Navigate to Ops > Reset Demo Data
 ```
+
+## Admin Utilities
+
+### Create/Reset Test User (Production)
+Use the Railway CLI to run the admin script against the production database (pulls `DATABASE_URL` from the linked service):
+```bash
+npx railway run -- node scripts/create_test_user.js \
+  --email qa+prod@novanexus-ai.com \
+  --password-env TEST_USER_PASSWORD \
+  --org "QA/Prod Test Org" \
+  --plan LITE \
+  --reset
+```
+Notes:
+- `--reset` deletes the existing user (and any orgs where they are the sole member) before recreating.
+- Set `--plan` to `PRO` if you need unrestricted access for QA.
 
 ## Nova Hub Lite API Endpoints
 

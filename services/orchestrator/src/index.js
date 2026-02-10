@@ -41,6 +41,23 @@ function extractAuth(req) {
         return null;
     return (0, shared_1.verifyToken)(authHeader.substring(7));
 }
+function parseJsonOptional(value) {
+    if (value === null || value === undefined)
+        return undefined;
+    if (typeof value === 'string') {
+        try {
+            return JSON.parse(value);
+        }
+        catch {
+            return undefined;
+        }
+    }
+    return value;
+}
+function parseJsonValue(value, fallback) {
+    const parsed = parseJsonOptional(value);
+    return parsed === undefined ? fallback : parsed;
+}
 // Event emission helper
 async function emitEvent(orgId, actorType, actorId, type, payload) {
     try {
@@ -60,7 +77,7 @@ async function getKillSwitchState() {
     const result = await (0, shared_1.queryOne)("SELECT value_json FROM system_state WHERE key = 'kill_switch'");
     if (!result)
         return { enabled: false };
-    return JSON.parse(result.value_json);
+    return parseJsonValue(result.value_json, { enabled: false });
 }
 async function setKillSwitchState(state) {
     await (0, shared_1.query)(`INSERT INTO system_state (key, value_json, updated_at) 
@@ -118,7 +135,7 @@ app.post('/v1/goals', async (req, res) => {
             createdBy: result.created_by,
             title: result.title,
             intent: result.intent,
-            constraints: JSON.parse(result.constraints_json || '{}'),
+            constraints: parseJsonValue(result.constraints_json, {}),
             status: result.status,
             createdAt: result.created_at,
             updatedAt: result.updated_at,
@@ -162,7 +179,7 @@ app.get('/v1/goals/:id', async (req, res) => {
             createdBy: result.created_by,
             title: result.title,
             intent: result.intent,
-            constraints: JSON.parse(result.constraints_json || '{}'),
+            constraints: parseJsonValue(result.constraints_json, {}),
             status: result.status,
             createdAt: result.created_at,
             updatedAt: result.updated_at,
@@ -202,7 +219,7 @@ app.get('/v1/goals', async (req, res) => {
             createdBy: row.created_by,
             title: row.title,
             intent: row.intent,
-            constraints: JSON.parse(row.constraints_json || '{}'),
+            constraints: parseJsonValue(row.constraints_json, {}),
             status: row.status,
             createdAt: row.created_at,
             updatedAt: row.updated_at,
@@ -290,9 +307,25 @@ app.post('/v1/tasks', async (req, res) => {
                 error: { code: shared_1.ERROR_CODES.INVALID_INPUT, message: 'goalId, type, and assignedToBot are required' },
             });
         }
+        const normalizedAssigned = normalizeBotType(assignedToBot);
+        if (!normalizedAssigned) {
+            return res.status(shared_1.HTTP_STATUS.BAD_REQUEST).json({
+                success: false,
+                error: {
+                    code: shared_1.ERROR_CODES.INVALID_INPUT,
+                    message: `Invalid assignedToBot. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+                },
+            });
+        }
+        if (normalizedAssigned.wasNormalized) {
+            logger.warn('Normalized assignedToBot to canonical form', {
+                original: assignedToBot,
+                normalized: normalizedAssigned.normalized,
+            });
+        }
         const result = await (0, shared_1.queryOne)(`INSERT INTO tasks (org_id, goal_id, assigned_to_bot, type, status, input_json)
        VALUES ($1, $2, $3, $4, 'QUEUED', $5)
-       RETURNING *`, [auth.orgId, goalId, assignedToBot, type, JSON.stringify(input || {})]);
+       RETURNING *`, [auth.orgId, goalId, normalizedAssigned.normalized, type, JSON.stringify(input || {})]);
         if (!result)
             throw new Error('Failed to insert task');
         const task = {
@@ -302,8 +335,8 @@ app.post('/v1/tasks', async (req, res) => {
             assignedToBot: result.assigned_to_bot,
             type: result.type,
             status: result.status,
-            input: JSON.parse(result.input_json || '{}'),
-            output: result.output_json ? JSON.parse(result.output_json) : undefined,
+            input: parseJsonValue(result.input_json, {}),
+            output: parseJsonOptional(result.output_json),
             createdAt: result.created_at,
             updatedAt: result.updated_at,
         };
@@ -346,8 +379,18 @@ app.get('/v1/tasks', async (req, res) => {
             params.push(status);
         }
         if (bot) {
+            const normalizedBot = normalizeBotType(String(bot));
+            if (!normalizedBot) {
+                return res.status(shared_1.HTTP_STATUS.BAD_REQUEST).json({
+                    success: false,
+                    error: {
+                        code: shared_1.ERROR_CODES.INVALID_INPUT,
+                        message: `Invalid bot filter. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+                    },
+                });
+            }
             sql += ` AND assigned_to_bot = $${paramIndex++}`;
-            params.push(bot);
+            params.push(normalizedBot.normalized);
         }
         sql += ' ORDER BY created_at DESC';
         const result = await (0, shared_1.query)(sql, params);
@@ -358,8 +401,8 @@ app.get('/v1/tasks', async (req, res) => {
             assignedToBot: row.assigned_to_bot,
             type: row.type,
             status: row.status,
-            input: JSON.parse(row.input_json || '{}'),
-            output: row.output_json ? JSON.parse(row.output_json) : undefined,
+            input: parseJsonValue(row.input_json, {}),
+            output: parseJsonOptional(row.output_json),
             createdAt: row.created_at,
             updatedAt: row.updated_at,
         }));
@@ -462,7 +505,7 @@ app.get('/v1/approvals', async (req, res) => {
             status: row.status,
             requestedAt: row.requested_at,
             resolvedAt: row.resolved_at,
-            resolution: row.resolution_json ? JSON.parse(row.resolution_json) : undefined,
+            resolution: parseJsonOptional(row.resolution_json),
         }));
         res.json({ success: true, data: { approvals } });
     }
@@ -650,6 +693,39 @@ app.get('/v1/kill-switch/status', async (req, res) => {
         });
     }
 });
+// ============================================
+// Bot Registry Routes
+// ============================================
+const CANONICAL_BOT_TYPES = [
+    'tradebot',
+    'storebot',
+    'socialbot',
+    'researchbot',
+    'opsbot',
+    'forgebot',
+];
+function normalizeBotType(input) {
+    if (!input)
+        return null;
+    const raw = String(input).trim();
+    const lower = raw.toLowerCase();
+    let normalized = null;
+    if (lower === 'trade' || lower === 'tradebot')
+        normalized = 'tradebot';
+    if (lower === 'store' || lower === 'storebot')
+        normalized = 'storebot';
+    if (lower === 'social' || lower === 'socialbot')
+        normalized = 'socialbot';
+    if (lower === 'research' || lower === 'researchbot')
+        normalized = 'researchbot';
+    if (lower === 'ops' || lower === 'opsbot')
+        normalized = 'opsbot';
+    if (lower === 'forge' || lower === 'forgebot')
+        normalized = 'forgebot';
+    if (!normalized)
+        return null;
+    return { normalized, wasNormalized: raw !== normalized };
+}
 // POST /v1/bots/register - Register a bot instance
 app.post('/v1/bots/register', async (req, res) => {
     try {
@@ -660,12 +736,18 @@ app.post('/v1/bots/register', async (req, res) => {
                 error: { code: shared_1.ERROR_CODES.INVALID_INPUT, message: 'botType and instanceId are required' },
             });
         }
-        const validBotTypes = ['tradebot', 'storebot', 'socialbot', 'researchbot', 'opsbot', 'forgebot', 'TRADE', 'STORE', 'SOCIAL', 'ANALYTICS', 'CUSTOM'];
-        if (!validBotTypes.includes(botType)) {
+        const normalized = normalizeBotType(botType);
+        if (!normalized) {
             return res.status(shared_1.HTTP_STATUS.BAD_REQUEST).json({
                 success: false,
-                error: { code: shared_1.ERROR_CODES.INVALID_INPUT, message: `Invalid botType. Must be one of: ${validBotTypes.join(', ')}` },
+                error: {
+                    code: shared_1.ERROR_CODES.INVALID_INPUT,
+                    message: `Invalid botType. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+                },
             });
+        }
+        if (normalized.wasNormalized) {
+            logger.warn('Normalized botType to canonical form', { original: botType, normalized: normalized.normalized });
         }
         const result = await (0, shared_1.queryOne)(`INSERT INTO bots (bot_type, instance_id, status, capabilities_json, permissions_json, metadata_json, last_heartbeat)
        VALUES ($1, $2, 'ONLINE', $3, $4, $5, NOW())
@@ -677,7 +759,7 @@ app.post('/v1/bots/register', async (req, res) => {
          last_heartbeat = NOW(),
          updated_at = NOW()
        RETURNING *`, [
-            botType,
+            normalized.normalized,
             instanceId,
             JSON.stringify(capabilities || []),
             JSON.stringify(permissions || []),
@@ -688,12 +770,12 @@ app.post('/v1/bots/register', async (req, res) => {
             botType: result.bot_type,
             instanceId: result.instance_id,
             status: result.status,
-            capabilities: JSON.parse(result.capabilities_json || '[]'),
-            permissions: JSON.parse(result.permissions_json || '[]'),
+            capabilities: parseJsonValue(result.capabilities_json, []),
+            permissions: parseJsonValue(result.permissions_json, []),
             lastHeartbeat: result.last_heartbeat,
             registeredAt: result.registered_at,
         };
-        logger.info('Bot registered', { botType, instanceId });
+        logger.info('Bot registered', { botType: normalized.normalized, instanceId });
         res.status(shared_1.HTTP_STATUS.CREATED).json({ success: true, data: { bot } });
     }
     catch (error) {
@@ -712,8 +794,18 @@ app.get('/v1/bots', async (req, res) => {
         const params = [];
         let paramIndex = 1;
         if (type) {
+            const normalizedType = normalizeBotType(String(type));
+            if (!normalizedType) {
+                return res.status(shared_1.HTTP_STATUS.BAD_REQUEST).json({
+                    success: false,
+                    error: {
+                        code: shared_1.ERROR_CODES.INVALID_INPUT,
+                        message: `Invalid bot type filter. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+                    },
+                });
+            }
             sql += ` AND bot_type = $${paramIndex++}`;
-            params.push(type);
+            params.push(normalizedType.normalized);
         }
         if (status) {
             sql += ` AND status = $${paramIndex++}`;
@@ -726,8 +818,8 @@ app.get('/v1/bots', async (req, res) => {
             botType: row.bot_type,
             instanceId: row.instance_id,
             status: row.status,
-            capabilities: JSON.parse(row.capabilities_json || '[]'),
-            permissions: JSON.parse(row.permissions_json || '[]'),
+            capabilities: parseJsonValue(row.capabilities_json, []),
+            permissions: parseJsonValue(row.permissions_json, []),
             lastHeartbeat: row.last_heartbeat,
             registeredAt: row.registered_at,
         }));
@@ -809,7 +901,7 @@ app.get('/v1/bots/:id/tasks', async (req, res) => {
             type: row.type,
             priority: row.priority || 0,
             status: row.status,
-            inputJson: JSON.parse(row.input_json || '{}'),
+            inputJson: parseJsonValue(row.input_json, {}),
             createdAt: row.created_at,
             startedAt: row.started_at,
         }));
@@ -988,8 +1080,8 @@ app.get('/v1/tasks/:id', async (req, res) => {
             assignedToBot: result.assigned_to_bot,
             type: result.type,
             status: result.status,
-            input: JSON.parse(result.input_json || '{}'),
-            output: result.output_json ? JSON.parse(result.output_json) : undefined,
+            input: parseJsonValue(result.input_json, {}),
+            output: parseJsonOptional(result.output_json),
             createdAt: result.created_at,
             updatedAt: result.updated_at,
         };

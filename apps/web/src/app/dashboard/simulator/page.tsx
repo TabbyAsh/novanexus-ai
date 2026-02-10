@@ -4,6 +4,8 @@ import { useState } from 'react';
 import { motion } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import GlassCard, { GradientText } from '@/components/ui/GlassCard';
+import TrustPanel from '@/components/trading/TrustPanel';
+import { api } from '@/lib/api';
 
 interface BacktestResult {
   totalTrades: number;
@@ -26,7 +28,38 @@ interface MonteCarloResult {
   probabilityProfit: number;
   expectedValue: number;
 }
+function resolveDateInput(date: Date) {
+  return date.toISOString().split('T')[0];
+}
 
+
+// Phase 6.1: Available conditions for strategy builder
+const ENTRY_CONDITIONS = [
+  'RSI < 30 (Oversold)',
+  'RSI > 70 (Overbought)',
+  'Price > SMA 20',
+  'Price < SMA 20',
+  'Price > SMA 50',
+  'Price < SMA 50',
+  'MACD Crossover (Bullish)',
+  'MACD Crossover (Bearish)',
+  'Volume > 1.5x Average',
+  'Golden Cross (SMA 50 > 200)',
+  'Death Cross (SMA 50 < 200)',
+];
+
+const EXIT_CONDITIONS = [
+  'RSI > 70 (Overbought)',
+  'RSI < 30 (Oversold)',
+  'Price < SMA 20',
+  'Price > SMA 20',
+  'MACD Crossover (Opposite)',
+  'Trailing Stop Hit',
+  'Time-based Exit (5 days)',
+  'Time-based Exit (10 days)',
+  'Profit Target Reached',
+  'Stop Loss Triggered',
+];
 
 function StrategyBuilder() {
   const [strategy, setStrategy] = useState({
@@ -36,6 +69,31 @@ function StrategyBuilder() {
     takeProfit: '',
     positionSize: '',
   });
+  const [showEntryPicker, setShowEntryPicker] = useState(false);
+  const [showExitPicker, setShowExitPicker] = useState(false);
+
+  // Phase 6.1: Handlers for adding/removing conditions
+  const addEntryCondition = (condition: string) => {
+    if (!strategy.entryConditions.includes(condition)) {
+      setStrategy({ ...strategy, entryConditions: [...strategy.entryConditions, condition] });
+    }
+    setShowEntryPicker(false);
+  };
+
+  const removeEntryCondition = (condition: string) => {
+    setStrategy({ ...strategy, entryConditions: strategy.entryConditions.filter(c => c !== condition) });
+  };
+
+  const addExitCondition = (condition: string) => {
+    if (!strategy.exitConditions.includes(condition)) {
+      setStrategy({ ...strategy, exitConditions: [...strategy.exitConditions, condition] });
+    }
+    setShowExitPicker(false);
+  };
+
+  const removeExitCondition = (condition: string) => {
+    setStrategy({ ...strategy, exitConditions: strategy.exitConditions.filter(c => c !== condition) });
+  };
 
   return (
     <GlassCard hover={false} glowColor="cyan" className="h-full">
@@ -44,36 +102,96 @@ function StrategyBuilder() {
       </h3>
       
       <div className="space-y-4">
-        <div>
+        <div className="relative">
           <label className="text-gray-400 text-sm mb-2 block">Entry Conditions</label>
           {strategy.entryConditions.length === 0 ? (
             <p className="text-gray-500 text-sm mb-2">No entry conditions set.</p>
           ) : (
             <div className="flex flex-wrap gap-2 mb-2">
               {strategy.entryConditions.map((condition, i) => (
-                <span key={i} className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm border border-green-500/30">
+                <span 
+                  key={i} 
+                  className="px-3 py-1 rounded-full bg-green-500/20 text-green-400 text-sm border border-green-500/30 flex items-center gap-2"
+                >
                   {condition}
+                  <button 
+                    onClick={() => removeEntryCondition(condition)}
+                    className="text-green-300 hover:text-red-400 transition"
+                  >
+                    ×
+                  </button>
                 </span>
               ))}
             </div>
           )}
-          <button className="text-cyan-400 text-sm hover:text-cyan-300">+ Add condition</button>
+          <button 
+            onClick={() => setShowEntryPicker(!showEntryPicker)}
+            className="text-cyan-400 text-sm hover:text-cyan-300 transition"
+          >
+            + Add condition
+          </button>
+          {showEntryPicker && (
+            <div className="absolute z-10 mt-2 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+              {ENTRY_CONDITIONS.filter(c => !strategy.entryConditions.includes(c)).map(condition => (
+                <button
+                  key={condition}
+                  onClick={() => addEntryCondition(condition)}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-green-500/20 hover:text-green-400 transition"
+                >
+                  {condition}
+                </button>
+              ))}
+              {ENTRY_CONDITIONS.filter(c => !strategy.entryConditions.includes(c)).length === 0 && (
+                <p className="px-4 py-2 text-sm text-gray-500">All conditions added</p>
+              )}
+            </div>
+          )}
         </div>
         
-        <div>
+        <div className="relative">
           <label className="text-gray-400 text-sm mb-2 block">Exit Conditions</label>
           {strategy.exitConditions.length === 0 ? (
             <p className="text-gray-500 text-sm mb-2">No exit conditions set.</p>
           ) : (
             <div className="flex flex-wrap gap-2 mb-2">
               {strategy.exitConditions.map((condition, i) => (
-                <span key={i} className="px-3 py-1 rounded-full bg-red-500/20 text-red-400 text-sm border border-red-500/30">
+                <span 
+                  key={i} 
+                  className="px-3 py-1 rounded-full bg-red-500/20 text-red-400 text-sm border border-red-500/30 flex items-center gap-2"
+                >
                   {condition}
+                  <button 
+                    onClick={() => removeExitCondition(condition)}
+                    className="text-red-300 hover:text-white transition"
+                  >
+                    ×
+                  </button>
                 </span>
               ))}
             </div>
           )}
-          <button className="text-cyan-400 text-sm hover:text-cyan-300">+ Add condition</button>
+          <button 
+            onClick={() => setShowExitPicker(!showExitPicker)}
+            className="text-cyan-400 text-sm hover:text-cyan-300 transition"
+          >
+            + Add condition
+          </button>
+          {showExitPicker && (
+            <div className="absolute z-10 mt-2 w-72 bg-gray-900 border border-gray-700 rounded-xl shadow-lg max-h-48 overflow-y-auto">
+              {EXIT_CONDITIONS.filter(c => !strategy.exitConditions.includes(c)).map(condition => (
+                <button
+                  key={condition}
+                  onClick={() => addExitCondition(condition)}
+                  className="w-full text-left px-4 py-2 text-sm text-gray-300 hover:bg-red-500/20 hover:text-red-400 transition"
+                >
+                  {condition}
+                </button>
+              ))}
+              {EXIT_CONDITIONS.filter(c => !strategy.exitConditions.includes(c)).length === 0 && (
+                <p className="px-4 py-2 text-sm text-gray-500">All conditions added</p>
+              )}
+            </div>
+          )}
         </div>
         
         <div className="grid grid-cols-3 gap-4">
@@ -108,6 +226,18 @@ function StrategyBuilder() {
             />
           </div>
         </div>
+
+        {/* Phase 6.1: Show strategy summary when conditions are set */}
+        {(strategy.entryConditions.length > 0 || strategy.exitConditions.length > 0) && (
+          <div className="mt-4 p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+            <p className="text-cyan-400 text-xs font-medium mb-1">Strategy Ready</p>
+            <p className="text-gray-400 text-xs">
+              {strategy.entryConditions.length} entry condition(s), {strategy.exitConditions.length} exit condition(s)
+              {strategy.stopLoss && `, ${strategy.stopLoss}% stop loss`}
+              {strategy.takeProfit && `, ${strategy.takeProfit}% take profit`}
+            </p>
+          </div>
+        )}
       </div>
     </GlassCard>
   );
@@ -257,16 +387,81 @@ export default function SimulatorPage() {
   const [error, setError] = useState<string | null>(null);
   const [backtest, setBacktest] = useState<BacktestResult | null>(null);
   const [monteCarlo, setMonteCarlo] = useState<MonteCarloResult | null>(null);
+  const [fitness, setFitness] = useState<number | null>(null);
+  const [strategyStatus, setStrategyStatus] = useState<string | null>(null);
+  const [slippage, setSlippage] = useState<Array<{ slippageBps: number; totalReturnPct: number }> | null>(null);
+  const [analyticsDepth, setAnalyticsDepth] = useState<number | null>(null);
+  const [analyticsLocked, setAnalyticsLocked] = useState(false);
+  const [strategySummary, setStrategySummary] = useState<{
+    status?: string | null;
+    fitnessScore?: number | null;
+    expectancy?: number | null;
+    analyticsLocked?: boolean;
+    drift?: any;
+    evaluatedAt?: string | null;
+  } | null>(null);
+
+  const now = new Date();
+  const defaultStart = new Date(now.getTime() - 180 * 24 * 60 * 60 * 1000);
+  const [symbol, setSymbol] = useState('SPY');
+  const [strategyType, setStrategyType] = useState('sma_crossover');
+  const [startDate, setStartDate] = useState(resolveDateInput(defaultStart));
+  const [endDate, setEndDate] = useState(resolveDateInput(now));
 
   const runSimulation = async () => {
     setRunning(true);
     setError(null);
 
     try {
-      // TODO: Wire to a seeded, reproducible simulation backend.
-      setBacktest(null);
-      setMonteCarlo(null);
-      setError('Simulation unavailable — backend not connected. No placeholder results are shown.');
+      const result = await api.runStrategySimulation({
+        symbol,
+        strategyType,
+        startDate,
+        endDate,
+      });
+
+      if (!result.success || !result.data?.simulation) {
+        setBacktest(null);
+        setMonteCarlo(null);
+        setFitness(null);
+        setStrategyStatus(null);
+        setSlippage(null);
+        setAnalyticsDepth(null);
+        setAnalyticsLocked(false);
+        setStrategySummary(null);
+        setError(result.error?.message || 'Simulation failed.');
+        return;
+      }
+
+      const simulation = result.data.simulation as any;
+      const analytics = simulation.analytics || {};
+      const locked = !!analytics.locked;
+      setAnalyticsDepth(result.data.analyticsDepth ?? analytics.depth ?? null);
+      setAnalyticsLocked(locked);
+      const summary = simulation.backtest || {};
+      setBacktest({
+        totalTrades: summary.totalTrades ?? 0,
+        winRate: summary.winRate ?? 0,
+        avgWin: summary.avgWin ?? 0,
+        avgLoss: summary.avgLoss ?? 0,
+        profitFactor: summary.profitFactor ?? 0,
+        maxDrawdown: summary.maxDrawdownPct ?? 0,
+        sharpeRatio: summary.sharpeRatio ?? 0,
+        netProfit: summary.totalReturn ?? 0,
+        netProfitPercent: summary.totalReturnPct ?? 0,
+      });
+      setMonteCarlo(locked ? null : (simulation.monteCarlo || null));
+      setFitness(simulation.fitnessScore ?? null);
+      setStrategyStatus(simulation.status ?? null);
+      setSlippage(locked ? null : (simulation.slippage || null));
+      setStrategySummary({
+        status: simulation.status ?? null,
+        fitnessScore: simulation.fitnessScore ?? null,
+        expectancy: simulation.expectancy ?? simulation.monteCarlo?.expectedValue ?? null,
+        analyticsLocked: locked,
+        drift: simulation.drift ?? null,
+        evaluatedAt: simulation.evaluatedAt ?? null,
+      });
     } finally {
       setRunning(false);
     }
@@ -332,6 +527,97 @@ export default function SimulatorPage() {
           </div>
         )}
 
+        <div className="grid lg:grid-cols-4 gap-4">
+          <div>
+            <label className="text-gray-400 text-sm mb-2 block">Symbol</label>
+            <input
+              value={symbol}
+              onChange={(e) => setSymbol(e.target.value.toUpperCase())}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
+            />
+          </div>
+          <div>
+            <label className="text-gray-400 text-sm mb-2 block">Strategy</label>
+            <select
+              value={strategyType}
+              onChange={(e) => setStrategyType(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
+            >
+              <option value="sma_crossover">SMA Crossover</option>
+              <option value="mean_reversion">Mean Reversion</option>
+              <option value="momentum">Momentum</option>
+            </select>
+          </div>
+          <div>
+            <label className="text-gray-400 text-sm mb-2 block">Start Date</label>
+            <input
+              type="date"
+              value={startDate}
+              onChange={(e) => setStartDate(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
+            />
+          </div>
+          <div>
+            <label className="text-gray-400 text-sm mb-2 block">End Date</label>
+            <input
+              type="date"
+              value={endDate}
+              onChange={(e) => setEndDate(e.target.value)}
+              className="w-full bg-white/5 border border-white/10 rounded-xl px-4 py-2 text-white focus:outline-none focus:border-cyan-500/50"
+            />
+          </div>
+        </div>
+
+        {(fitness !== null || strategyStatus) && (
+          <div className="grid md:grid-cols-3 gap-4">
+            <GlassCard hover={false} glowColor="cyan">
+              <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                <span className="text-cyan-400">🧠</span> Strategy Fitness
+              </h3>
+              <div className="text-3xl font-bold text-white">{fitness ?? '—'}</div>
+              <p className="text-gray-400 text-sm mt-2">Fitness score (0-100)</p>
+            </GlassCard>
+            <GlassCard hover={false} glowColor="purple">
+              <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                <span className="text-purple-400">🛡️</span> Strategy Status
+              </h3>
+              <div className={`text-2xl font-semibold ${strategyStatus === 'QUARANTINED' ? 'text-red-400' : 'text-emerald-400'}`}>
+                {strategyStatus ?? '—'}
+              </div>
+              <p className="text-gray-400 text-sm mt-2">Auto quarantine if drift thresholds fail.</p>
+            </GlassCard>
+            <GlassCard hover={false} glowColor="pink">
+              <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                <span className="text-pink-400">⚖️</span> Slippage Sensitivity
+              </h3>
+              <div className="text-sm text-gray-300 space-y-1">
+                {analyticsLocked ? (
+                  <span className="text-xs text-yellow-300">Locked on your plan. Upgrade for full analytics.</span>
+                ) : slippage?.length ? (
+                  slippage.map((point) => (
+                    <div key={point.slippageBps} className="flex items-center justify-between">
+                      <span>{point.slippageBps} bps</span>
+                      <span>{point.totalReturnPct}%</span>
+                    </div>
+                  ))
+                ) : (
+                  '—'
+                )}
+              </div>
+            </GlassCard>
+          </div>
+        )}
+
+        {(fitness !== null || strategyStatus || analyticsLocked) && (
+          <TrustPanel
+            title="Simulation Trust Panel"
+            strategy={strategySummary}
+            expectedValue={strategySummary?.expectancy ?? null}
+            analyticsDepth={analyticsDepth}
+            analyticsLocked={analyticsLocked}
+          />
+        )}
+
         {/* Strategy Builder */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -356,7 +642,7 @@ export default function SimulatorPage() {
                   <span className="text-purple-400">📊</span> Backtest Results
                 </h3>
                 <p className="text-gray-400 text-sm">
-                  Unavailable — no seeded backtest results have been produced yet.
+                  Run a simulation to see backtest results.
                 </p>
               </GlassCard>
             )}
@@ -369,13 +655,22 @@ export default function SimulatorPage() {
           >
             {monteCarlo ? (
               <MonteCarloResults result={monteCarlo} />
+            ) : analyticsLocked ? (
+              <GlassCard hover={false} glowColor="pink">
+                <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                  <span className="text-pink-400">🎲</span> Monte Carlo Simulation
+                </h3>
+                <p className="text-gray-400 text-sm">
+                  Monte Carlo analytics are locked on your plan. Upgrade to unlock full distributions.
+                </p>
+              </GlassCard>
             ) : (
               <GlassCard hover={false} glowColor="pink">
                 <h3 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
                   <span className="text-pink-400">🎲</span> Monte Carlo Simulation
                 </h3>
                 <p className="text-gray-400 text-sm">
-                  Unavailable — simulation backend not connected. Runs must be seeded and reproducible.
+                  Run a simulation to see Monte Carlo results.
                 </p>
               </GlassCard>
             )}

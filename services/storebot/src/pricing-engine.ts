@@ -479,7 +479,6 @@ export class PricingEngine {
       return false;
     }
   }
-  }
 }
 
 // Export singleton instance

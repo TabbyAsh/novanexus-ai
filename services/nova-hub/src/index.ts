@@ -2659,13 +2659,16 @@ app.post('/v1/guided/flow', authMiddleware, async (req: AuthenticatedRequest, re
   
   // If thesis validation fails, return explicit errors with actionable reasons
   if (!thesisResult.ok) {
+    // Explicit type assertion for discriminated union narrowing
+    const failedResult = thesisResult as { ok: false; errors: ThesisValidationError[] };
+    const validationErrors = failedResult.errors;
     return res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({
       success: false,
       error: {
         code: 'THESIS_VALIDATION_FAILED',
         message: 'Required inputs missing for thesis generation',
-        validationErrors: thesisResult.errors,
-        nextAction: 'Provide missing fields: ' + thesisResult.errors.map(e => e.field).join(', '),
+        validationErrors,
+        nextAction: 'Provide missing fields: ' + validationErrors.map(e => e.field).join(', '),
       },
       trace: {
         inputReceived: {
@@ -2676,7 +2679,7 @@ app.post('/v1/guided/flow', authMiddleware, async (req: AuthenticatedRequest, re
           confidence: input.confidence,
           direction: input.direction,
         },
-        errors: thesisResult.errors,
+        errors: validationErrors,
       },
     });
   }
@@ -2873,6 +2876,8 @@ type ScreenerSignal = {
   type: 'bullish' | 'bearish';
   pattern: string;
   confidence: number;
+  confidenceTag: 'HIGH' | 'MEDIUM' | 'LOW';
+  dataQualityFlag: 'COMPLETE' | 'PARTIAL' | 'MINIMAL';
   entry: number;
   target: number;
   stopLoss: number;
@@ -2881,6 +2886,7 @@ type ScreenerSignal = {
   timeframe: string;
   qualification: ScreenerQualification;
   qualificationReasons: string[];
+  fallbackReason?: string;
   indicators?: {
     rsi: number | null;
     sma20: number | null;
@@ -3016,6 +3022,14 @@ function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators,
     pattern = 'Trend Weakness';
   }
 
+  // Phase 6.1: Confidence tag classification (HIGH >= 75, MEDIUM >= 55, LOW < 55)
+  const confidenceTag: 'HIGH' | 'MEDIUM' | 'LOW' = confidence >= 75 ? 'HIGH' : confidence >= 55 ? 'MEDIUM' : 'LOW';
+  
+  // Phase 6.1: Data quality flag based on indicator completeness
+  const indicatorCount = [rsi, sma20, sma50, macdHist].filter(v => v !== null).length;
+  const dataQualityFlag: 'COMPLETE' | 'PARTIAL' | 'MINIMAL' = 
+    indicatorCount >= 4 ? 'COMPLETE' : indicatorCount >= 2 ? 'PARTIAL' : 'MINIMAL';
+
   const reasoning = `${reasons.join('; ')}. Score ${confidence}/100.`;
 
   return {
@@ -3024,6 +3038,8 @@ function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators,
     type: bullish ? 'bullish' : 'bearish',
     pattern: pattern || 'Neutral',
     confidence,
+    confidenceTag,
+    dataQualityFlag,
     entry: Number(entry.toFixed(2)),
     target: Number(target.toFixed(2)),
     stopLoss: Number(stopLoss.toFixed(2)),
@@ -3090,6 +3106,19 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   const qualified = allSignals.filter(s => s.qualification === 'QUALIFIED');
   const nearQualified = allSignals.filter(s => s.qualification === 'NEAR_QUALIFIED');
   const notQualified = allSignals.filter(s => s.qualification === 'NOT_QUALIFIED');
+  
+  // Phase 6.1: NEVER RETURN ZERO - always include at least top N results regardless of qualification
+  // This ensures UI always has something to display
+  const guaranteedMinResults = 5;
+  let finalSignals = allSignals;
+  if (qualified.length === 0 && allSignals.length > 0) {
+    // Mark top results as LOW_CONFIDENCE fallback when no qualified signals exist
+    finalSignals = allSignals.slice(0, Math.min(guaranteedMinResults, allSignals.length)).map(s => ({
+      ...s,
+      confidenceTag: 'LOW' as const,
+      fallbackReason: 'No high-confidence signals found; showing top candidates for review',
+    }));
+  }
 
   const scannedAt = new Date().toISOString();
   let reportId: string | null = null;
@@ -3118,15 +3147,19 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   });
 
   // TRACE/INTEGRITY envelope with debug metadata
+  // Phase 6.1: Always return finalSignals (guaranteed non-empty when data available)
   res.json({
     success: true,
     data: {
-      signals: allSignals,
+      signals: finalSignals.length > 0 ? finalSignals : allSignals,
       qualified,
       nearQualified,
       notQualified,
       scannedAt,
       reportId,
+      // Phase 6.1: Include metadata about fallback behavior
+      fallbackActive: qualified.length === 0 && allSignals.length > 0,
+      totalCandidates: allSignals.length,
     },
     trace: {
       universeSize: list.length,

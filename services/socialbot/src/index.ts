@@ -116,7 +116,7 @@ function getEngagementMetrics(): EngagementMetrics {
 // Bot Setup
 // ============================================================================
 
-const botConfig = createBotConfig('SOCIAL', [
+const botConfig = createBotConfig('socialbot', [
   { name: 'sentiment', version: '1.0.0', description: 'Sentiment analysis' },
   { name: 'engagement', version: '1.0.0', description: 'Engagement tracking' },
   { name: 'monitoring', version: '1.0.0', description: 'Social monitoring' },

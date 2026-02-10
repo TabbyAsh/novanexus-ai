@@ -7,10 +7,10 @@ import {
   TaskContext,
   TaskResult,
 } from '@nova/bot-sdk';
-import { generateId, nowTimestamp } from '@nova/shared';
+import { generateId, nowTimestamp, HTTP_STATUS } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { RegimeType } from '@nova/nexus-core';
-import { NexusTrader } from './nexus-trader';
+import { NexusTrader, type NexusDecisionCard } from './nexus-trader';
 
 const PORT = parseInt(process.env.PORT || '3010', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
@@ -216,6 +216,8 @@ class AlpacaClient {
 // ============================================================================
 
 const MARKETDATA_URL = process.env.MARKETDATA_URL || 'http://localhost:3020';
+const NOVA_HUB_URL = process.env.NOVA_HUB_URL || 'http://localhost:3030';
+const NOVA_HUB_INTERNAL_TOKEN = process.env.INTERNAL_DECISION_CARDS_TOKEN || process.env.NOVA_HUB_INTERNAL_TOKEN || '';
 
 interface MarketQuote {
   symbol: string;
@@ -225,6 +227,32 @@ interface MarketQuote {
   volume: number | null;
   timestamp: string;
   source?: string;
+}
+type CandleIntegrity = {
+  source_type: string;
+  source_identifier: string;
+  latency_class: string;
+  confidence_score: number;
+  timestamp_range: {
+    start: string;
+    end: string;
+    expected: number;
+    actual: number;
+    missing: number;
+    gapFill?: boolean;
+    gapFillCount?: number;
+  };
+  note?: string;
+};
+
+interface MarketCandle {
+  timestamp: string;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+  integrity?: CandleIntegrity;
 }
 
 interface Indicators {
@@ -240,6 +268,7 @@ interface Indicators {
   asOf?: string | null;
   computedAt?: string;
   provider?: string;
+  integrity?: CandleIntegrity;
 }
 
 interface ScannerResult {
@@ -253,6 +282,7 @@ interface ScannerResult {
     volumeSpike?: boolean;
   };
   quote: MarketQuote;
+  integrity?: CandleIntegrity;
 }
 
 interface ThesisCard {
@@ -267,22 +297,301 @@ interface ThesisCard {
   reasoning: string[];
   createdAt: string;
   expiresAt: string;
+  dataIntegrity?: CandleIntegrity;
+  decisionCardId?: string | null;
 }
 
 interface PaperTrade {
   id: string;
   thesisId: string;
+  decisionCardId?: string | null;
   symbol: string;
   side: 'BUY' | 'SELL';
   quantity: number;
   entryPrice: number;
+  entryPriceRaw?: number;
   currentPrice?: number;
   exitPrice?: number;
+  exitPriceRaw?: number;
   status: 'OPEN' | 'CLOSED' | 'STOPPED';
   pnl?: number;
   pnlPercent?: number;
+  fees?: number;
+  entryFees?: number;
+  exitFees?: number;
+  entrySlippageBps?: number;
+  exitSlippageBps?: number;
+  dataIntegrity?: CandleIntegrity;
   openedAt: string;
   closedAt?: string;
+}
+
+type ExecutionMode = 'live' | 'paper' | 'blocked';
+type ExecutionGateResult = {
+  mode: ExecutionMode;
+  reasons: string[];
+  signalConfidence: number;
+  dataConfidence?: number;
+  latencyClass?: string;
+  sourceType?: string;
+};
+
+type DecisionCardScore = {
+  model: string;
+  score: number;
+  signalConfidence: number;
+  dataConfidence: number | null;
+  expectedValue: number;
+  riskRewardRatio: number;
+  riskEnvelope: Record<string, unknown> | null;
+  gate?: ExecutionGateResult;
+  regime?: string | null;
+  strategy?: Record<string, unknown>;
+  computedAt: string;
+  expiresAt?: string | null;
+};
+
+const LIVE_TRADE_MIN_CONFIDENCE = Number(process.env.LIVE_TRADE_MIN_CONFIDENCE || 0.7);
+const PAPER_TRADE_MIN_CONFIDENCE = Number(process.env.PAPER_TRADE_MIN_CONFIDENCE || 0.3);
+const LIVE_TRADE_MIN_DATA_CONFIDENCE = Number(process.env.LIVE_TRADE_MIN_DATA_CONFIDENCE || 0.7);
+const LIVE_TRADE_ALLOWED_SOURCE_TYPES = (process.env.LIVE_TRADE_ALLOWED_SOURCE_TYPES || 'primary')
+  .split(',')
+  .map((s) => s.trim())
+  .filter(Boolean);
+const LIVE_TRADE_MAX_LATENCY_CLASS = (process.env.LIVE_TRADE_MAX_LATENCY_CLASS || 'medium').toLowerCase();
+
+const LATENCY_RANK: Record<string, number> = { low: 0, medium: 1, high: 2, stale: 3 };
+
+function normalizeSignalConfidence(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return value > 1 ? value / 100 : value;
+}
+
+function hasIntegrityFields(integrity?: CandleIntegrity | null): integrity is CandleIntegrity {
+  return Boolean(
+    integrity &&
+      typeof integrity.source_type === 'string' &&
+      typeof integrity.source_identifier === 'string' &&
+      typeof integrity.latency_class === 'string' &&
+      Number.isFinite(integrity.confidence_score) &&
+      integrity.timestamp_range &&
+      typeof integrity.timestamp_range.start === 'string' &&
+      typeof integrity.timestamp_range.end === 'string'
+  );
+}
+
+function isIntegrityFailure(error: unknown): error is Error & { details?: unknown; code?: string } {
+  if (!error || typeof error !== 'object') return false;
+  const err = error as { message?: string; code?: string };
+  return err.code === 'CANDLE_INTEGRITY_MISSING' || err.message === 'CANDLE_INTEGRITY_MISSING';
+}
+
+function respondIntegrityFailure(res: Response, error: unknown): Response {
+  const details = (error as { details?: unknown })?.details;
+  return res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({
+    success: false,
+    error: {
+      code: 'INTEGRITY_MISSING',
+      message: 'Market data integrity missing',
+      details,
+    },
+  });
+}
+
+function evaluateExecutionGate(params: { signalConfidence: number; integrity?: CandleIntegrity | null }): ExecutionGateResult {
+  const signalConfidence = normalizeSignalConfidence(params.signalConfidence);
+  const reasons: string[] = [];
+
+  if (!Number.isFinite(signalConfidence) || signalConfidence <= 0) {
+    reasons.push('signal_confidence_missing');
+  }
+
+  const integrity = params.integrity ?? null;
+  const hasIntegrity = hasIntegrityFields(integrity);
+
+  if (!hasIntegrity) {
+    reasons.push('integrity_missing');
+  } else {
+    const sourceType = integrity.source_type;
+    const latencyClass = integrity.latency_class.toLowerCase();
+    const latencyRank = LATENCY_RANK[latencyClass] ?? LATENCY_RANK.high;
+
+    if (!LIVE_TRADE_ALLOWED_SOURCE_TYPES.includes(sourceType)) {
+      reasons.push(`source_type_${sourceType}`);
+    }
+
+    if (latencyRank > (LATENCY_RANK[LIVE_TRADE_MAX_LATENCY_CLASS] ?? LATENCY_RANK.medium)) {
+      reasons.push(`latency_${integrity.latency_class}`);
+    }
+
+    if (integrity.confidence_score < LIVE_TRADE_MIN_DATA_CONFIDENCE) {
+      reasons.push('data_confidence_low');
+    }
+  }
+
+  if (signalConfidence < LIVE_TRADE_MIN_CONFIDENCE) {
+    reasons.push('signal_confidence_low');
+  }
+
+  let mode: ExecutionMode = reasons.length === 0 ? 'live' : 'paper';
+  if (signalConfidence < PAPER_TRADE_MIN_CONFIDENCE) {
+    mode = 'blocked';
+    reasons.push('paper_confidence_low');
+  }
+
+  return {
+    mode,
+    reasons,
+    signalConfidence,
+    dataConfidence: integrity?.confidence_score,
+    latencyClass: integrity?.latency_class,
+    sourceType: integrity?.source_type,
+  };
+}
+
+function resolveStrategyTag(indicators?: Record<string, unknown>, override?: string): string | null {
+  if (override && typeof override === 'string') return override;
+  const fromIndicators = indicators?.strategyTag || indicators?.strategy || indicators?.strategy_name;
+  return typeof fromIndicators === 'string' ? fromIndicators : null;
+}
+
+function applyStrategyPolicyToGate(gate: ExecutionGateResult, strategy?: Record<string, unknown> | null): ExecutionGateResult {
+  if (!strategy || typeof strategy !== 'object') return gate;
+  const statusRaw = typeof (strategy as any).status === 'string' ? (strategy as any).status : '';
+  const driftStatus = typeof (strategy as any)?.drift?.status === 'string' ? (strategy as any).drift.status : '';
+  const status = `${statusRaw || driftStatus}`.toUpperCase();
+  if (status !== 'QUARANTINED') return gate;
+
+  const reasons = gate.reasons.includes('strategy_quarantined') ? gate.reasons : [...gate.reasons, 'strategy_quarantined'];
+  const mode = gate.mode === 'live' ? 'paper' : gate.mode;
+  return { ...gate, mode, reasons };
+}
+
+function computeDecisionCardScore(
+  card: NexusDecisionCard,
+  gate?: ExecutionGateResult,
+  regime?: string | null
+): DecisionCardScore {
+  const thesis = (card as any)?.thesis || {};
+  const signalConfidence = normalizeSignalConfidence(thesis.confidence ?? (card as any)?.decision?.confidence ?? 0);
+  const dataConfidence = typeof thesis?.dataIntegrity?.confidence_score === 'number'
+    ? thesis.dataIntegrity.confidence_score
+    : null;
+  const rrRaw = typeof thesis.riskRewardRatio === 'number' && Number.isFinite(thesis.riskRewardRatio)
+    ? thesis.riskRewardRatio
+    : 0;
+  const riskRewardRatio = rrRaw > 0
+    ? rrRaw
+    : (thesis.entryPrice && thesis.targetPrice && thesis.stopLoss)
+      ? (() => {
+        const denom = Math.abs(thesis.entryPrice - thesis.stopLoss);
+        return denom > 0 ? Math.abs(thesis.targetPrice - thesis.entryPrice) / denom : 0;
+      })()
+      : 0;
+  const reward = riskRewardRatio > 0 ? riskRewardRatio : 1;
+  const expectedValue = (signalConfidence * reward) - ((1 - signalConfidence) * 1);
+  const evNormalized = Math.max(-1, Math.min(1, expectedValue / Math.max(1, reward)));
+  const confidenceComposite = (signalConfidence + (dataConfidence ?? signalConfidence)) / 2;
+  const score = Math.round(((confidenceComposite * 0.7) + ((evNormalized + 1) / 2) * 0.3) * 100);
+
+  return {
+    model: 'nexus-v1',
+    score,
+    signalConfidence,
+    dataConfidence,
+    expectedValue: Math.round(expectedValue * 100) / 100,
+    riskRewardRatio: Math.round((riskRewardRatio || 0) * 100) / 100,
+    riskEnvelope: (card as any)?.risk?.envelope ?? null,
+    gate,
+    regime: regime ?? null,
+    computedAt: nowTimestamp(),
+    expiresAt: thesis.expiresAt ?? null,
+  };
+}
+
+async function persistDecisionCard(payload: {
+  card: NexusDecisionCard;
+  score: DecisionCardScore;
+  metadata: {
+    strategyTag?: string | null;
+    confidenceScore?: number;
+    sourceType?: string | null;
+    latencyClass?: string | null;
+    regime?: string | null;
+    status?: string;
+    expiresAt?: string | null;
+    gate?: ExecutionGateResult;
+  };
+}): Promise<{ id: string; strategy?: Record<string, unknown> | null } | null> {
+  try {
+    const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (NOVA_HUB_INTERNAL_TOKEN) {
+      headers['x-internal-decision-token'] = NOVA_HUB_INTERNAL_TOKEN;
+    }
+
+    const res = await fetch(`${NOVA_HUB_URL}/internal/decision-cards`, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify(payload),
+    });
+
+    if (!res.ok) {
+      const error = await res.text().catch(() => '');
+      logger.warn('Decision card persistence failed', { status: res.status, error });
+      return null;
+    }
+
+    const data = await res.json().catch(() => null) as any;
+    const card = data?.data?.card;
+    if (!data?.success || !card?.id) {
+      logger.warn('Decision card persistence returned invalid response');
+      return null;
+    }
+    return { id: card.id, strategy: card.score?.strategy ?? null };
+    return { id: data.data.card.id };
+  } catch (error) {
+    logger.warn('Decision card persistence error', { error: (error as Error).message });
+    return null;
+  }
+}
+
+function buildPaperThesisFromNexus(thesis: {
+  id?: string;
+  symbol: string;
+  signal: string;
+  entryPrice: number;
+  targetPrice: number;
+  stopLoss: number;
+  confidence: number;
+  reasoning?: string | string[];
+}, integrity?: CandleIntegrity | null): ThesisCard | null {
+  if (thesis.signal !== 'BUY' && thesis.signal !== 'SELL') return null;
+  const direction = thesis.signal === 'BUY' ? 'LONG' : 'SHORT';
+  const entry = thesis.entryPrice || 0;
+  const target = thesis.targetPrice || (direction === 'LONG' ? entry * 1.05 : entry * 0.95);
+  const stop = thesis.stopLoss || (direction === 'LONG' ? entry * 0.97 : entry * 1.03);
+  const rr = entry > 0 ? Math.abs(target - entry) / Math.abs(stop - entry) : 0;
+  const confidence = Math.round(normalizeSignalConfidence(thesis.confidence) * 100);
+  const reasoning = Array.isArray(thesis.reasoning)
+    ? thesis.reasoning
+    : thesis.reasoning
+      ? [thesis.reasoning]
+      : [];
+
+  return {
+    id: thesis.id || generateId(),
+    symbol: thesis.symbol,
+    signal: direction,
+    entryPrice: entry,
+    targetPrice: target,
+    stopLoss: stop,
+    riskRewardRatio: Number.isFinite(rr) ? Math.round(rr * 100) / 100 : 0,
+    confidence,
+    reasoning,
+    createdAt: nowTimestamp(),
+    expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+    dataIntegrity: integrity || undefined,
+  };
 }
 
 interface Watchlist {
@@ -385,6 +694,7 @@ class MarketDataClient {
       const asOf = typeof ind.asOf === 'string' ? ind.asOf : null;
       const computedAt = typeof ind.computedAt === 'string' ? ind.computedAt : undefined;
       const provider = typeof ind.provider === 'string' ? ind.provider : undefined;
+      const integrity = ind.integrity as CandleIntegrity | undefined;
 
       return {
         rsi,
@@ -399,9 +709,28 @@ class MarketDataClient {
         asOf,
         computedAt,
         provider,
+        integrity,
       };
     } catch (err) {
       logger.warn('Marketdata indicators request failed', { symbol: sym, error: (err as Error).message });
+      return null;
+    }
+  }
+
+  async getCandles(symbol: string, interval: string = '1m', limit: number = 5): Promise<{ candles: MarketCandle[]; integrity?: CandleIntegrity } | null> {
+    const sym = symbol.toUpperCase();
+    try {
+      const res = await fetch(`${this.baseUrl}/v1/market/candles/${sym}?interval=${encodeURIComponent(interval)}&limit=${limit}`);
+      if (!res.ok) return null;
+      const data = (await res.json()) as {
+        success: boolean;
+        data?: { candles?: MarketCandle[]; integrity?: CandleIntegrity };
+        error?: unknown;
+      };
+      if (!data.success || !Array.isArray(data.data?.candles)) return null;
+      return { candles: data.data!.candles as MarketCandle[], integrity: data.data?.integrity };
+    } catch (err) {
+      logger.warn('Marketdata candles request failed', { symbol: sym, error: (err as Error).message });
       return null;
     }
   }
@@ -423,12 +752,84 @@ class ScannerEngine {
     this.marketData = marketData;
   }
 
+  private computeFee(notional: number): number {
+    if (!Number.isFinite(notional) || notional <= 0) return 0;
+    const fee = (notional * PAPER_TRADE_FEE_BPS) / 10000;
+    return Math.round(fee * 100) / 100;
+  }
+
+  private applySlippage(price: number, side: 'BUY' | 'SELL', integrity?: CandleIntegrity): { price: number; slippageBps: number } {
+    if (!Number.isFinite(price)) return { price, slippageBps: 0 };
+    let slippageBps = PAPER_TRADE_BASE_SLIPPAGE_BPS;
+
+    if (integrity) {
+      const latency = integrity.latency_class.toLowerCase();
+      if (latency === 'medium') slippageBps += 2;
+      if (latency === 'high') slippageBps += 6;
+      if (latency === 'stale') slippageBps += 10;
+      if (integrity.confidence_score < 0.5) slippageBps += 5;
+      if (integrity.confidence_score < 0.3) slippageBps += 8;
+    }
+
+    slippageBps = Math.min(PAPER_TRADE_MAX_SLIPPAGE_BPS, Math.max(0, slippageBps));
+    const direction = side === 'BUY' ? 1 : -1;
+    const slippage = price * (slippageBps / 10000) * direction;
+    const adjusted = Math.round((price + slippage) * 100) / 100;
+    return { price: adjusted, slippageBps };
+  }
+
+  private getOpenPositionValue(): number {
+    let value = 0;
+    for (const trade of this.trades.values()) {
+      if (trade.status !== 'OPEN') continue;
+      const price = Number.isFinite(trade.currentPrice) ? (trade.currentPrice as number) : trade.entryPrice;
+      const direction = trade.side === 'BUY' ? 1 : -1;
+      value += price * trade.quantity * direction;
+    }
+    return value;
+  }
+
+  private recordEquitySnapshot(): void {
+    const equity = Math.round((this.portfolio.cash + this.getOpenPositionValue()) * 100) / 100;
+    this.equityHistory.push({ ts: nowTimestamp(), equity });
+    if (this.equityHistory.length > 5000) {
+      this.equityHistory.shift();
+    }
+  }
+
+  private async resolveMarketPrice(symbol: string): Promise<{ price: number; integrity?: CandleIntegrity }> {
+    const data = await this.marketData.getCandles(symbol, '1m', 2);
+    const candles = data?.candles || [];
+    const last = candles[candles.length - 1];
+    const integrity = data?.integrity ?? last?.integrity;
+
+    if (!hasIntegrityFields(integrity)) {
+      const err = new Error('CANDLE_INTEGRITY_MISSING');
+      (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+      (err as any).details = [{ symbol: symbol.toUpperCase(), reason: 'integrity_missing' }];
+      throw err;
+    }
+
+    if (last && Number.isFinite(last.close)) {
+      return { price: last.close, integrity };
+    }
+
+    const quote = await this.marketData.getQuote(symbol);
+    if (quote && Number.isFinite(quote.price)) {
+      return { price: quote.price, integrity };
+    }
+
+    return { price: Number.NaN, integrity };
+  }
+
+
   async scan(symbols: string[], filters?: { minScore?: number; signals?: string[] }): Promise<ScannerResult[]> {
     if (symbols.length === 0) return [];
 
     const clamp = (n: number, min: number, max: number): number => Math.max(min, Math.min(max, n));
     const finite = (v: unknown): v is number => typeof v === 'number' && Number.isFinite(v);
     const mean = (arr: number[]): number | null => (arr.length > 0 ? arr.reduce((s, v) => s + v, 0) / arr.length : null);
+    const integrityFailures: Array<{ symbol: string; reason: string }> = [];
 
     const computeSmaCross = (indicators: Indicators | null): number | null => {
       if (!indicators) return null;
@@ -448,6 +849,7 @@ class ScannerEngine {
       symbol: string;
       quote: MarketQuote;
       indicators: Indicators | null;
+      integrity?: CandleIntegrity;
       rsi: number | null;
       macdVal: number | null;
       momentum: number | null;
@@ -464,6 +866,10 @@ class ScannerEngine {
         ]);
 
         if (!quote) return null;
+        if (!indicators || !hasIntegrityFields(indicators.integrity)) {
+          integrityFailures.push({ symbol: quote.symbol, reason: 'integrity_missing' });
+          return null;
+        }
 
         const rsi = finite(indicators?.rsi) ? indicators!.rsi : null;
         const macdVal = finite(indicators?.macd?.value) ? indicators!.macd!.value : null;
@@ -472,11 +878,17 @@ class ScannerEngine {
         const volumeSpike = typeof quote.volume === 'number' && quote.volume > 5_000_000;
         const smaCross = computeSmaCross(indicators);
 
-        return { symbol: quote.symbol, quote, indicators, rsi, macdVal, momentum, volumeSpike, smaCross };
+        return { symbol: quote.symbol, quote, indicators, integrity: indicators?.integrity, rsi, macdVal, momentum, volumeSpike, smaCross };
       })
     );
 
     const samples = rawSamples.filter((s): s is Sample => s !== null);
+
+    if (integrityFailures.length > 0) {
+      const err = new Error('CANDLE_INTEGRITY_MISSING');
+      (err as any).details = integrityFailures;
+      throw err;
+    }
 
     if (samples.length === 0) {
       return [];
@@ -503,7 +915,7 @@ class ScannerEngine {
     let regimeSecondary: RegimeType | undefined;
 
     try {
-      // Note: nexusTrader is declared later in the module; this runs only when scan() is invoked.
+      // Note: nexusTrader is declared below in the module; this runs only when scan() is invoked.
       const state = nexusTrader.updateRegimeFromMarketSnapshot({
         rsi: avgRsi ?? undefined,
         smaCross: avgSmaCross ?? undefined,
@@ -606,7 +1018,7 @@ class ScannerEngine {
     const results: ScannerResult[] = [];
 
     for (const s of samples) {
-      const { symbol, quote, rsi, macdVal, momentum, volumeSpike, smaCross } = s;
+      const { symbol, quote, rsi, macdVal, momentum, volumeSpike, smaCross, integrity } = s;
 
       let bull = 0;
       let bear = 0;
@@ -672,6 +1084,7 @@ class ScannerEngine {
           volumeSpike,
         },
         quote,
+        integrity,
       };
 
       // Apply filters
@@ -734,6 +1147,7 @@ class ThesisGenerator {
       reasoning,
       createdAt: nowTimestamp(),
       expiresAt,
+      dataIntegrity: scanResult.integrity,
     };
   }
 }
@@ -741,6 +1155,9 @@ class ThesisGenerator {
 // ============================================================================
 // Paper Trading Simulator
 // ============================================================================
+const PAPER_TRADE_FEE_BPS = Number(process.env.PAPER_TRADE_FEE_BPS || 5); // 5 bps default
+const PAPER_TRADE_BASE_SLIPPAGE_BPS = Number(process.env.PAPER_TRADE_SLIPPAGE_BPS || 3); // 3 bps default
+const PAPER_TRADE_MAX_SLIPPAGE_BPS = Number(process.env.PAPER_TRADE_MAX_SLIPPAGE_BPS || 25);
 
 class PaperTradingSimulator {
   private trades: Map<string, PaperTrade> = new Map();
@@ -749,32 +1166,58 @@ class PaperTradingSimulator {
     positions: {},
   };
   private marketData: MarketDataClient;
+  private equityHistory: Array<{ ts: string; equity: number }> = [];
 
   constructor(marketData: MarketDataClient) {
     this.marketData = marketData;
   }
 
-  openTrade(thesis: ThesisCard, quantity: number): PaperTrade {
-    const cost = thesis.entryPrice * quantity;
-    if (cost > this.portfolio.cash) {
+  async openTrade(thesis: ThesisCard, quantity: number): Promise<PaperTrade> {
+    if (!Number.isFinite(quantity) || quantity <= 0) {
+      throw new Error('Quantity must be positive');
+    }
+
+    const { price: marketPrice, integrity } = await this.resolveMarketPrice(thesis.symbol);
+    if (!Number.isFinite(marketPrice)) {
+      throw new Error('Entry price unavailable (market data unavailable)');
+    }
+
+    const side: 'BUY' | 'SELL' = thesis.signal === 'LONG' ? 'BUY' : 'SELL';
+    const { price: fillPrice, slippageBps } = this.applySlippage(marketPrice, side, integrity);
+    const entryNotional = fillPrice * quantity;
+    const entryFee = this.computeFee(entryNotional);
+
+    if (side === 'BUY' && entryNotional + entryFee > this.portfolio.cash) {
       throw new Error('Insufficient funds');
     }
 
     const trade: PaperTrade = {
       id: generateId(),
       thesisId: thesis.id,
+      decisionCardId: thesis.decisionCardId ?? null,
       symbol: thesis.symbol,
-      side: thesis.signal === 'LONG' ? 'BUY' : 'SELL',
+      side,
       quantity,
-      entryPrice: thesis.entryPrice,
-      currentPrice: thesis.entryPrice,
+      entryPrice: fillPrice,
+      entryPriceRaw: marketPrice,
+      entrySlippageBps: slippageBps,
+      entryFees: entryFee,
+      fees: entryFee,
+      currentPrice: marketPrice,
       status: 'OPEN',
+      dataIntegrity: integrity,
       openedAt: nowTimestamp(),
     };
 
     this.trades.set(trade.id, trade);
-    this.portfolio.cash -= cost;
-    this.portfolio.positions[thesis.symbol] = (this.portfolio.positions[thesis.symbol] || 0) + quantity;
+    if (side === 'BUY') {
+      this.portfolio.cash -= entryNotional + entryFee;
+    } else {
+      this.portfolio.cash += entryNotional - entryFee;
+    }
+    const positionDelta = side === 'BUY' ? quantity : -quantity;
+    this.portfolio.positions[thesis.symbol] = (this.portfolio.positions[thesis.symbol] || 0) + positionDelta;
+    this.recordEquitySnapshot();
 
     return trade;
   }
@@ -784,27 +1227,55 @@ class PaperTradingSimulator {
     if (!trade) throw new Error('Trade not found');
     if (trade.status !== 'OPEN') throw new Error('Trade already closed');
 
-    const quote = await this.marketData.getQuote(trade.symbol);
-    const resolvedExitPrice = typeof exitPrice === 'number' && Number.isFinite(exitPrice) ? exitPrice : quote?.price;
-
-    if (typeof resolvedExitPrice !== 'number' || !Number.isFinite(resolvedExitPrice)) {
-      throw new Error('Exit price unavailable (market quote unavailable)');
+    let marketPrice: number;
+    let integrity: CandleIntegrity | undefined;
+    if (typeof exitPrice === 'number' && Number.isFinite(exitPrice)) {
+      marketPrice = exitPrice;
+      integrity = trade.dataIntegrity;
+    } else {
+      const resolved = await this.resolveMarketPrice(trade.symbol);
+      marketPrice = resolved.price;
+      integrity = resolved.integrity;
     }
 
-    trade.exitPrice = resolvedExitPrice;
-    trade.currentPrice = trade.exitPrice;
+    if (!Number.isFinite(marketPrice)) {
+      throw new Error('Exit price unavailable (market data unavailable)');
+    }
 
-    const priceDiff = trade.side === 'BUY' 
-      ? trade.exitPrice - trade.entryPrice
-      : trade.entryPrice - trade.exitPrice;
+    const exitSide: 'BUY' | 'SELL' = trade.side === 'BUY' ? 'SELL' : 'BUY';
+    const { price: fillPrice, slippageBps } = this.applySlippage(marketPrice, exitSide, integrity);
+    const exitNotional = fillPrice * trade.quantity;
+    const exitFee = this.computeFee(exitNotional);
 
-    trade.pnl = Math.round(priceDiff * trade.quantity * 100) / 100;
-    trade.pnlPercent = Math.round((priceDiff / trade.entryPrice) * 10000) / 100;
+    trade.exitPrice = fillPrice;
+    trade.exitPriceRaw = marketPrice;
+    trade.exitSlippageBps = slippageBps;
+    trade.exitFees = exitFee;
+    trade.currentPrice = fillPrice;
+    trade.dataIntegrity = integrity ?? trade.dataIntegrity;
+
+    const priceDiff = trade.side === 'BUY'
+      ? fillPrice - trade.entryPrice
+      : trade.entryPrice - fillPrice;
+    const grossPnl = priceDiff * trade.quantity;
+    const totalFees = (trade.entryFees || 0) + exitFee;
+    trade.fees = totalFees;
+    trade.pnl = Math.round((grossPnl - totalFees) * 100) / 100;
+    trade.pnlPercent = Math.round(((grossPnl - totalFees) / (trade.entryPrice * trade.quantity)) * 10000) / 100;
     trade.status = 'CLOSED';
     trade.closedAt = nowTimestamp();
 
-    this.portfolio.cash += trade.exitPrice * trade.quantity;
-    this.portfolio.positions[trade.symbol] -= trade.quantity;
+    if (trade.side === 'BUY') {
+      this.portfolio.cash += exitNotional - exitFee;
+    } else {
+      this.portfolio.cash -= exitNotional + exitFee;
+    }
+    const positionDelta = trade.side === 'BUY' ? trade.quantity : -trade.quantity;
+    this.portfolio.positions[trade.symbol] = (this.portfolio.positions[trade.symbol] || 0) - positionDelta;
+    if (Math.abs(this.portfolio.positions[trade.symbol]) < 1e-8) {
+      delete this.portfolio.positions[trade.symbol];
+    }
+    this.recordEquitySnapshot();
 
     return trade;
   }
@@ -814,30 +1285,32 @@ class PaperTradingSimulator {
     if (!trade) throw new Error('Trade not found');
     if (trade.status !== 'OPEN') return trade;
 
-    const quote = await this.marketData.getQuote(trade.symbol);
-    if (!quote) return trade;
+    const resolved = await this.resolveMarketPrice(trade.symbol);
+    if (!Number.isFinite(resolved.price)) return trade;
 
-    trade.currentPrice = quote.price;
+    trade.currentPrice = resolved.price;
+    trade.dataIntegrity = resolved.integrity ?? trade.dataIntegrity;
 
     // Check stop loss / target if thesis provided
     if (thesis) {
       if (trade.side === 'BUY') {
-        if (quote.price <= thesis.stopLoss) {
+        if (resolved.price <= thesis.stopLoss) {
           return this.closeTrade(tradeId, thesis.stopLoss);
         }
-        if (quote.price >= thesis.targetPrice) {
+        if (resolved.price >= thesis.targetPrice) {
           return this.closeTrade(tradeId, thesis.targetPrice);
         }
       } else {
-        if (quote.price >= thesis.stopLoss) {
+        if (resolved.price >= thesis.stopLoss) {
           return this.closeTrade(tradeId, thesis.stopLoss);
         }
-        if (quote.price <= thesis.targetPrice) {
+        if (resolved.price <= thesis.targetPrice) {
           return this.closeTrade(tradeId, thesis.targetPrice);
         }
       }
     }
 
+    this.recordEquitySnapshot();
     return trade;
   }
 
@@ -859,34 +1332,73 @@ class PaperTradingSimulator {
     closedTrades: number;
     winRate: number;
     totalPnl: number;
+    realizedPnl: number;
+    unrealizedPnl: number;
+    totalFees: number;
+    avgSlippageBps: number;
+    maxDrawdown: number;
     portfolioValue: number | null;
   }> {
     const trades = this.getAllTrades();
     const closed = trades.filter((t) => t.status === 'CLOSED');
+    const open = trades.filter((t) => t.status === 'OPEN');
     const wins = closed.filter((t) => (t.pnl || 0) > 0);
 
-    const totalPnl = closed.reduce((sum, t) => sum + (t.pnl || 0), 0);
-    let positionsValue = 0;
     let hasUnknownPositionValue = false;
-
-    for (const [symbol, qty] of Object.entries(this.portfolio.positions)) {
-      const quote = await this.marketData.getQuote(symbol);
-      if (!quote) {
+    for (const trade of open) {
+      const resolved = await this.resolveMarketPrice(trade.symbol);
+      if (Number.isFinite(resolved.price)) {
+        trade.currentPrice = resolved.price;
+        trade.dataIntegrity = resolved.integrity ?? trade.dataIntegrity;
+      } else {
         hasUnknownPositionValue = true;
-        continue;
       }
-      positionsValue += quote.price * qty;
     }
+
+    const realizedPnl = closed.reduce((sum, t) => sum + (t.pnl || 0), 0);
+    const unrealizedPnl = open.reduce((sum, t) => {
+      if (!Number.isFinite(t.currentPrice)) return sum;
+      const direction = t.side === 'BUY' ? 1 : -1;
+      return sum + (((t.currentPrice as number) - t.entryPrice) * t.quantity * direction);
+    }, 0);
+    const totalPnl = realizedPnl + unrealizedPnl;
+
+    const totalFees = trades.reduce((sum, t) => sum + (t.fees || 0), 0);
+    const slippageValues: number[] = [];
+    for (const trade of trades) {
+      if (typeof trade.entrySlippageBps === 'number') slippageValues.push(trade.entrySlippageBps);
+      if (typeof trade.exitSlippageBps === 'number') slippageValues.push(trade.exitSlippageBps);
+    }
+    const totalSlippage = slippageValues.reduce((sum, v) => sum + v, 0);
+    const avgSlippageBps = slippageValues.length > 0 ? totalSlippage / slippageValues.length : 0;
+
+    this.recordEquitySnapshot();
+    let peak = -Infinity;
+    let maxDrawdown = 0;
+    for (const point of this.equityHistory) {
+      if (point.equity > peak) peak = point.equity;
+      if (peak > 0 && point.equity < peak) {
+        const drawdown = (peak - point.equity) / peak;
+        if (drawdown > maxDrawdown) maxDrawdown = drawdown;
+      }
+    }
+
+    const portfolioValue = hasUnknownPositionValue
+      ? null
+      : Math.round((this.portfolio.cash + this.getOpenPositionValue()) * 100) / 100;
 
     return {
       totalTrades: trades.length,
-      openTrades: trades.filter((t) => t.status === 'OPEN').length,
+      openTrades: open.length,
       closedTrades: closed.length,
       winRate: closed.length > 0 ? Math.round((wins.length / closed.length) * 100) : 0,
       totalPnl: Math.round(totalPnl * 100) / 100,
-      portfolioValue: hasUnknownPositionValue
-        ? null
-        : Math.round((this.portfolio.cash + positionsValue) * 100) / 100,
+      realizedPnl: Math.round(realizedPnl * 100) / 100,
+      unrealizedPnl: Math.round(unrealizedPnl * 100) / 100,
+      totalFees: Math.round(totalFees * 100) / 100,
+      avgSlippageBps: Math.round(avgSlippageBps * 100) / 100,
+      maxDrawdown: Math.round(maxDrawdown * 10000) / 100,
+      portfolioValue,
     };
   }
 }
@@ -960,6 +1472,19 @@ const paperTrader = new PaperTradingSimulator(marketData);
 const watchlistManager = new WatchlistManager();
 const alpaca = new AlpacaClient();
 
+async function resolveLatestIntegrity(symbol: string): Promise<CandleIntegrity | null> {
+  const data = await marketData.getCandles(symbol, '1m', 2);
+  if (data?.integrity && hasIntegrityFields(data.integrity)) {
+    return data.integrity;
+  }
+  const candles = data?.candles || [];
+  const last = candles[candles.length - 1];
+  if (last?.integrity && hasIntegrityFields(last.integrity)) {
+    return last.integrity;
+  }
+  return null;
+}
+
 // Active theses storage
 const activeTheses: Map<string, ThesisCard> = new Map();
 
@@ -967,7 +1492,7 @@ const activeTheses: Map<string, ThesisCard> = new Map();
 // Bot Client Setup
 // ============================================================================
 
-const botConfig = createBotConfig('TRADE', [
+const botConfig = createBotConfig('tradebot', [
   { name: 'scanner', version: '1.0.0', description: 'Market scanner with technical indicators' },
   { name: 'thesis', version: '1.0.0', description: 'Thesis card generator' },
   { name: 'paper-trading', version: '1.0.0', description: 'Paper trading simulator' },
@@ -987,8 +1512,15 @@ bot.registerTaskHandler('SCAN_WATCHLIST', async (task: TaskDefinition, ctx: Task
 
   ctx.logger.info('Scanning watchlist', { watchlistId: watchlist.id, symbols: watchlist.symbols.length });
   await ctx.reportProgress(10, 'Starting scan...');
-
-  const results = await scanner.scan(watchlist.symbols, filters as any);
+  let results: ScannerResult[];
+  try {
+    results = await scanner.scan(watchlist.symbols, filters as any);
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return { success: false, error: 'CANDLE_INTEGRITY_MISSING' };
+    }
+    throw error;
+  }
   await ctx.reportProgress(100, 'Scan complete');
 
   return {
@@ -1019,8 +1551,15 @@ bot.registerTaskHandler('GENERATE_THESIS', async (task: TaskDefinition, ctx: Tas
 
   ctx.logger.info('Generating thesis', { symbol: symbolToAnalyze });
   await ctx.reportProgress(20, 'Analyzing symbol...');
-
-  const scanResults = await scanner.scan([symbolToAnalyze]);
+  let scanResults: ScannerResult[];
+  try {
+    scanResults = await scanner.scan([symbolToAnalyze]);
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return { success: false, error: 'CANDLE_INTEGRITY_MISSING' };
+    }
+    throw error;
+  }
   if (scanResults.length === 0) {
     return { success: false, error: 'Could not analyze symbol' };
   }
@@ -1050,7 +1589,7 @@ bot.registerTaskHandler('EXECUTE_PAPER_TRADE', async (task: TaskDefinition, ctx:
   ctx.logger.info('Executing paper trade', { thesisId, symbol: thesis.symbol });
 
   try {
-    const trade = paperTrader.openTrade(thesis, (quantity as number) || 10);
+    const trade = await paperTrader.openTrade(thesis, (quantity as number) || 10);
     await ctx.emit('PAPER_TRADE_OPENED', { tradeId: trade.id, thesisId, symbol: trade.symbol });
 
     return {
@@ -1064,29 +1603,35 @@ bot.registerTaskHandler('EXECUTE_PAPER_TRADE', async (task: TaskDefinition, ctx:
 
 bot.registerTaskHandler('UPDATE_PAPER_TRADES', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
   ctx.logger.info('Updating open paper trades');
+  try {
+    const openTrades = paperTrader.getOpenTrades();
+    const updated: PaperTrade[] = [];
 
-  const openTrades = paperTrader.getOpenTrades();
-  const updated: PaperTrade[] = [];
+    for (const trade of openTrades) {
+      const thesis = activeTheses.get(trade.thesisId);
+      const updatedTrade = await paperTrader.updateTrade(trade.id, thesis);
+      updated.push(updatedTrade);
 
-  for (const trade of openTrades) {
-    const thesis = activeTheses.get(trade.thesisId);
-    const updatedTrade = await paperTrader.updateTrade(trade.id, thesis);
-    updated.push(updatedTrade);
-
-    if (updatedTrade.status === 'CLOSED') {
-      await ctx.emit('PAPER_TRADE_CLOSED', {
-        tradeId: trade.id,
-        pnl: updatedTrade.pnl,
-        pnlPercent: updatedTrade.pnlPercent,
-      });
+      if (updatedTrade.status === 'CLOSED') {
+        await ctx.emit('PAPER_TRADE_CLOSED', {
+          tradeId: trade.id,
+          pnl: updatedTrade.pnl,
+          pnlPercent: updatedTrade.pnlPercent,
+        });
+      }
     }
-  }
 
-  return {
-    success: true,
-    output: { updatedTrades: updated, stats: await paperTrader.getStats() },
-    metrics: { tradesUpdated: updated.length },
-  };
+    return {
+      success: true,
+      output: { updatedTrades: updated, stats: await paperTrader.getStats() },
+      metrics: { tradesUpdated: updated.length },
+    };
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return { success: false, error: 'CANDLE_INTEGRITY_MISSING' };
+    }
+    throw error;
+  }
 });
 
 // ============================================================================
@@ -1163,20 +1708,28 @@ app.post('/api/scan', async (req: Request, res: Response) => {
     symbolsToScan = watchlist.symbols;
   }
 
-  const results = await scanner.scan(symbolsToScan, filters);
-  res.json({ success: true, data: { results, scannedAt: nowTimestamp() } });
+  try {
+    const results = await scanner.scan(symbolsToScan, filters);
+    res.json({ success: true, data: { results, scannedAt: nowTimestamp() } });
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
+    throw error;
+  }
 });
 
 // AI Screener API - Real market scanning with OpenAI
 app.get('/api/ai-screener/status', (_req: Request, res: Response) => {
   const hasOpenAI = !!process.env.OPENAI_API_KEY;
-  const hasPolygon = !!process.env.POLYGON_API_KEY;
+  const marketdataUrl = process.env.MARKETDATA_URL || 'http://localhost:3020';
+  const hasMarketdata = !!marketdataUrl;
   res.json({
     success: true,
     data: {
-      ready: hasOpenAI && hasPolygon,
+      ready: hasMarketdata,
       openai: hasOpenAI,
-      polygon: hasPolygon,
+      marketdata: hasMarketdata,
     },
   });
 });
@@ -1235,15 +1788,31 @@ app.post('/api/ai-screener/analyze', async (req: Request, res: Response) => {
       return res.status(404).json({ success: false, error: 'Stock not found' });
     }
     
-    const indicators = await screener.default.calculateIndicators(symbol.toUpperCase(), stockData.price);
-    const signal = await screener.default.analyzeWithAI(stockData, indicators);
+    const { indicators, provenance } = await screener.default.calculateIndicators(symbol.toUpperCase(), stockData.price);
+    const aiResult = await screener.default.analyzeWithAI(stockData, indicators);
+    const fallbackResult = aiResult ? null : screener.buildDeterministicSignal(stockData, indicators);
+
+    const picked = aiResult?.signal || fallbackResult?.signal || null;
+    const rawConfidence = aiResult?.rawConfidence ?? fallbackResult?.rawConfidence ?? (picked?.confidence ?? 0);
+
+    if (picked) {
+      const { adjusted, tag } = screener.applyProvenanceConfidence(rawConfidence, provenance);
+      picked.confidence = adjusted;
+      picked.rawConfidence = rawConfidence;
+      picked.confidenceTag = tag;
+      picked.provenance = {
+        candles: provenance || null,
+        quoteSource: stockData.quoteSource || null,
+        model: aiResult ? 'openai:gpt-4o-mini' : 'deterministic',
+      };
+    }
     
     res.json({
       success: true,
       data: {
         stock: stockData,
         indicators,
-        signal,
+        signal: picked,
         analyzedAt: new Date().toISOString(),
       },
     });
@@ -1259,8 +1828,79 @@ app.get('/api/theses', (_req: Request, res: Response) => {
 });
 
 app.post('/api/theses', async (req: Request, res: Response) => {
-  const { symbol } = req.body;
-  const scanResults = await scanner.scan([symbol]);
+  const {
+    symbol,
+    entryPrice,
+    targetPrice,
+    stopLoss,
+    direction,
+    signal,
+    confidence,
+    reasoning,
+    decisionCardId,
+  } = req.body;
+
+  if (!symbol) {
+    return res.status(400).json({ success: false, error: 'Symbol required' });
+  }
+
+  const hasPrefill = [entryPrice, targetPrice, stopLoss, direction, signal, confidence, reasoning, decisionCardId]
+    .some((v) => v !== undefined && v !== null && v !== '');
+
+  if (hasPrefill) {
+    const integrity = await resolveLatestIntegrity(symbol);
+    if (!integrity) {
+      const err = new Error('CANDLE_INTEGRITY_MISSING');
+      (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+      (err as any).details = [{ symbol, reason: 'integrity_missing' }];
+      return respondIntegrityFailure(res, err);
+    }
+
+    const quote = await marketData.getQuote(symbol);
+    const entry = Number(entryPrice ?? quote?.price ?? 0);
+    if (!Number.isFinite(entry) || entry <= 0) {
+      return res.status(400).json({ success: false, error: 'Entry price unavailable' });
+    }
+
+    const dirRaw = String(direction || signal || 'LONG').toUpperCase();
+    const thesisSignal: 'LONG' | 'SHORT' = dirRaw === 'SHORT' || dirRaw === 'SELL' || dirRaw === 'BEARISH' ? 'SHORT' : 'LONG';
+    const target = Number(targetPrice ?? (thesisSignal === 'LONG' ? entry * 1.05 : entry * 0.95));
+    const stop = Number(stopLoss ?? (thesisSignal === 'LONG' ? entry * 0.97 : entry * 1.03));
+    const rrDenom = Math.abs(entry - stop);
+    const rr = rrDenom > 0 ? Math.abs(target - entry) / rrDenom : 0;
+    const confRaw = typeof confidence === 'number' ? confidence : 0;
+    const conf = Math.max(0, Math.min(100, confRaw <= 1 ? Math.round(confRaw * 100) : Math.round(confRaw)));
+    const reasoningArr = Array.isArray(reasoning) ? reasoning : typeof reasoning === 'string' ? [reasoning] : [];
+
+    const thesis: ThesisCard = {
+      id: generateId(),
+      symbol: symbol.toUpperCase(),
+      signal: thesisSignal,
+      entryPrice: entry,
+      targetPrice: Number.isFinite(target) ? target : entry,
+      stopLoss: Number.isFinite(stop) ? stop : entry,
+      riskRewardRatio: Number.isFinite(rr) ? Math.round(rr * 100) / 100 : 0,
+      confidence: conf,
+      reasoning: reasoningArr,
+      createdAt: nowTimestamp(),
+      expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+      dataIntegrity: integrity,
+      decisionCardId: decisionCardId || null,
+    };
+
+    activeTheses.set(thesis.id, thesis);
+    return res.status(201).json({ success: true, data: { thesis } });
+  }
+
+  let scanResults: ScannerResult[];
+  try {
+    scanResults = await scanner.scan([symbol]);
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
+    throw error;
+  }
   
   if (scanResults.length === 0) {
     return res.status(400).json({ success: false, error: 'Could not analyze symbol' });
@@ -1273,17 +1913,24 @@ app.post('/api/theses', async (req: Request, res: Response) => {
 
 // Paper Trading API
 app.get('/api/trades', async (_req: Request, res: Response) => {
-  res.json({
-    success: true,
-    data: {
-      trades: paperTrader.getAllTrades(),
-      stats: await paperTrader.getStats(),
-      portfolio: paperTrader.getPortfolio(),
-    },
-  });
+  try {
+    res.json({
+      success: true,
+      data: {
+        trades: paperTrader.getAllTrades(),
+        stats: await paperTrader.getStats(),
+        portfolio: paperTrader.getPortfolio(),
+      },
+    });
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
+    throw error;
+  }
 });
 
-app.post('/api/trades', (req: Request, res: Response) => {
+app.post('/api/trades', async (req: Request, res: Response) => {
   const { thesisId, quantity } = req.body;
   const thesis = activeTheses.get(thesisId);
   
@@ -1292,9 +1939,12 @@ app.post('/api/trades', (req: Request, res: Response) => {
   }
 
   try {
-    const trade = paperTrader.openTrade(thesis, quantity || 10);
+    const trade = await paperTrader.openTrade(thesis, quantity || 10);
     res.status(201).json({ success: true, data: { trade } });
   } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
     res.status(400).json({ success: false, error: (error as Error).message });
   }
 });
@@ -1304,6 +1954,9 @@ app.post('/api/trades/:id/close', async (req: Request, res: Response) => {
     const trade = await paperTrader.closeTrade(req.params.id);
     res.json({ success: true, data: { trade } });
   } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
     res.status(400).json({ success: false, error: (error as Error).message });
   }
 });
@@ -1502,53 +2155,69 @@ app.delete('/api/alerts/:id', (req: Request, res: Response) => {
 
 // Check alerts (can be called periodically)
 app.post('/api/alerts/check', async (_req: Request, res: Response) => {
-  const triggered: Alert[] = [];
-  
-  for (const alert of alerts.values()) {
-    if (!alert.isActive || alert.isTriggered) continue;
+  try {
+    const triggered: Alert[] = [];
     
-    try {
-      const quote = await marketData.getQuote(alert.symbol);
-      let shouldTrigger = false;
-
-      switch (alert.alertType) {
-        case 'PRICE_ABOVE': {
-          if (quote) shouldTrigger = quote.price >= alert.threshold;
-          break;
-        }
-        case 'PRICE_BELOW': {
-          if (quote) shouldTrigger = quote.price <= alert.threshold;
-          break;
-        }
-        case 'SCORE_ABOVE': {
-          const results = await scanner.scan([alert.symbol]);
-          if (results.length > 0) {
-            shouldTrigger = results[0].score >= alert.threshold;
-          }
-          break;
-        }
-        case 'RSI_ABOVE':
-        case 'RSI_BELOW': {
-          const indicators = await marketData.getIndicators(alert.symbol);
-          const rsi = indicators?.rsi;
-          if (typeof rsi === 'number' && Number.isFinite(rsi)) {
-            shouldTrigger = alert.alertType === 'RSI_ABOVE' ? rsi >= alert.threshold : rsi <= alert.threshold;
-          }
-          break;
-        }
-      }
+    for (const alert of alerts.values()) {
+      if (!alert.isActive || alert.isTriggered) continue;
       
-      if (shouldTrigger) {
-        alert.isTriggered = true;
-        alert.triggeredAt = nowTimestamp();
-        triggered.push(alert);
+      try {
+        const quote = await marketData.getQuote(alert.symbol);
+        let shouldTrigger = false;
+
+        switch (alert.alertType) {
+          case 'PRICE_ABOVE': {
+            if (quote) shouldTrigger = quote.price >= alert.threshold;
+            break;
+          }
+          case 'PRICE_BELOW': {
+            if (quote) shouldTrigger = quote.price <= alert.threshold;
+            break;
+          }
+          case 'SCORE_ABOVE': {
+            const results = await scanner.scan([alert.symbol]);
+            if (results.length > 0) {
+              shouldTrigger = results[0].score >= alert.threshold;
+            }
+            break;
+          }
+          case 'RSI_ABOVE':
+          case 'RSI_BELOW': {
+            const indicators = await marketData.getIndicators(alert.symbol);
+            if (!indicators || !hasIntegrityFields(indicators.integrity)) {
+              const err = new Error('CANDLE_INTEGRITY_MISSING');
+              (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+              (err as any).details = [{ symbol: alert.symbol, reason: 'integrity_missing' }];
+              throw err;
+            }
+            const rsi = indicators.rsi;
+            if (typeof rsi === 'number' && Number.isFinite(rsi)) {
+              shouldTrigger = alert.alertType === 'RSI_ABOVE' ? rsi >= alert.threshold : rsi <= alert.threshold;
+            }
+            break;
+          }
+        }
+        
+        if (shouldTrigger) {
+          alert.isTriggered = true;
+          alert.triggeredAt = nowTimestamp();
+          triggered.push(alert);
+        }
+      } catch (err) {
+        if (isIntegrityFailure(err)) {
+          throw err;
+        }
+        logger.warn('Failed to check alert', { alertId: alert.id, error: (err as Error).message });
       }
-    } catch (err) {
-      logger.warn('Failed to check alert', { alertId: alert.id, error: (err as Error).message });
     }
+    
+    res.json({ success: true, data: { triggered, checkedAt: nowTimestamp() } });
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
+    throw error;
   }
-  
-  res.json({ success: true, data: { triggered, checkedAt: nowTimestamp() } });
 });
 
 // ============================================================================
@@ -1588,7 +2257,15 @@ app.get('/api/export/scan.csv', async (req: Request, res: Response) => {
     return res.status(404).json({ success: false, error: 'Watchlist not found' });
   }
   
-  const results = await scanner.scan(watchlist.symbols);
+  let results: ScannerResult[];
+  try {
+    results = await scanner.scan(watchlist.symbols);
+  } catch (error) {
+    if (isIntegrityFailure(error)) {
+      return respondIntegrityFailure(res, error);
+    }
+    throw error;
+  }
   
   const headers = ['symbol', 'signal', 'score', 'price', 'change', 'changePercent', 'rsi', 'macd', 'volume'];
   const rows = results.map(r => [
@@ -1671,7 +2348,7 @@ app.get('/api/nexus/status', (_req: Request, res: Response) => {
 // Execute AI-governed trade analysis
 app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
   try {
-    const { symbol, signal, price, indicators, confidence } = req.body;
+    const { symbol, signal, price, indicators, confidence, strategyTag, strategy } = req.body;
     
     if (!symbol || !signal) {
       return res.status(400).json({
@@ -1680,6 +2357,13 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
       });
     }
     
+    const integrity = await resolveLatestIntegrity(symbol);
+    if (!integrity) {
+      const err = new Error('CANDLE_INTEGRITY_MISSING');
+      (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+      (err as any).details = [{ symbol, reason: 'integrity_missing' }];
+      return respondIntegrityFailure(res, err);
+    }
     const thesis = {
       id: `thesis-${Date.now()}`,
       symbol,
@@ -1691,17 +2375,50 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
       confidence: confidence || 0.5,
       reasoning: 'AI Analysis',
       indicators: indicators || {},
+      dataIntegrity: integrity,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     };
     
+    const gate = evaluateExecutionGate({ signalConfidence: thesis.confidence, integrity });
     const { decision, card } = await nexusTrader.evaluateTradeCard(thesis);
+
+    let regime: string | null = null;
+    try {
+      regime = (nexusTrader.getStatus().regime as any)?.currentRegime ?? null;
+    } catch {
+      regime = null;
+    }
+
+    const score = computeDecisionCardScore(card, gate, regime);
+    const persisted = await persistDecisionCard({
+      card,
+      score,
+      metadata: {
+        strategyTag: resolveStrategyTag(indicators, strategyTag || strategy),
+        confidenceScore: score.signalConfidence,
+        sourceType: integrity.source_type,
+        latencyClass: integrity.latency_class,
+        regime,
+        status: decision.approved ? 'ACTIVE' : 'REJECTED',
+        expiresAt: thesis.expiresAt,
+        gate,
+      },
+    });
+
+    if (!persisted) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: { code: 'DECISION_CARD_PERSIST_FAILED', message: 'Failed to persist decision card' },
+      });
+    }
     
     res.json({
       success: true,
       data: {
         decision,
         card,
+        decisionCardId: persisted.id,
         message: decision.approved ? 'Trade approved by Nova Nexus' : 'Trade rejected by Nova Nexus',
       },
     });
@@ -1717,7 +2434,7 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
 // Execute AI-governed trade
 app.post('/api/nexus/execute', async (req: Request, res: Response) => {
   try {
-    const { symbol, signal, price, indicators, confidence, autoExecute } = req.body;
+    const { symbol, signal, price, indicators, confidence, autoExecute, strategyTag, strategy } = req.body;
     
     if (!symbol || !signal) {
       return res.status(400).json({
@@ -1726,6 +2443,13 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
       });
     }
     
+    const integrity = await resolveLatestIntegrity(symbol);
+    if (!integrity) {
+      const err = new Error('CANDLE_INTEGRITY_MISSING');
+      (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+      (err as any).details = [{ symbol, reason: 'integrity_missing' }];
+      return respondIntegrityFailure(res, err);
+    }
     const thesis = {
       id: `thesis-${Date.now()}`,
       symbol,
@@ -1737,16 +2461,92 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
       confidence: confidence || 0.6,
       reasoning: 'AI-Governed Execution',
       indicators: indicators || {},
+      dataIntegrity: integrity,
       createdAt: new Date().toISOString(),
       expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()
     };
-    
-    const result = await nexusTrader.executeAITrade(thesis, autoExecute !== false);
+
+    const gate = evaluateExecutionGate({ signalConfidence: thesis.confidence, integrity });
+    const { decision, card } = await nexusTrader.evaluateTradeCard(thesis);
+
+    let regime: string | null = null;
+    try {
+      regime = (nexusTrader.getStatus().regime as any)?.currentRegime ?? null;
+    } catch {
+      regime = null;
+    }
+
+    const score = computeDecisionCardScore(card, gate, regime);
+    const persisted = await persistDecisionCard({
+      card,
+      score,
+      metadata: {
+        strategyTag: resolveStrategyTag(indicators, strategyTag || strategy),
+        confidenceScore: score.signalConfidence,
+        sourceType: integrity.source_type,
+        latencyClass: integrity.latency_class,
+        regime,
+        status: decision.approved ? 'ACTIVE' : 'REJECTED',
+        expiresAt: thesis.expiresAt,
+        gate,
+      },
+    });
+
+    if (!persisted) {
+      return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+        success: false,
+        error: { code: 'DECISION_CARD_PERSIST_FAILED', message: 'Failed to persist decision card' },
+      });
+    }
+    const gateWithPolicy = applyStrategyPolicyToGate(gate, persisted.strategy ?? null);
+
+    if (autoExecute !== false && gateWithPolicy.mode !== 'live') {
+      if (gateWithPolicy.mode === 'paper') {
+        const paperThesis = buildPaperThesisFromNexus(thesis, integrity);
+        if (!paperThesis) {
+          return res.status(HTTP_STATUS.BAD_REQUEST).json({
+            success: false,
+            error: { code: 'INVALID_THESIS', message: 'Paper demotion requires BUY or SELL signal' },
+          });
+        }
+        const quantity = Math.max(1, Math.floor(1000 / Math.max(1, paperThesis.entryPrice)));
+        let trade: PaperTrade;
+        try {
+          trade = await paperTrader.openTrade(paperThesis, quantity);
+        } catch (error) {
+          if (isIntegrityFailure(error)) {
+            return respondIntegrityFailure(res, error);
+          }
+          throw error;
+        }
+        return res.status(HTTP_STATUS.ACCEPTED).json({
+          success: true,
+          data: {
+            result: { executed: false, decision: { approved: false, reasoning: 'Demoted to paper execution', constraints: gateWithPolicy.reasons, tier: 'PAPER', confidence: gateWithPolicy.signalConfidence, timestamp: nowTimestamp() } },
+            executionMode: 'paper',
+            gate: gateWithPolicy,
+            paperTrade: trade,
+            decisionCardId: persisted.id,
+            message: 'Execution demoted to paper trading due to data integrity or confidence gates.',
+          },
+        });
+      }
+
+      return res.status(HTTP_STATUS.UNPROCESSABLE_ENTITY).json({
+        success: false,
+        error: { code: 'EXECUTION_BLOCKED', message: 'Execution blocked by confidence gates', details: { gate: gateWithPolicy, decisionCardId: persisted.id } },
+      });
+    }
+
+    const result = await nexusTrader.executeAITrade(thesis, autoExecute !== false, decision);
     
     res.json({
       success: true,
       data: {
         result,
+        decisionCardId: persisted.id,
+        executionMode: gateWithPolicy.mode,
+        gate: gateWithPolicy,
         message: result.executed ? 'Trade executed by Nova Nexus' : result.decision.reasoning,
       },
     });
@@ -1780,7 +2580,15 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
     }
     
     // Scan market
-    const scanResults = await scanner.scan(watchlist.symbols);
+    let scanResults: ScannerResult[];
+    try {
+      scanResults = await scanner.scan(watchlist.symbols);
+    } catch (error) {
+      if (isIntegrityFailure(error)) {
+        return respondIntegrityFailure(res, error);
+      }
+      throw error;
+    }
     
     // Filter strong signals
     const opportunities = scanResults.filter(r => 
@@ -1788,9 +2596,22 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
     );
     
     const executions = [];
+    let regime: string | null = null;
+    try {
+      regime = (nexusTrader.getStatus().regime as any)?.currentRegime ?? null;
+    } catch {
+      regime = null;
+    }
     const limit = maxTrades || 3;
     
     for (const opp of opportunities.slice(0, limit)) {
+      if (!hasIntegrityFields(opp.integrity)) {
+        const err = new Error('CANDLE_INTEGRITY_MISSING');
+        (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+        (err as any).details = [{ symbol: opp.symbol, reason: 'integrity_missing' }];
+        return respondIntegrityFailure(res, err);
+      }
+
       const thesis = {
         id: `auto-${Date.now()}-${opp.symbol}`,
         symbol: opp.symbol,
@@ -1802,12 +2623,95 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
         confidence: opp.score / 100,
         reasoning: `Auto-scan: ${opp.signal} signal with score ${opp.score}`,
         indicators: opp.indicators,
+        dataIntegrity: opp.integrity,
         createdAt: new Date().toISOString(),
         expiresAt: new Date(Date.now() + 4 * 60 * 60 * 1000).toISOString()
       };
-      
-      const result = await nexusTrader.executeAITrade(thesis, true);
-      executions.push({ symbol: opp.symbol, ...result });
+      const gate = evaluateExecutionGate({ signalConfidence: thesis.confidence, integrity: opp.integrity });
+      const { decision, card } = await nexusTrader.evaluateTradeCard(thesis);
+      const score = computeDecisionCardScore(card, gate, regime);
+      const persisted = await persistDecisionCard({
+        card,
+        score,
+        metadata: {
+          strategyTag: resolveStrategyTag(opp.indicators),
+          confidenceScore: score.signalConfidence,
+          sourceType: opp.integrity?.source_type ?? null,
+          latencyClass: opp.integrity?.latency_class ?? null,
+          regime,
+          status: decision.approved ? 'ACTIVE' : 'REJECTED',
+          expiresAt: thesis.expiresAt,
+          gate,
+        },
+      });
+
+      if (!persisted) {
+        executions.push({
+          symbol: opp.symbol,
+          decision,
+          executed: false,
+          error: 'DECISION_CARD_PERSIST_FAILED',
+          decisionCardId: null,
+        });
+        continue;
+      }
+      const gateWithPolicy = applyStrategyPolicyToGate(gate, persisted.strategy ?? null);
+
+      if (gateWithPolicy.mode !== 'live') {
+        if (gateWithPolicy.mode === 'paper') {
+          const paperThesis = buildPaperThesisFromNexus(thesis, opp.integrity);
+          if (!paperThesis) {
+            executions.push({
+              symbol: opp.symbol,
+              decision,
+              executed: false,
+              error: 'INVALID_THESIS',
+              decisionCardId: persisted.id,
+            });
+            continue;
+          }
+          const quantity = Math.max(1, Math.floor(1000 / Math.max(1, paperThesis.entryPrice)));
+          let trade: PaperTrade;
+          try {
+            trade = await paperTrader.openTrade(paperThesis, quantity);
+          } catch (error) {
+            executions.push({
+              symbol: opp.symbol,
+              decision,
+              executed: false,
+              executionMode: 'paper',
+              gate,
+              error: (error as Error).message,
+              decisionCardId: persisted.id,
+            });
+            continue;
+          }
+          executions.push({
+            symbol: opp.symbol,
+            decision: { approved: false, reasoning: 'Demoted to paper execution', constraints: gateWithPolicy.reasons, tier: 'PAPER', confidence: gateWithPolicy.signalConfidence, timestamp: nowTimestamp() },
+            executed: false,
+            executionMode: 'paper',
+            gate: gateWithPolicy,
+            paperTrade: trade,
+            decisionCardId: persisted.id,
+          });
+          continue;
+        }
+
+        executions.push({
+          symbol: opp.symbol,
+          decision,
+          executed: false,
+          executionMode: gateWithPolicy.mode,
+          gate: gateWithPolicy,
+          error: 'EXECUTION_BLOCKED',
+          decisionCardId: persisted.id,
+        });
+        continue;
+      }
+
+      const result = await nexusTrader.executeAITrade(thesis, true, decision);
+      executions.push({ symbol: opp.symbol, ...result, decisionCardId: persisted.id });
     }
     
     res.json({

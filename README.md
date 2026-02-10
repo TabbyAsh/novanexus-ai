@@ -19,14 +19,47 @@ git clone <repo-url>
 cd nova-enterprises
 npm install
 
-# Start infrastructure (Postgres, Redis, MinIO)
-docker-compose up -d postgres redis minio
+# Start full stack (deterministic, no manual steps)
+npm run dev:all
 
-# Run database migrations
-npm run db:migrate
+# Or via Makefile
+make dev
 
-# Start development servers
-npm run dev
+# No-docker fallback (development only)
+npm run dev:nodocker
+# or
+npm run dev:all -- --no-docker
+```
+
+`dev:all` bootstraps `.env.dev`, starts the MVP Docker stack, runs migrations, and waits for readiness.
+Before starting Docker Compose, it verifies Docker Engine is reachable. If not, it exits with:
+"Start Docker Desktop and wait until Engine is running."
+
+`dev:nodocker` starts a reduced core stack (gateway, nova-hub, tradebot, web) via local processes and sets
+`STACK_PROFILE=core` for verification. This requires local Postgres + Redis (and `psql`) to be running.
+
+Expected output includes:
+
+```
+✓ NOVA MVP READY
+```
+
+### Verification (Deterministic)
+
+```bash
+# Run health + internal verification checks (includes readiness wait)
+npm run verify
+
+# Or via Makefile
+make verify
+```
+
+If readiness fails, a status table lists exact URLs, connection results, and likely causes.
+
+Expected output includes:
+
+```
+PASS: Verification complete.
 ```
 
 ### Environment Configuration

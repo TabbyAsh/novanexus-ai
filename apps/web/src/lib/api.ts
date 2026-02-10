@@ -25,6 +25,45 @@ interface ApiResponse<T> {
   error?: { code: string; message: string; details?: Record<string, unknown> };
   meta?: { page?: number; pageSize?: number; total?: number };
 }
+type CandleIntegrity = {
+  source_type: string;
+  source_identifier: string;
+  latency_class: string;
+  confidence_score: number;
+  timestamp_range: {
+    start: string;
+    end: string;
+    expected: number;
+    actual: number;
+    missing: number;
+    gapFill?: boolean;
+    gapFillCount?: number;
+  };
+  note?: string;
+};
+
+type UsageSnapshot = {
+  plan: 'FREE' | 'LITE' | 'PRO' | string;
+  limits: Record<string, number>;
+  analyticsDepth: number;
+  usage: Record<string, number>;
+  remaining: Record<string, number>;
+  upgradeUrl?: string;
+};
+
+type GuidedFlowResponse = {
+  flow: {
+    thesis: any;
+    decisionCard: any;
+    gate: any;
+    analytics: { depth: number; locked: boolean; reason?: string | null };
+  };
+  usage?: {
+    plan: string;
+    remaining: Record<string, number>;
+    upgradeUrl?: string;
+  };
+};
 
 class ApiClient {
   private accessToken: string | null = null;
@@ -467,6 +506,7 @@ class ApiClient {
         asOf?: string | null;
         computedAt?: string;
         provider?: string;
+        integrity?: CandleIntegrity;
       };
     }>('GET', `/v1/market/indicators/${symbol}`);
   }
@@ -474,6 +514,14 @@ class ApiClient {
   // ==========================================================================
   // Nova Hub (Journal / Backtests / Trade Ideas)
   // ==========================================================================
+  async getUsage() {
+    return this.request<UsageSnapshot>('GET', '/v1/usage');
+  }
+
+  async startGuidedFlow(input: { signal: Record<string, unknown> } | Record<string, unknown>) {
+    const payload = (input as any).signal ? input : { signal: input };
+    return this.request<GuidedFlowResponse>('POST', '/v1/guided/flow', payload);
+  }
 
   async getJournal(params?: {
     symbol?: string;
@@ -538,6 +586,101 @@ class ApiClient {
     return this.request<{ currentStreak: number; longestStreak: number; totalDays: number }>('GET', '/v1/journal/streak');
   }
 
+  // Decisions (Decision -> Replay)
+  async getDecisions(params?: { status?: string; symbol?: string; limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.status) qs.set('status', params.status);
+    if (params?.symbol) qs.set('symbol', params.symbol);
+    if (typeof params?.limit === 'number') qs.set('limit', String(params.limit));
+    if (typeof params?.offset === 'number') qs.set('offset', String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+
+    return this.request<{
+      decisions: Array<{
+        id: string;
+        symbol: string;
+        direction: string;
+        intent: string;
+        status: string;
+        source: string;
+        journalEntryId: string | null;
+        constraints: Record<string, unknown>;
+        rationale: Record<string, unknown>;
+        createdAt: string;
+        updatedAt: string;
+        eventCount: number;
+        lastEventAt: string | null;
+      }>;
+    }>('GET', `/v1/decisions${query}`);
+  }
+
+  async createDecision(params: {
+    symbol: string;
+    direction: 'LONG' | 'SHORT' | 'BUY' | 'SELL';
+    intent: string;
+    constraints?: Record<string, unknown>;
+    rationale?: Record<string, unknown>;
+    journalEntryId?: string | null;
+    source?: string;
+  }) {
+    return this.request<{ decision: any }>('POST', '/v1/decisions', params);
+  }
+
+  async appendDecisionEvent(decisionId: string, eventType: string, payload?: Record<string, unknown>) {
+    return this.request<{ event: { decisionId: string; eventType: string; seq: number } }>(
+      'POST',
+      `/v1/decisions/${decisionId}/events`,
+      { eventType, payload }
+    );
+  }
+
+  async replayDecision(decisionId: string) {
+    return this.request<{ decision: any; events: any[] }>(
+      'POST',
+      `/v1/decisions/${decisionId}/replay`
+    );
+  }
+
+  // Decision Cards (Phase 2)
+  async getDecisionCards(params?: {
+    symbol?: string;
+    strategy?: string;
+    sourceType?: string;
+    latencyClass?: string;
+    regime?: string;
+    status?: string;
+    minConfidence?: number;
+    maxConfidence?: number;
+    limit?: number;
+    offset?: number;
+  }) {
+    const qs = new URLSearchParams();
+    if (params?.symbol) qs.set('symbol', params.symbol);
+    if (params?.strategy) qs.set('strategy', params.strategy);
+    if (params?.sourceType) qs.set('sourceType', params.sourceType);
+    if (params?.latencyClass) qs.set('latencyClass', params.latencyClass);
+    if (params?.regime) qs.set('regime', params.regime);
+    if (params?.status) qs.set('status', params.status);
+    if (typeof params?.minConfidence === 'number') qs.set('minConfidence', String(params.minConfidence));
+    if (typeof params?.maxConfidence === 'number') qs.set('maxConfidence', String(params.maxConfidence));
+    if (typeof params?.limit === 'number') qs.set('limit', String(params.limit));
+    if (typeof params?.offset === 'number') qs.set('offset', String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+
+    return this.request<{ cards: any[]; analyticsDepth?: number }>('GET', `/v1/decision-cards${query}`);
+  }
+
+  async getDecisionCard(cardId: string) {
+    return this.request<{ card: any; analyticsDepth?: number }>('GET', `/v1/decision-cards/${cardId}`);
+  }
+
+  async replayDecisionCard(cardId: string) {
+    return this.request<{ cardId: string; stored: any; recomputed: any; drift: any }>(
+      'POST',
+      `/v1/decision-cards/${cardId}/replay`
+    );
+  }
+
   async getBacktests() {
     return this.request<{
       results: Array<{
@@ -564,6 +707,43 @@ class ApiClient {
     name?: string;
   }) {
     return this.request<{ result: unknown; disclaimer?: string }>('POST', '/v1/backtest', params);
+  }
+
+  async runStrategySimulation(params: {
+    symbol: string;
+    strategyType: string;
+    strategyTag?: string;
+    startDate?: string;
+    endDate?: string;
+    initialCapital?: number;
+    params?: Record<string, number>;
+  }) {
+    return this.request<{ simulation: any; performance: any; window: any; analyticsDepth?: number; disclaimer?: string }>(
+      'POST',
+      '/v1/strategy-simulator',
+      params
+    );
+  }
+
+  async getStrategyPerformance(params?: {
+    symbol?: string;
+    strategyTag?: string;
+    status?: string;
+    limit?: number;
+    offset?: number;
+  }) {
+    const qs = new URLSearchParams();
+    if (params?.symbol) qs.set('symbol', params.symbol);
+    if (params?.strategyTag) qs.set('strategyTag', params.strategyTag);
+    if (params?.status) qs.set('status', params.status);
+    if (typeof params?.limit === 'number') qs.set('limit', String(params.limit));
+    if (typeof params?.offset === 'number') qs.set('offset', String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<{ strategies: any[]; analyticsDepth?: number }>('GET', `/v1/strategy-performance${query}`);
+  }
+
+  async getStrategyPerformanceDetail(id: string) {
+    return this.request<{ strategy: any }>('GET', `/v1/strategy-performance/${id}`);
   }
 
   async getTradeIdeas(status?: string) {
@@ -620,7 +800,15 @@ class ApiClient {
     quantity: number = 10
   ) {
     // First create a thesis card
-    const thesisResult = await this.createThesis(signal.symbol);
+    const thesisResult = await this.createThesis({
+      symbol: signal.symbol,
+      entryPrice: signal.entry,
+      targetPrice: signal.target,
+      stopLoss: signal.stopLoss,
+      direction: signal.type === 'bearish' ? 'SHORT' : 'LONG',
+      confidence: signal.confidence,
+      reasoning: signal.reasoning,
+    });
     if (!thesisResult.success || !thesisResult.data?.thesis) {
       return {
         success: false,
@@ -643,6 +831,7 @@ class ApiClient {
         signal: string;
         score: number;
         indicators: Record<string, unknown>;
+        integrity?: CandleIntegrity;
         quote: {
           symbol: string;
           price: number;
@@ -669,11 +858,24 @@ class ApiClient {
         reasoning: string[];
         createdAt: string;
         expiresAt: string;
+        dataIntegrity?: CandleIntegrity;
+        decisionCardId?: string | null;
       }>;
     }>('GET', '/v1/trade/theses');
   }
 
-  async createThesis(symbol: string) {
+  async createThesis(input: string | {
+    symbol: string;
+    entryPrice?: number;
+    targetPrice?: number;
+    stopLoss?: number;
+    direction?: string;
+    signal?: string;
+    confidence?: number;
+    reasoning?: string | string[];
+    decisionCardId?: string | null;
+  }) {
+    const payload = typeof input === 'string' ? { symbol: input } : input;
     return this.request<{
       thesis: {
         id: string;
@@ -684,8 +886,10 @@ class ApiClient {
         stopLoss: number;
         confidence: number;
         reasoning: string[];
+        dataIntegrity?: CandleIntegrity;
+        decisionCardId?: string | null;
       };
-    }>('POST', '/v1/trade/theses', { symbol });
+    }>('POST', '/v1/trade/theses', payload);
   }
 
   async getPaperTrades() {
@@ -693,15 +897,24 @@ class ApiClient {
       trades: Array<{
         id: string;
         thesisId: string;
+        decisionCardId?: string | null;
         symbol: string;
         side: string;
         quantity: number;
         entryPrice: number;
+        entryPriceRaw?: number;
         currentPrice?: number;
         exitPrice?: number;
+        exitPriceRaw?: number;
         status: string;
         pnl?: number;
         pnlPercent?: number;
+        fees?: number;
+        entryFees?: number;
+        exitFees?: number;
+        entrySlippageBps?: number;
+        exitSlippageBps?: number;
+        dataIntegrity?: CandleIntegrity;
         openedAt: string;
         closedAt?: string;
       }>;
@@ -711,6 +924,11 @@ class ApiClient {
         closedTrades: number;
         winRate: number;
         totalPnl: number;
+        realizedPnl: number;
+        unrealizedPnl: number;
+        totalFees: number;
+        avgSlippageBps: number;
+        maxDrawdown: number;
         portfolioValue: number | null;
       };
       portfolio: { cash: number; positions: Record<string, number> };
@@ -978,7 +1196,29 @@ class ApiClient {
 
   // Alpaca Trading
   async getAlpacaStatus() {
-    return this.request<{ enabled: boolean; endpoint: string }>('GET', '/v1/alpaca/status');
+    return this.request<{
+      connected: boolean;
+      endpoint?: string;
+      environment?: 'paper' | 'live';
+      keyLast4?: string | null;
+      lastVerifiedAt?: string | null;
+      liveTradingEnabled?: boolean;
+      enabled?: boolean;
+    }>('GET', '/v1/alpaca/status');
+  }
+
+  async connectAlpaca(params: { apiKey: string; apiSecret: string; environment?: 'paper' | 'live'; endpoint?: string }) {
+    return this.request<{
+      connected: boolean;
+      endpoint: string;
+      environment: 'paper' | 'live';
+      keyLast4?: string;
+      accountNumber?: string;
+    }>('POST', '/v1/alpaca/connect', params);
+  }
+
+  async disconnectAlpaca() {
+    return this.request<{ disconnected: boolean }>('DELETE', '/v1/alpaca/connect');
   }
 
   async getAlpacaAccount() {
@@ -1001,6 +1241,19 @@ class ApiClient {
     });
   }
 
+  async getAlpacaHistory(params?: { period?: string; timeframe?: string }) {
+    const qs = new URLSearchParams();
+    if (params?.period) qs.set('period', params.period);
+    if (params?.timeframe) qs.set('timeframe', params.timeframe);
+    const query = qs.toString();
+    return this.request<{
+      period: string;
+      timeframe: string;
+      plan: string;
+      history: Array<{ timestamp: string; equity: number; profitLoss: number; profitLossPct: number }>;
+    }>('GET', `/v1/alpaca/history${query ? `?${query}` : ''}`);
+  }
+
   // Market Scanner
   async scanMarket(watchlistId: string = 'default', filters?: any) {
     return this.request<{ results: any[]; scannedAt: string }>('POST', '/v1/trade/scan', { watchlistId, filters });
@@ -1010,14 +1263,41 @@ class ApiClient {
   async getWatchlists() {
     return this.request<{ watchlists: any[] }>('GET', '/v1/watchlists');
   }
+  // Deterministic Screener (Nova Hub)
+  async runScreener(params?: {
+    symbols?: string[];
+    maxSymbols?: number;
+    minConfidence?: number;
+    signalType?: 'all' | 'bullish' | 'bearish';
+    save?: boolean;
+    name?: string;
+  }) {
+    return this.request<{ signals: any[]; scannedAt: string; reportId?: string }>(
+      'POST',
+      '/v1/screener/scan',
+      params || {}
+    );
+  }
+
+  async saveScreenerReport(params: { name?: string; signals: any[]; settings?: any; scannedAt?: string }) {
+    return this.request<{ reportId: string; scannedAt: string }>('POST', '/v1/screener/reports', params);
+  }
+
+  async getScreenerReports() {
+    return this.request<{ reports: any[] }>('GET', '/v1/screener/reports');
+  }
+
+  async getScreenerReport(reportId: string) {
+    return this.request<{ report: any }>('GET', `/v1/screener/reports/${reportId}`);
+  }
 
   // AI Screener
   async getAIScreenerStatus() {
-    return this.request<{ ready: boolean; openai: boolean; polygon: boolean }>('GET', '/v1/ai-screener/status');
+    return this.request<{ ready: boolean; openai: boolean; marketdata?: boolean; polygon?: boolean }>('GET', '/v1/ai-screener/status');
   }
 
   async runAIScreener(params?: { maxStocks?: number; minConfidence?: number; signalType?: string }) {
-    return this.request<{ signals: any[]; count: number }>('POST', '/v1/ai-screener/scan', params || {});
+    return this.request<{ signals: any[]; count: number; scannedAt?: string }>('POST', '/v1/ai-screener/scan', params || {});
   }
 
   async analyzeStockWithAI(symbol: string) {

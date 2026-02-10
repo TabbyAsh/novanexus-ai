@@ -1,6 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback, Suspense } from 'react';
+import { useSearchParams, useRouter } from 'next/navigation';
 import { api } from '@/lib/api';
 import {
   Lightbulb,
@@ -34,15 +35,21 @@ interface Thesis {
   expiresAt: string;
 }
 
-export default function ThesisPage() {
+// Phase 6.1: Inner component that uses searchParams (needs Suspense wrapper)
+function ThesisPageContent() {
+  const searchParams = useSearchParams();
+  const router = useRouter();
   const [theses, setTheses] = useState<Thesis[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [isGenerating, setIsGenerating] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [selectedThesis, setSelectedThesis] = useState<Thesis | null>(null);
+  const [autoGenerateTriggered, setAutoGenerateTriggered] = useState(false);
 
-  const [generateSymbol, setGenerateSymbol] = useState('');
+  // Phase 6.1: Read symbol from URL query param for direct routing
+  const urlSymbol = searchParams.get('symbol')?.toUpperCase() || '';
+  const [generateSymbol, setGenerateSymbol] = useState(urlSymbol);
   const [formData, setFormData] = useState({
     symbol: '',
     direction: 'LONG',
@@ -53,11 +60,14 @@ export default function ThesisPage() {
     reasoning: '',
   });
 
+  // Phase 6.1: Sync URL symbol to state when it changes
   useEffect(() => {
-    loadTheses();
-  }, []);
+    if (urlSymbol && urlSymbol !== generateSymbol) {
+      setGenerateSymbol(urlSymbol);
+    }
+  }, [urlSymbol]);
 
-  const loadTheses = async () => {
+  const loadTheses = useCallback(async () => {
     setIsLoading(true);
     try {
       const result = await api.getTradeIdeas();
@@ -70,20 +80,26 @@ export default function ThesisPage() {
       setTheses([]);
     }
     setIsLoading(false);
-  };
+  }, []);
 
-  const handleAIGenerate = async () => {
-    if (!generateSymbol) return;
+  // Phase 6.1: Auto-generate when symbol is provided via URL
+  const handleAIGenerate = useCallback(async (symbolOverride?: string) => {
+    const symbol = symbolOverride || generateSymbol;
+    if (!symbol) return;
     setIsGenerating(true);
     setError(null);
 
     try {
-      const result = await api.generateThesis(generateSymbol.toUpperCase());
+      const result = await api.generateThesis(symbol.toUpperCase());
 
       if (result.success && result.data) {
         loadTheses();
         setGenerateSymbol('');
         setSelectedThesis((result.data as any).thesis ?? null);
+        // Clear URL param after successful generation
+        if (urlSymbol) {
+          router.replace('/dashboard/thesis');
+        }
       } else {
         setError(result.error?.message || 'Failed to generate thesis');
       }
@@ -91,7 +107,19 @@ export default function ThesisPage() {
       setError('Failed to generate thesis');
     }
     setIsGenerating(false);
-  };
+  }, [generateSymbol, urlSymbol, router, loadTheses]);
+
+  useEffect(() => {
+    loadTheses();
+  }, [loadTheses]);
+
+  // Phase 6.1: Auto-trigger generation when symbol is provided via URL
+  useEffect(() => {
+    if (urlSymbol && !autoGenerateTriggered && !isLoading) {
+      setAutoGenerateTriggered(true);
+      handleAIGenerate(urlSymbol);
+    }
+  }, [urlSymbol, autoGenerateTriggered, isLoading, handleAIGenerate]);
 
   const handleManualCreate = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -171,7 +199,7 @@ export default function ThesisPage() {
                 placeholder="Enter symbol (e.g., AAPL, TSLA)"
               />
               <button
-                onClick={handleAIGenerate}
+                onClick={() => handleAIGenerate()}
                 disabled={isGenerating || !generateSymbol}
                 className="flex items-center gap-2 px-6 py-2 bg-purple-600 hover:bg-purple-700 disabled:bg-purple-600/50 text-white font-medium rounded-lg transition"
               >
@@ -471,5 +499,14 @@ export default function ThesisPage() {
         </div>
       )}
     </div>
+  );
+}
+
+// Phase 6.1: Default export with Suspense wrapper for searchParams
+export default function ThesisPage() {
+  return (
+    <Suspense fallback={<div className="p-8 text-gray-400">Loading...</div>}>
+      <ThesisPageContent />
+    </Suspense>
   );
 }

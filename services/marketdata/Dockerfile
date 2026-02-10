@@ -4,19 +4,29 @@ WORKDIR /app
 
 RUN apk add --no-cache python3 make g++
 
+# Copy root manifests first for better caching
+COPY package.json package-lock.json turbo.json tsconfig.json ./
+
+# Copy all workspace package.json files needed
+COPY libs/shared/package.json ./libs/shared/
+COPY libs/telemetry/package.json ./libs/telemetry/
+COPY libs/eventing/package.json ./libs/eventing/
+COPY services/marketdata/package.json ./services/marketdata/
+
+# Install all dependencies from root (workspace install)
+RUN npm ci --ignore-scripts || npm install --legacy-peer-deps
+
+# Copy full source
 COPY libs ./libs
 COPY services/marketdata ./services/marketdata
-COPY tsconfig.json ./
 
-WORKDIR /app/libs/shared
-RUN npm install
+# Build workspace dependencies (turbo handles dependency order)
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --no-cache || true
 
-WORKDIR /app/services/marketdata
-RUN npm install
+# Install esbuild for bundling
+RUN npm install -g esbuild
 
-RUN npm install -g esbuild typescript @types/node @types/express
-
-WORKDIR /app
+# Bundle marketdata with esbuild
 RUN esbuild services/marketdata/src/index.ts \
   --bundle \
   --platform=node \

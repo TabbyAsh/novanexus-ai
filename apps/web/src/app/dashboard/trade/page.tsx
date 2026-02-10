@@ -17,12 +17,29 @@ import {
   XCircle,
   BarChart3,
 } from 'lucide-react';
+interface CandleIntegrity {
+  source_type: string;
+  source_identifier: string;
+  latency_class: string;
+  confidence_score: number;
+  timestamp_range: {
+    start: string;
+    end: string;
+    expected: number;
+    actual: number;
+    missing: number;
+    gapFill?: boolean;
+    gapFillCount?: number;
+  };
+  note?: string;
+}
 
 interface ScanResult {
   symbol: string;
   signal: string;
   score: number;
   indicators: Record<string, unknown>;
+  integrity?: CandleIntegrity;
   quote: {
     symbol: string;
     price: number;
@@ -44,6 +61,7 @@ interface Thesis {
   reasoning: string[];
   createdAt: string;
   expiresAt: string;
+  dataIntegrity?: CandleIntegrity;
 }
 
 interface PaperTrade {
@@ -53,11 +71,19 @@ interface PaperTrade {
   side: string;
   quantity: number;
   entryPrice: number;
+  entryPriceRaw?: number;
   currentPrice?: number;
   exitPrice?: number;
+  exitPriceRaw?: number;
   status: string;
   pnl?: number;
   pnlPercent?: number;
+  fees?: number;
+  entryFees?: number;
+  exitFees?: number;
+  entrySlippageBps?: number;
+  exitSlippageBps?: number;
+  dataIntegrity?: CandleIntegrity;
   openedAt: string;
   closedAt?: string;
 }
@@ -68,6 +94,11 @@ interface TradeStats {
   closedTrades: number;
   winRate: number;
   totalPnl: number;
+  realizedPnl: number;
+  unrealizedPnl: number;
+  totalFees: number;
+  avgSlippageBps: number;
+  maxDrawdown: number;
   portfolioValue: number | null;
 }
 
@@ -138,8 +169,20 @@ export default function TradePage() {
     setIsLoading(false);
   };
 
-  const formatCurrency = (value: number) => {
+  const formatCurrency = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+  };
+
+  const formatIntegrity = (integrity?: CandleIntegrity) => {
+    if (!integrity) return '—';
+    const scorePct = Math.round((integrity.confidence_score <= 1 ? integrity.confidence_score * 100 : integrity.confidence_score));
+    return `${integrity.source_type} • ${integrity.latency_class} • ${scorePct}%`;
+  };
+
+  const formatDrawdown = (value: number | null | undefined) => {
+    if (value === null || value === undefined || !Number.isFinite(value)) return '—';
+    return `${value.toFixed(2)}%`;
   };
 
   return (
@@ -152,7 +195,8 @@ export default function TradePage() {
 
       {/* Stats */}
       {stats && (
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+        <>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-4">
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
             <div className="flex items-center gap-3">
               <div className="p-2 bg-blue-500/20 rounded-lg">
@@ -203,6 +247,60 @@ export default function TradePage() {
             </div>
           </div>
         </div>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mb-6">
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-green-500/20 rounded-lg">
+                <DollarSign className="w-5 h-5 text-green-400" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-400">Realized P&L</p>
+                <p className={`text-xl font-bold ${stats.realizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {formatCurrency(stats.realizedPnl)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-cyan-500/20 rounded-lg">
+                <ArrowUpRight className="w-5 h-5 text-cyan-400" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-400">Unrealized P&L</p>
+                <p className={`text-xl font-bold ${stats.unrealizedPnl >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                  {formatCurrency(stats.unrealizedPnl)}
+                </p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-indigo-500/20 rounded-lg">
+                <BarChart3 className="w-5 h-5 text-indigo-400" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-400">Max Drawdown</p>
+                <p className="text-xl font-bold text-indigo-300">{formatDrawdown(stats.maxDrawdown)}</p>
+              </div>
+            </div>
+          </div>
+
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+            <div className="flex items-center gap-3">
+              <div className="p-2 bg-yellow-500/20 rounded-lg">
+                <AlertTriangle className="w-5 h-5 text-yellow-400" />
+              </div>
+              <div>
+                <p className="text-sm text-gray-400">Avg Slippage</p>
+                <p className="text-xl font-bold text-yellow-300">{stats.avgSlippageBps.toFixed(2)} bps</p>
+              </div>
+            </div>
+          </div>
+        </div>
+        </>
       )}
 
       {/* Tabs */}
@@ -295,6 +393,10 @@ export default function TradePage() {
                         'text-yellow-400'
                       }`}>{result.score}/100</span>
                     </div>
+                    <div className="flex justify-between text-sm">
+                      <span className="text-gray-400">Integrity</span>
+                      <span className="text-gray-300">{formatIntegrity(result.integrity)}</span>
+                    </div>
                   </div>
 
                   <button
@@ -382,6 +484,10 @@ export default function TradePage() {
                     </ul>
                   </div>
 
+                  <div className="text-xs text-gray-500 mb-4">
+                    Integrity: <span className="text-gray-300">{formatIntegrity(thesis.dataIntegrity)}</span>
+                  </div>
+
                   <div className="flex gap-2">
                     <button
                       onClick={() => handleOpenTrade(thesis.id)}
@@ -456,6 +562,25 @@ export default function TradePage() {
                     <div>
                       <div className="text-gray-400 mb-1">Exit</div>
                       <div className="text-white">{trade.exitPrice ? formatCurrency(trade.exitPrice) : '-'}</div>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-4 text-xs text-gray-400">
+                    <div>
+                      <div>Fees</div>
+                      <div className="text-gray-200">{formatCurrency(trade.fees)}</div>
+                    </div>
+                    <div>
+                      <div>Entry Slip</div>
+                      <div className="text-gray-200">{trade.entrySlippageBps !== undefined ? `${trade.entrySlippageBps.toFixed(2)} bps` : '—'}</div>
+                    </div>
+                    <div>
+                      <div>Exit Slip</div>
+                      <div className="text-gray-200">{trade.exitSlippageBps !== undefined ? `${trade.exitSlippageBps.toFixed(2)} bps` : '—'}</div>
+                    </div>
+                    <div>
+                      <div>Integrity</div>
+                      <div className="text-gray-200">{formatIntegrity(trade.dataIntegrity)}</div>
                     </div>
                   </div>
 

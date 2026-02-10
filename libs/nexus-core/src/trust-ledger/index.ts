@@ -94,7 +94,7 @@ export interface Explanation {
     questions?: string[];
   };
   
-  /** Was this explanation accurate? (determined later) */
+  /** Was this explanation accurate? (determined after evaluation) */
   accuracy?: {
     score: number;
     determinedAt: number;
