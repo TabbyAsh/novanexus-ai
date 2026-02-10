@@ -238,12 +238,14 @@ const TESTS = [
       if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
       try {
         const data = JSON.parse(res.body);
-        if (data.success && Array.isArray(data.data?.signals)) {
-          const count = data.data.signals.length;
-          if (count === 0) return { ok: false, error: 'Screener returned empty signals' };
-          return { ok: true, note: `${count} signals returned` };
+        // Screener returns data.results (scan) or data.signals (AI screener)
+        const results = data.data?.results || data.data?.signals;
+        if (data.success && Array.isArray(results)) {
+          const count = results.length;
+          if (count === 0) return { ok: false, error: 'Screener returned empty results' };
+          return { ok: true, note: `${count} results returned` };
         }
-        return { ok: false, error: 'No signals array in response' };
+        return { ok: false, error: 'No results/signals array in response' };
       } catch {
         return { ok: false, error: 'Invalid JSON' };
       }
