@@ -2870,6 +2870,16 @@ app.post('/v1/guided/flow', authMiddleware, async (req: AuthenticatedRequest, re
 
 type ScreenerQualification = 'QUALIFIED' | 'NEAR_QUALIFIED' | 'NOT_QUALIFIED';
 
+type StrategyResult = {
+  strategyId: string;
+  fitness: number;        // 0-100
+  signalStrength: number; // 0-100
+  stability: number;      // 0-100
+  reasons: string[];
+  riskFlags: string[];
+  invalidation: string;
+};
+
 type ScreenerSignal = {
   symbol: string;
   name: string;
@@ -2887,6 +2897,12 @@ type ScreenerSignal = {
   qualification: ScreenerQualification;
   qualificationReasons: string[];
   fallbackReason?: string;
+  // Phase 7.3 additions
+  strategyId?: string;
+  fitness?: number;
+  signalStrength?: number;
+  trust?: number;
+  riskFlags?: string[];
   indicators?: {
     rsi: number | null;
     sma20: number | null;
@@ -2897,14 +2913,341 @@ type ScreenerSignal = {
   };
 };
 
+// ============================================
+// Strategy Modules (Phase 7.3)
+// ============================================
+
+function evalMomentumBreakout(price: number, indicators: HubIndicators): StrategyResult {
+  const rsi = indicators.rsi ?? 50;
+  const sma20 = indicators.sma20 ?? price;
+  const sma50 = indicators.sma50 ?? price;
+  const macdHist = indicators.macd?.histogram ?? 0;
+  
+  const reasons: string[] = [];
+  const riskFlags: string[] = [];
+  let fitness = 0;
+  let signalStrength = 0;
+  let stability = 50;
+
+  // Momentum breakout: price above MAs with positive momentum
+  if (price > sma20 && price > sma50) {
+    fitness += 30;
+    signalStrength += 25;
+    reasons.push('Price above key MAs');
+  }
+  if (macdHist > 0) {
+    fitness += 20;
+    signalStrength += 20;
+    reasons.push('MACD momentum positive');
+  }
+  if (rsi > 50 && rsi < 70) {
+    fitness += 15;
+    stability += 10;
+    reasons.push('RSI in bullish zone');
+  }
+  if (sma20 > sma50) {
+    fitness += 15;
+    stability += 15;
+    reasons.push('MA alignment bullish');
+  }
+  if (rsi > 70) {
+    riskFlags.push('OVERBOUGHT_RSI');
+    stability -= 15;
+  }
+  if (price > sma20 * 1.05) {
+    riskFlags.push('EXTENDED_FROM_MA');
+  }
+
+  return {
+    strategyId: 'momentum_breakout',
+    fitness: Math.min(100, Math.max(0, fitness)),
+    signalStrength: Math.min(100, Math.max(0, signalStrength)),
+    stability: Math.min(100, Math.max(0, stability)),
+    reasons,
+    riskFlags,
+    invalidation: 'Close below SMA20',
+  };
+}
+
+function evalMeanReversion(price: number, indicators: HubIndicators): StrategyResult {
+  const rsi = indicators.rsi ?? 50;
+  const sma20 = indicators.sma20 ?? price;
+  const sma50 = indicators.sma50 ?? price;
+  
+  const reasons: string[] = [];
+  const riskFlags: string[] = [];
+  let fitness = 0;
+  let signalStrength = 0;
+  let stability = 50;
+
+  // Mean reversion: oversold conditions
+  if (rsi < 35) {
+    fitness += 35;
+    signalStrength += 30;
+    reasons.push(`RSI ${rsi.toFixed(0)} oversold`);
+  } else if (rsi < 45) {
+    fitness += 15;
+    signalStrength += 15;
+    reasons.push('RSI approaching oversold');
+  }
+  if (price < sma20 * 0.97) {
+    fitness += 25;
+    signalStrength += 20;
+    reasons.push('Price extended below SMA20');
+  }
+  if (price < sma50 * 0.95) {
+    fitness += 20;
+    signalStrength += 15;
+    reasons.push('Price extended below SMA50');
+  }
+  if (rsi < 25) {
+    riskFlags.push('EXTREME_OVERSOLD');
+  }
+  if (sma20 < sma50) {
+    riskFlags.push('DOWNTREND_ACTIVE');
+    stability -= 20;
+  }
+
+  return {
+    strategyId: 'mean_reversion',
+    fitness: Math.min(100, Math.max(0, fitness)),
+    signalStrength: Math.min(100, Math.max(0, signalStrength)),
+    stability: Math.min(100, Math.max(0, stability)),
+    reasons,
+    riskFlags,
+    invalidation: 'RSI fails to recover above 40',
+  };
+}
+
+function evalTrendContinuation(price: number, indicators: HubIndicators): StrategyResult {
+  const rsi = indicators.rsi ?? 50;
+  const sma20 = indicators.sma20 ?? price;
+  const sma50 = indicators.sma50 ?? price;
+  const sma200 = indicators.sma200 ?? price;
+  const macdHist = indicators.macd?.histogram ?? 0;
+  
+  const reasons: string[] = [];
+  const riskFlags: string[] = [];
+  let fitness = 0;
+  let signalStrength = 0;
+  let stability = 60;
+
+  // Trend continuation: established trend with pullback entry
+  const bullishTrend = sma20 > sma50 && sma50 > sma200;
+  if (bullishTrend) {
+    fitness += 30;
+    stability += 15;
+    reasons.push('Bullish MA alignment');
+  }
+  if (price > sma200 && price >= sma50 * 0.98 && price <= sma20 * 1.02) {
+    fitness += 25;
+    signalStrength += 30;
+    reasons.push('Price at trend support');
+  }
+  if (rsi > 40 && rsi < 60) {
+    fitness += 15;
+    stability += 10;
+    reasons.push('RSI neutral (pullback zone)');
+  }
+  if (macdHist > 0) {
+    fitness += 10;
+    signalStrength += 15;
+    reasons.push('MACD still positive');
+  }
+  if (price < sma50) {
+    riskFlags.push('BELOW_KEY_MA');
+    stability -= 20;
+  }
+
+  return {
+    strategyId: 'trend_continuation',
+    fitness: Math.min(100, Math.max(0, fitness)),
+    signalStrength: Math.min(100, Math.max(0, signalStrength)),
+    stability: Math.min(100, Math.max(0, stability)),
+    reasons,
+    riskFlags,
+    invalidation: 'Close below SMA50',
+  };
+}
+
+function evalVolatilityExpansion(price: number, indicators: HubIndicators): StrategyResult {
+  const rsi = indicators.rsi ?? 50;
+  const sma20 = indicators.sma20 ?? price;
+  const macdHist = indicators.macd?.histogram ?? 0;
+  
+  const reasons: string[] = [];
+  const riskFlags: string[] = [];
+  let fitness = 0;
+  let signalStrength = 0;
+  let stability = 40; // Lower base stability due to volatility
+
+  // Volatility expansion: looking for breakout moves
+  const priceVsSma = sma20 ? ((price - sma20) / sma20) * 100 : 0;
+  if (Math.abs(priceVsSma) > 3) {
+    fitness += 25;
+    signalStrength += 30;
+    reasons.push(`Price ${priceVsSma > 0 ? 'above' : 'below'} SMA20 by ${Math.abs(priceVsSma).toFixed(1)}%`);
+  }
+  if (rsi > 60 || rsi < 40) {
+    fitness += 20;
+    signalStrength += 20;
+    reasons.push('RSI showing directional momentum');
+  }
+  if (Math.abs(macdHist) > 0.5) {
+    fitness += 20;
+    signalStrength += 15;
+    reasons.push('MACD showing expansion');
+  }
+  if (rsi > 75 || rsi < 25) {
+    riskFlags.push('EXTREME_RSI');
+    stability -= 15;
+  }
+  riskFlags.push('HIGH_VOLATILITY_EXPECTED');
+
+  return {
+    strategyId: 'volatility_expansion',
+    fitness: Math.min(100, Math.max(0, fitness)),
+    signalStrength: Math.min(100, Math.max(0, signalStrength)),
+    stability: Math.min(100, Math.max(0, stability)),
+    reasons,
+    riskFlags,
+    invalidation: 'Volatility contracts without follow-through',
+  };
+}
+
+function evalVolumeBurst(price: number, indicators: HubIndicators): StrategyResult {
+  const rsi = indicators.rsi ?? 50;
+  const sma20 = indicators.sma20 ?? price;
+  const macdHist = indicators.macd?.histogram ?? 0;
+  
+  const reasons: string[] = [];
+  const riskFlags: string[] = [];
+  let fitness = 0;
+  let signalStrength = 0;
+  let stability = 45;
+
+  // Volume burst: strong directional moves (simulated since we don't have volume)
+  // Using price/MA relationships as proxy for volume-driven moves
+  if (price > sma20 * 1.03) {
+    fitness += 30;
+    signalStrength += 35;
+    reasons.push('Strong breakout above SMA20');
+  } else if (price < sma20 * 0.97) {
+    fitness += 30;
+    signalStrength += 35;
+    reasons.push('Strong breakdown below SMA20');
+  }
+  if (macdHist > 1 || macdHist < -1) {
+    fitness += 25;
+    signalStrength += 20;
+    reasons.push('MACD showing strong momentum');
+  }
+  if (rsi > 55 && price > sma20) {
+    fitness += 15;
+    stability += 10;
+    reasons.push('RSI confirms bullish momentum');
+  } else if (rsi < 45 && price < sma20) {
+    fitness += 15;
+    stability += 10;
+    reasons.push('RSI confirms bearish momentum');
+  }
+  riskFlags.push('MOMENTUM_DEPENDENT');
+
+  return {
+    strategyId: 'volume_burst',
+    fitness: Math.min(100, Math.max(0, fitness)),
+    signalStrength: Math.min(100, Math.max(0, signalStrength)),
+    stability: Math.min(100, Math.max(0, stability)),
+    reasons,
+    riskFlags,
+    invalidation: 'Momentum fades without continuation',
+  };
+}
+
+function selectBestStrategy(price: number, indicators: HubIndicators): StrategyResult {
+  const strategies = [
+    evalMomentumBreakout(price, indicators),
+    evalMeanReversion(price, indicators),
+    evalTrendContinuation(price, indicators),
+    evalVolatilityExpansion(price, indicators),
+    evalVolumeBurst(price, indicators),
+  ];
+  
+  // Select strategy with highest combined score
+  return strategies.reduce((best, current) => {
+    const bestScore = best.fitness * 0.4 + best.signalStrength * 0.35 + best.stability * 0.25;
+    const currentScore = current.fitness * 0.4 + current.signalStrength * 0.35 + current.stability * 0.25;
+    return currentScore > bestScore ? current : best;
+  });
+}
+
+function computeTrust(indicators: HubIndicators, dataQuality: 'COMPLETE' | 'PARTIAL' | 'MINIMAL'): number {
+  let trust = 50; // Base trust
+  
+  // Coverage bonus
+  const indicatorCount = [indicators.rsi, indicators.sma20, indicators.sma50, indicators.sma200, indicators.macd?.histogram]
+    .filter(v => v !== null && v !== undefined).length;
+  trust += indicatorCount * 8; // Up to +40
+  
+  // Data quality bonus
+  if (dataQuality === 'COMPLETE') trust += 15;
+  else if (dataQuality === 'PARTIAL') trust += 5;
+  else trust -= 10;
+  
+  // Freshness assumed (would check timestamp in production)
+  trust += 5;
+  
+  return Math.min(100, Math.max(0, trust));
+}
+
+// Expanded universe: 200+ symbols across market caps and sectors
+// Includes mega-cap, large-cap, mid-cap, small-cap for diverse screening
 const DEFAULT_SCREENER_UNIVERSE = [
-  'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'TSLA', 'AMD', 'NFLX', 'INTC',
-  'JPM', 'BAC', 'GS', 'MS', 'WFC', 'V', 'MA', 'PYPL',
-  'XOM', 'CVX', 'COP', 'SLB',
-  'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV',
-  'KO', 'PEP', 'COST', 'WMT', 'TGT',
-  'HD', 'LOW', 'BA', 'CAT', 'GE', 'MMM',
-  'SPY', 'QQQ', 'IWM', 'DIA',
+  // === MEGA-CAP TECH ===
+  'AAPL', 'MSFT', 'NVDA', 'AMZN', 'META', 'GOOGL', 'GOOG', 'TSLA', 'AVGO', 'ORCL',
+  // === LARGE-CAP TECH ===
+  'AMD', 'NFLX', 'INTC', 'CRM', 'ADBE', 'CSCO', 'QCOM', 'TXN', 'NOW', 'IBM',
+  'AMAT', 'LRCX', 'KLAC', 'ADI', 'MCHP', 'MU', 'SNPS', 'CDNS', 'PANW', 'CRWD',
+  // === MID-CAP TECH ===
+  'FTNT', 'ZS', 'DDOG', 'NET', 'SNOW', 'PLTR', 'PATH', 'HUBS', 'OKTA', 'ZM',
+  'DOCU', 'TWLO', 'SPLK', 'TEAM', 'WDAY', 'VEEV', 'ANSS', 'MANH', 'PAYC', 'PCTY',
+  // === SMALL-CAP TECH ===
+  'CYBR', 'TENB', 'QLYS', 'RPD', 'GTLB', 'CFLT', 'MDB', 'ESTC', 'NEWR', 'FROG',
+  'DT', 'JAMF', 'ALRM', 'BL', 'ASAN', 'MNDY', 'BASE', 'VERI', 'AI', 'BIGC',
+  // === FINANCIALS ===
+  'JPM', 'BAC', 'GS', 'MS', 'WFC', 'C', 'USB', 'PNC', 'TFC', 'COF',
+  'SCHW', 'BLK', 'AXP', 'SPGI', 'ICE', 'CME', 'MSCI', 'FIS', 'FISV', 'GPN',
+  'V', 'MA', 'PYPL', 'SQ', 'COIN', 'HOOD', 'AFRM', 'SOFI', 'UPST', 'LC',
+  // === HEALTHCARE ===
+  'UNH', 'JNJ', 'PFE', 'MRK', 'ABBV', 'LLY', 'TMO', 'ABT', 'DHR', 'BMY',
+  'AMGN', 'GILD', 'VRTX', 'REGN', 'MRNA', 'BIIB', 'ISRG', 'DXCM', 'IDXX', 'IQV',
+  'HCA', 'CI', 'ELV', 'HUM', 'CNC', 'MCK', 'CAH', 'ABC', 'CVS', 'WBA',
+  // === CONSUMER ===
+  'KO', 'PEP', 'COST', 'WMT', 'TGT', 'HD', 'LOW', 'MCD', 'SBUX', 'NKE',
+  'DIS', 'CMCSA', 'T', 'VZ', 'TMUS', 'CHTR', 'NFLX', 'ROKU', 'SPOT', 'PARA',
+  'PG', 'CL', 'KMB', 'EL', 'ULTA', 'LULU', 'RH', 'ROST', 'TJX', 'DG',
+  // === INDUSTRIALS ===
+  'BA', 'CAT', 'GE', 'HON', 'UNP', 'RTX', 'LMT', 'NOC', 'GD', 'TXT',
+  'DE', 'EMR', 'ETN', 'PH', 'ROK', 'GNRC', 'IR', 'DOV', 'XYL', 'IDEX',
+  'FDX', 'UPS', 'DAL', 'UAL', 'AAL', 'LUV', 'JBLU', 'ALK', 'SAVE', 'HA',
+  // === ENERGY ===
+  'XOM', 'CVX', 'COP', 'SLB', 'EOG', 'MPC', 'VLO', 'PSX', 'OXY', 'DVN',
+  'HAL', 'BKR', 'FANG', 'PXD', 'APA', 'OVV', 'MTDR', 'CTRA', 'MRO', 'RRC',
+  // === MATERIALS & MINING ===
+  'LIN', 'APD', 'SHW', 'ECL', 'DD', 'DOW', 'NEM', 'FCX', 'NUE', 'STLD',
+  'CLF', 'X', 'AA', 'SCCO', 'TECK', 'RIO', 'BHP', 'VALE', 'MT', 'PKX',
+  // === REAL ESTATE ===
+  'AMT', 'PLD', 'CCI', 'EQIX', 'PSA', 'SPG', 'O', 'DLR', 'WELL', 'AVB',
+  'EQR', 'VTR', 'ARE', 'BXP', 'SLG', 'VNO', 'KIM', 'REG', 'FRT', 'MAA',
+  // === SEMICONDUCTORS (extended) ===
+  'TSM', 'ASML', 'ARM', 'MRVL', 'ON', 'SWKS', 'MPWR', 'ALGM', 'CRUS', 'SMTC',
+  'WOLF', 'ACLS', 'FORM', 'POWI', 'DIOD', 'SLAB', 'SITM', 'AOSL', 'MXL', 'RMBS',
+  // === BIOTECH (extended) ===
+  'ALNY', 'SGEN', 'BMRN', 'INCY', 'EXEL', 'IONS', 'SRPT', 'RARE', 'BLUE', 'NTLA',
+  'CRSP', 'EDIT', 'BEAM', 'VERV', 'PRME', 'IMVT', 'DNLI', 'RLAY', 'AKRO', 'TVTX',
+  // === ETFS (broad market exposure) ===
+  'SPY', 'QQQ', 'IWM', 'DIA', 'VOO', 'VTI', 'IVV', 'ARKK', 'XLK', 'XLF',
+  'XLE', 'XLV', 'XLI', 'XLC', 'XLY', 'XLP', 'XLB', 'XLRE', 'XLU', 'SMH',
 ];
 
 function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators, minConfidence: number): ScreenerSignal | null {
@@ -3032,6 +3375,10 @@ function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators,
 
   const reasoning = `${reasons.join('; ')}. Score ${confidence}/100.`;
 
+  // Phase 7.3: Select best strategy and compute trust
+  const strategy = selectBestStrategy(price, indicators);
+  const trust = computeTrust(indicators, dataQualityFlag);
+
   return {
     symbol,
     name: symbol,
@@ -3048,6 +3395,12 @@ function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators,
     timeframe: '1-3 weeks',
     qualification,
     qualificationReasons,
+    // Phase 7.3 additions
+    strategyId: strategy.strategyId,
+    fitness: strategy.fitness,
+    signalStrength: strategy.signalStrength,
+    trust,
+    riskFlags: strategy.riskFlags,
     indicators: {
       rsi: rsi ?? null,
       sma20,
@@ -3061,10 +3414,11 @@ function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators,
 
 app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId, orgId } = req.user!;
+  const startTime = Date.now();
   const {
     symbols,
-    maxSymbols = 50,
-    minConfidence = 65,
+    maxSymbols = 100, // Phase 7.3: Default to 100 for broader coverage
+    minConfidence = 50, // Phase 7.3: Lower default threshold to show more candidates
     signalType = 'all',
     save = false,
     name,
@@ -3074,7 +3428,8 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   const normalizedUniverse = universe
     .map((s) => String(s).trim().toUpperCase())
     .filter((s) => !!s);
-  const limit = Math.min(200, Math.max(1, Number(maxSymbols) || 50));
+  // Phase 7.3: Allow scanning up to 250 symbols (full universe)
+  const limit = Math.min(250, Math.max(1, Number(maxSymbols) || 100));
   const list = normalizedUniverse.slice(0, limit);
 
   const allSignals: ScreenerSignal[] = [];
@@ -3162,15 +3517,31 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
       totalCandidates: allSignals.length,
     },
     trace: {
+      // Phase 7.3: Enhanced trace envelope
       universeSize: list.length,
       scannedCount: allSignals.length,
+      fetchCoverage: ((list.length - missingDataSymbols.length) / list.length * 100).toFixed(1) + '%',
       qualifiedCount: qualified.length,
       nearQualifiedCount: nearQualified.length,
       notQualifiedCount: notQualified.length,
       missingDataSymbols,
+      missingInputs: missingDataSymbols.length,
       minConfidenceThreshold: minConfidence,
       signalTypeFilter: signalType,
-      rankings: allSignals.slice(0, 10).map(s => ({ symbol: s.symbol, confidence: s.confidence, qualification: s.qualification })),
+      timingMs: Date.now() - startTime,
+      // Phase 7.3: Strategy breakdown
+      strategyDistribution: allSignals.reduce((acc, s) => {
+        acc[s.strategyId || 'unknown'] = (acc[s.strategyId || 'unknown'] || 0) + 1;
+        return acc;
+      }, {} as Record<string, number>),
+      rankings: allSignals.slice(0, 10).map(s => ({
+        symbol: s.symbol,
+        confidence: s.confidence,
+        qualification: s.qualification,
+        strategyId: s.strategyId,
+        trust: s.trust,
+        riskFlags: s.riskFlags,
+      })),
     },
   });
 });
