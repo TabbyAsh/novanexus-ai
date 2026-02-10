@@ -1,0 +1,7 @@
+{
+  "gitSha": "dev",
+  "buildTime": "local",
+  "buildId": "local-dev",
+  "environment": "development",
+  "vercelEnv": null
+}
