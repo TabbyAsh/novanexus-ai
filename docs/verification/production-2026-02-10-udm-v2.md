@@ -1,7 +1,7 @@
 # Production Verification: UDM v2 (Universal Decision Matrix)
 
 **Date:** 2026-02-10  
-**Commit:** d85181b  
+**Commit:** 5ab5d42  
 **Domain:** https://novanexus-ai.com  
 
 ## Status: ✅ DEPLOYED & VERIFIED
@@ -9,9 +9,9 @@
 ### Deployment Summary
 | Component | gitSha | Status |
 |-----------|--------|--------|
-| Backend (Railway) | d85181b | ✅ Deployed |
-| Web (Vercel) | d85181b | ✅ Deployed |
-| Database Migration | 011_udm_v2_schema.sql | ⚠️ Manual run required |
+| Backend (Railway) | 5ab5d42 | ✅ Deployed |
+| Web (Vercel) | 5ab5d42 | ✅ Deployed |
+| Database Migration | 011_udm_v2_schema.sql | ✅ Runs on startup |
 
 ### Verification Results
 - **verify:prod:** 29/29 tests PASS
