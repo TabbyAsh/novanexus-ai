@@ -10,6 +10,15 @@
  */
 const https = require('https');
 const http = require('http');
+const { execSync } = require('child_process');
+
+// Get local git info for stale deploy detection
+let LOCAL_COMMIT = 'unknown';
+try {
+  LOCAL_COMMIT = execSync('git rev-parse HEAD', { encoding: 'utf8' }).trim();
+} catch (e) {
+  // Git not available or not in a repo
+}
 
 // Configuration
 const API_URL = process.argv.find(a => a.startsWith('--url='))?.split('=')[1]
@@ -35,13 +44,27 @@ const TESTS = [
     customCheck: (res) => {
       try {
         const data = JSON.parse(res.body);
+        // Store version data for later stale deploy check
+        global.__versionData = data;
+        
         // Validate required fields
         if (!data.service) return { ok: false, error: 'Missing service field' };
         if (!data.build && !data.commitSha) return { ok: false, error: 'Missing build/commitSha field' };
         if (!data.deployedAt) return { ok: false, error: 'Missing deployedAt field' };
+        
+        // Production identity checks
+        if (!data.environment) return { ok: false, error: 'Missing environment field' };
+        if (data.environment !== 'production') {
+          return { ok: false, error: `Expected env=production, got env=${data.environment}` };
+        }
+        if (data.build === 'dev') {
+          return { ok: false, error: 'build=dev in production (should be commit SHA or cli-*)' };
+        }
+        
         const build = data.build || data.commitSha?.substring(0, 7) || 'unknown';
+        const env = data.environment || 'unknown';
         const features = data.features || {};
-        const notes = [`build: ${build}`];
+        const notes = [`env: ${env}`, `build: ${build}`];
         if (features.serverManagedAlpaca) notes.push('alpaca: server');
         if (features.progressiveBroker) notes.push('broker: progressive');
         return { ok: true, note: notes.join(', ') };
@@ -369,6 +392,29 @@ async function main() {
   }
 
   console.log('✅ PRODUCTION VERIFICATION PASSED\n');
+
+  // Stale deploy detection
+  const versionData = global.__versionData;
+  if (versionData && LOCAL_COMMIT !== 'unknown') {
+    const deployedSha = versionData.commitSha || '';
+    const isGitSha = /^[a-f0-9]{7,40}$/.test(deployedSha);
+    const isCliDeploy = deployedSha.startsWith('cli-deploy-');
+    
+    if (isGitSha && deployedSha !== LOCAL_COMMIT && !LOCAL_COMMIT.startsWith(deployedSha)) {
+      console.log('⚠️  STALE DEPLOY DETECTED');
+      console.log(`   Local HEAD:  ${LOCAL_COMMIT.substring(0, 7)} (${LOCAL_COMMIT})`);
+      console.log(`   Deployed:    ${deployedSha.substring(0, 7)} (${deployedSha})`);
+      console.log('   To redeploy: npm run deploy:prod\n');
+    } else if (isCliDeploy) {
+      console.log('ℹ️  CLI deployment detected (no git SHA)');
+      console.log(`   Build: ${versionData.build}`);
+      console.log(`   Deployed: ${versionData.deployedAt}`);
+      console.log(`   Local HEAD: ${LOCAL_COMMIT.substring(0, 7)}`);
+      console.log('   Note: GitHub-triggered deploys will include git SHA\n');
+    } else if (isGitSha) {
+      console.log(`✅ Deployed commit matches local HEAD: ${deployedSha.substring(0, 7)}\n`);
+    }
+  }
 
   // Output summary for documentation
   console.log('=== Summary for docs/verification/ ===');

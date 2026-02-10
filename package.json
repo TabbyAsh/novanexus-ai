@@ -35,6 +35,7 @@
     "nova:mvp:down": "docker-compose -f docker-compose.mvp.yml down -v",
     "nova:mvp:logs": "docker-compose -f docker-compose.mvp.yml logs -f",
     "verify:prod": "node scripts/verify-prod.js",
+    "deploy:prod": "node scripts/deploy-prod.js",
     "seed:prod": "node scripts/seed-prod.js",
     "deploy:railway": "node scripts/deploy-railway.js",
     "db:migrate:prod": "railway run node scripts/run-migrations.js",

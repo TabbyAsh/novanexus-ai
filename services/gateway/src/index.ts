@@ -433,17 +433,51 @@ app.get('/metrics', (_req: Request, res: Response) => {
 });
 
 // Version endpoint for deployment tracking
-const BUILD_SHA = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || 'dev';
-const BUILD_TIME = process.env.RAILWAY_DEPLOYMENT_TIMESTAMP || new Date().toISOString();
+// Environment detection: Railway sets RAILWAY_ENVIRONMENT for all deploys
+const IS_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME);
+const DEPLOY_ENV = process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development';
+
+// Git SHA detection:
+// - RAILWAY_GIT_COMMIT_SHA: Set by Railway for GitHub-triggered deploys
+// - GIT_COMMIT_SHA: Can be set manually
+// - For CLI deploys without SHA, use deployment timestamp as identifier
+const GIT_SHA_RAW = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '';
+const DEPLOY_TIMESTAMP = process.env.RAILWAY_DEPLOYMENT_TIMESTAMP || new Date().toISOString();
+
+// Determine build identifier
+function getBuildIdentifier(): { build: string; commitSha: string } {
+  if (GIT_SHA_RAW && GIT_SHA_RAW !== 'dev') {
+    return {
+      build: GIT_SHA_RAW.substring(0, 7),
+      commitSha: GIT_SHA_RAW,
+    };
+  }
+  // For CLI deploys in production, use timestamp-based identifier
+  if (IS_RAILWAY || DEPLOY_ENV === 'production') {
+    const ts = new Date(DEPLOY_TIMESTAMP).toISOString().replace(/[-:T]/g, '').substring(0, 14);
+    return {
+      build: `cli-${ts}`,
+      commitSha: `cli-deploy-${DEPLOY_TIMESTAMP}`,
+    };
+  }
+  // Local development
+  return {
+    build: 'local',
+    commitSha: 'local-dev',
+  };
+}
+
+const BUILD_INFO = getBuildIdentifier();
 
 app.get('/version', (_req: Request, res: Response) => {
   res.json({
     service: 'nova-nexus-api',
     version: '1.0.0',
-    build: BUILD_SHA.substring(0, 7),
-    commitSha: BUILD_SHA,
-    deployedAt: BUILD_TIME,
-    environment: process.env.NODE_ENV || 'development',
+    build: BUILD_INFO.build,
+    commitSha: BUILD_INFO.commitSha,
+    deployedAt: DEPLOY_TIMESTAMP,
+    environment: DEPLOY_ENV,
+    railway: IS_RAILWAY,
     features: {
       progressiveBroker: true,
       serverManagedAlpaca: !!(process.env.ALPACA_API_KEY && process.env.ALPACA_SECRET_KEY),
