@@ -1346,6 +1346,27 @@ class ApiClient {
   async getActiveTheses() {
     return this.request<{ theses: any[] }>('GET', '/v1/trade/theses');
   }
+
+  // Phase 7.4: Decision Cards
+  async getCardWallet() {
+    return this.request<{ balance: number; lastUpdated: string }>('GET', '/v1/cards/wallet');
+  }
+
+  async getCardLedger() {
+    return this.request<{ transactions: Array<{ id: string; type: string; amount: number; reason: string; createdAt: string }> }>('GET', '/v1/cards/ledger');
+  }
+
+  async applyCard(params: { symbol: string; strategyId?: string }) {
+    return this.request<{ runId: string; snapshot: any; sim: any; costs: any; tradeoffs: string[]; requiredCards: number }>('POST', '/v1/cards/apply', params);
+  }
+
+  async confirmCard(params: { runId: string }) {
+    return this.request<{ confirmed: boolean; runId: string; paperExecutionId: string; balance: number; execution: any }>('POST', '/v1/cards/confirm', params);
+  }
+
+  async getCardExecutions() {
+    return this.request<{ executions: any[] }>('GET', '/v1/cards/executions');
+  }
 }
 
 export const api = new ApiClient();

@@ -147,18 +147,155 @@ const normalizeSignals = (rawSignals: any[], source: 'ai' | 'deterministic'): Si
   });
 };
 
+// Decision Card Modal
+function DecisionCardModal({ 
+  run, 
+  onClose, 
+  onConfirm,
+  isConfirming 
+}: { 
+  run: { runId: string; snapshot: any; sim: any; costs: any; tradeoffs: string[] };
+  onClose: () => void;
+  onConfirm: (runId: string) => Promise<void>;
+  isConfirming: boolean;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
+      <motion.div
+        initial={{ opacity: 0, scale: 0.95 }}
+        animate={{ opacity: 1, scale: 1 }}
+        className="bg-gradient-to-br from-gray-900 to-gray-800 border border-white/20 rounded-2xl p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto"
+      >
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-xl font-bold text-white flex items-center gap-2">
+            🎴 Decision Card: {run.snapshot.symbol}
+          </h3>
+          <button onClick={onClose} className="text-gray-400 hover:text-white">
+            ✕
+          </button>
+        </div>
+
+        {/* Snapshot Summary */}
+        <div className="mb-4 p-4 rounded-xl bg-white/5 border border-white/10">
+          <p className="text-gray-400 text-xs uppercase mb-2">Snapshot</p>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <span className="text-gray-500">Price:</span>
+              <span className="text-white ml-2">${run.snapshot.price?.toFixed(2)}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Strategy:</span>
+              <span className="text-cyan-400 ml-2">{run.snapshot.strategyId}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Fitness:</span>
+              <span className="text-white ml-2">{run.snapshot.strategyFitness}</span>
+            </div>
+            <div>
+              <span className="text-gray-500">Trust:</span>
+              <span className="text-white ml-2">{run.snapshot.trust}%</span>
+            </div>
+          </div>
+          {run.snapshot.reasons?.length > 0 && (
+            <div className="mt-3">
+              <p className="text-gray-500 text-xs mb-1">Reasons:</p>
+              <ul className="text-xs text-gray-300 list-disc list-inside">
+                {run.snapshot.reasons.slice(0, 3).map((r: string, i: number) => (
+                  <li key={i}>{r}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+
+        {/* Simulation Summary */}
+        <div className="mb-4 p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+          <p className="text-cyan-400 text-xs uppercase mb-2">Simulation Summary</p>
+          <div className="grid grid-cols-2 gap-3 text-sm">
+            <div>
+              <span className="text-gray-400">Expected Return:</span>
+              <span className="text-green-400 ml-2">
+                {run.sim.expectedReturn?.low}% to {run.sim.expectedReturn?.high}%
+              </span>
+            </div>
+            <div>
+              <span className="text-gray-400">Win Probability:</span>
+              <span className="text-white ml-2">{run.sim.winProbability}%</span>
+            </div>
+            <div>
+              <span className="text-gray-400">Max Drawdown:</span>
+              <span className="text-red-400 ml-2">-{run.sim.drawdownEstimate}%</span>
+            </div>
+            <div>
+              <span className="text-gray-400">Time in Trade:</span>
+              <span className="text-white ml-2">{run.sim.timeInTrade}</span>
+            </div>
+          </div>
+          <div className="mt-3 text-xs text-gray-400">
+            Backtest: {run.sim.backtest?.wins}/{run.sim.backtest?.trades} wins ({Math.round((run.sim.backtest?.wins / run.sim.backtest?.trades) * 100)}%)
+          </div>
+        </div>
+
+        {/* Costs & Tradeoffs */}
+        <div className="mb-4 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
+          <p className="text-amber-400 text-xs uppercase mb-2">Cost & Tradeoffs</p>
+          <div className="text-sm">
+            <div className="flex items-center gap-2 mb-2">
+              <span className="text-2xl">🎴</span>
+              <span className="text-white font-bold">1 Card Required</span>
+            </div>
+            {run.tradeoffs?.length > 0 && (
+              <ul className="text-xs text-amber-300/80 list-disc list-inside">
+                {run.tradeoffs.map((t: string, i: number) => (
+                  <li key={i}>{t}</li>
+                ))}
+              </ul>
+            )}
+          </div>
+        </div>
+
+        {/* Actions */}
+        <div className="flex gap-3">
+          <button
+            onClick={onClose}
+            className="flex-1 py-3 rounded-xl border border-white/20 text-gray-300 hover:bg-white/5"
+          >
+            Cancel
+          </button>
+          <motion.button
+            whileHover={{ scale: isConfirming ? 1 : 1.02 }}
+            whileTap={{ scale: isConfirming ? 1 : 0.98 }}
+            disabled={isConfirming}
+            onClick={() => onConfirm(run.runId)}
+            className={`flex-1 py-3 rounded-xl font-bold text-white ${
+              isConfirming
+                ? 'bg-gray-600 cursor-not-allowed'
+                : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:shadow-lg hover:shadow-purple-500/30'
+            }`}
+          >
+            {isConfirming ? '⏳ Confirming...' : '✓ Confirm & Execute'}
+          </motion.button>
+        </div>
+      </motion.div>
+    </div>
+  );
+}
+
 // Signal Card Component with enhanced visuals
-function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow }: { 
+function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow, onApplyCard, cardBalance }: { 
   signal: Signal; 
   index: number;
   onAddToWatchlist: (symbol: string) => void;
   onPaperTrade: (signal: Signal) => void;
   onStartGuidedFlow: (signal: Signal) => Promise<void> | void;
+  onApplyCard: (signal: Signal) => Promise<void>;
+  cardBalance: number;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [isPaperTrading, setIsPaperTrading] = useState(false);
   const [isGuidedFlow, setIsGuidedFlow] = useState(false);
+  const [isApplyingCard, setIsApplyingCard] = useState(false);
   const confidenceLabel = signal.confidenceTag || classifyConfidence(signal.confidence);
   const modelLabel = formatModelName(signal.provenance?.model);
   const candleProvenance = signal.provenance?.candles || null;
@@ -427,6 +564,28 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuid
                                 >
                                   {isGuidedFlow ? '⏳ Starting...' : '🧭 Start Guided Flow'}
                                 </motion.button>
+                                {/* Phase 7.4: Apply Decision Card */}
+                                <motion.button
+                                  whileHover={{ scale: isApplyingCard || cardBalance < 1 ? 1 : 1.02 }}
+                                  whileTap={{ scale: isApplyingCard || cardBalance < 1 ? 1 : 0.98 }}
+                                  disabled={isApplyingCard || cardBalance < 1}
+                                  onClick={async (e) => {
+                                    e.stopPropagation();
+                                    setIsApplyingCard(true);
+                                    try {
+                                      await onApplyCard(signal);
+                                    } finally {
+                                      setIsApplyingCard(false);
+                                    }
+                                  }}
+                                  className={`w-full py-3 rounded-xl text-white font-semibold text-sm transition-all ${
+                                    isApplyingCard || cardBalance < 1
+                                      ? 'bg-gray-600 cursor-not-allowed'
+                                      : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:shadow-lg hover:shadow-indigo-500/30'
+                                  }`}
+                                >
+                                  {isApplyingCard ? '⏳ Applying...' : cardBalance < 1 ? '🎴 No Cards Left' : `🎴 Apply Decision Card (${cardBalance} left)`}
+                                </motion.button>
                                 {/* Phase 6.1: Direct thesis generation link */}
                                 <Link
                                   href={`/dashboard/thesis?symbol=${signal.symbol}`}
@@ -523,6 +682,11 @@ export default function ScreenerPage() {
   const [paperTrade, setPaperTrade] = useState<PaperTrade | null>(null);
   const [paperTradeError, setPaperTradeError] = useState<string | null>(null);
   const [paperTradeLoading, setPaperTradeLoading] = useState(false);
+  // Phase 7.4: Decision Cards state
+  const [cardBalance, setCardBalance] = useState<number>(0);
+  const [cardRun, setCardRun] = useState<{ runId: string; snapshot: any; sim: any; costs: any; tradeoffs: string[] } | null>(null);
+  const [isConfirmingCard, setIsConfirmingCard] = useState(false);
+  const [cardError, setCardError] = useState<string | null>(null);
 
   const formatCurrency = (value: number | null | undefined) => {
     if (value === null || value === undefined || Number.isNaN(value)) return '—';
@@ -744,6 +908,7 @@ export default function ScreenerPage() {
     loadPaperStats();
     loadAlpacaStatus();
     loadUsage();
+    loadCardWallet();
   }, []);
 
   // Handler for adding signal to watchlist
@@ -777,6 +942,63 @@ export default function ScreenerPage() {
       console.error('Failed to open paper trade:', err);
     }
   }, [loadPaperStats]);
+
+  // Phase 7.4: Load card wallet balance
+  const loadCardWallet = useCallback(async () => {
+    try {
+      const result = await api.getCardWallet();
+      if (result.success && result.data) {
+        setCardBalance(result.data.balance ?? 0);
+      }
+    } catch (err) {
+      console.error('Failed to load card wallet:', err);
+    }
+  }, []);
+
+  // Phase 7.4: Apply decision card (create draft run)
+  const handleApplyCard = useCallback(async (signal: Signal) => {
+    setCardError(null);
+    try {
+      const result = await api.applyCard({
+        symbol: signal.symbol,
+        strategyId: (signal as any).strategyId || 'momentum_breakout',
+      });
+      if (result.success && result.data) {
+        setCardRun({
+          runId: result.data.runId,
+          snapshot: result.data.snapshot,
+          sim: result.data.sim,
+          costs: result.data.costs,
+          tradeoffs: result.data.tradeoffs || [],
+        });
+      } else {
+        setCardError(result.error?.message || 'Failed to apply card');
+      }
+    } catch (err) {
+      setCardError((err as Error).message || 'Failed to apply card');
+    }
+  }, []);
+
+  // Phase 7.4: Confirm card (consume and create paper execution)
+  const handleConfirmCard = useCallback(async (runId: string) => {
+    setIsConfirmingCard(true);
+    setCardError(null);
+    try {
+      const result = await api.confirmCard({ runId });
+      if (result.success && result.data) {
+        setCardBalance(result.data.balance ?? cardBalance - 1);
+        setCardRun(null);
+        loadPaperStats();
+        // Could show success toast
+      } else {
+        setCardError(result.error?.message || 'Failed to confirm card');
+      }
+    } catch (err) {
+      setCardError((err as Error).message || 'Failed to confirm card');
+    } finally {
+      setIsConfirmingCard(false);
+    }
+  }, [cardBalance, loadPaperStats]);
 
   const liveTradingAllowed = !!(alpacaStatus?.connected && alpacaStatus.environment === 'live' && alpacaStatus.liveTradingEnabled);
   const executionModeLabel = liveTradingAllowed ? 'LIVE' : 'PAPER';
@@ -821,6 +1043,13 @@ export default function ScreenerPage() {
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               <span className="text-cyan-400 text-sm font-medium">
                 {scanSource === 'deterministic' ? 'Deterministic Fallback' : 'AI Signals'}
+              </span>
+            </div>
+            {/* Phase 7.4: Card Balance */}
+            <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-indigo-500/20 to-violet-500/20 border border-indigo-500/30">
+              <span className="text-xl">🎴</span>
+              <span className="text-indigo-300 text-sm font-medium">
+                {cardBalance} Card{cardBalance !== 1 ? 's' : ''}
               </span>
             </div>
           </div>
@@ -1315,6 +1544,8 @@ export default function ScreenerPage() {
                 onAddToWatchlist={handleAddToWatchlist}
                 onPaperTrade={handlePaperTrade}
                 onStartGuidedFlow={handleStartGuidedFlow}
+                onApplyCard={handleApplyCard}
+                cardBalance={cardBalance}
               />
             ))
           )}
@@ -1340,6 +1571,24 @@ export default function ScreenerPage() {
           </div>
         </motion.div>
       </div>
+      
+      {/* Phase 7.4: Decision Card Modal */}
+      {cardRun && (
+        <DecisionCardModal
+          run={cardRun}
+          onClose={() => setCardRun(null)}
+          onConfirm={handleConfirmCard}
+          isConfirming={isConfirmingCard}
+        />
+      )}
+
+      {/* Card Error Toast */}
+      {cardError && (
+        <div className="fixed bottom-4 right-4 z-50 px-4 py-3 rounded-xl bg-red-500/90 text-white text-sm shadow-lg">
+          {cardError}
+          <button onClick={() => setCardError(null)} className="ml-3 font-bold">×</button>
+        </div>
+      )}
       
       <style jsx global>{`
         @keyframes shimmer {

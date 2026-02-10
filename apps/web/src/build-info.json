@@ -1,7 +1,7 @@
 {
   "gitSha": "dev",
-  "buildTime": "local",
-  "buildId": "local-dev",
-  "environment": "development",
+  "buildTime": "2026-02-10T06:25:50.786Z",
+  "buildId": "build-1770704750786",
+  "environment": "production",
   "vercelEnv": null
 }
