@@ -28,25 +28,25 @@ const TESTS = [
     expect: { status: 200 },
   },
   {
-    name: 'API Version',
+    name: 'API Version (Public)',
     url: `${API_URL}/version`,
     method: 'GET',
-    expect: { status: [200, 401, 404] }, // 401/404 during deployment transition
-    optional: true, // Optional until deployment completes
+    expect: { status: 200 }, // Must be public - no auth required
     customCheck: (res) => {
-      if (res.status === 401 || res.status === 404) {
-        return { ok: true, note: 'Version endpoint not yet deployed' };
-      }
       try {
         const data = JSON.parse(res.body);
-        const build = data.build || 'unknown';
+        // Validate required fields
+        if (!data.service) return { ok: false, error: 'Missing service field' };
+        if (!data.build && !data.commitSha) return { ok: false, error: 'Missing build/commitSha field' };
+        if (!data.deployedAt) return { ok: false, error: 'Missing deployedAt field' };
+        const build = data.build || data.commitSha?.substring(0, 7) || 'unknown';
         const features = data.features || {};
         const notes = [`build: ${build}`];
         if (features.serverManagedAlpaca) notes.push('alpaca: server');
         if (features.progressiveBroker) notes.push('broker: progressive');
         return { ok: true, note: notes.join(', ') };
       } catch {
-        return { ok: false, error: 'Invalid version response' };
+        return { ok: false, error: 'Invalid version response JSON' };
       }
     },
   },
