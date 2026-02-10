@@ -438,32 +438,51 @@ const IS_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SER
 const DEPLOY_ENV = process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development';
 
 // Git SHA detection:
+// - GIT_SHA: Injected by deploy-prod.js from local HEAD (preferred)
 // - RAILWAY_GIT_COMMIT_SHA: Set by Railway for GitHub-triggered deploys
-// - GIT_COMMIT_SHA: Can be set manually
-// - For CLI deploys without SHA, use deployment timestamp as identifier
-const GIT_SHA_RAW = process.env.RAILWAY_GIT_COMMIT_SHA || process.env.GIT_COMMIT_SHA || '';
+// - Must be a valid 7-40 char hex string to qualify as gitSha
+const GIT_SHA_RAW = process.env.GIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || '';
 const DEPLOY_TIMESTAMP = process.env.RAILWAY_DEPLOYMENT_TIMESTAMP || new Date().toISOString();
 
-// Determine build identifier
-function getBuildIdentifier(): { build: string; commitSha: string } {
-  if (GIT_SHA_RAW && GIT_SHA_RAW !== 'dev') {
+// Validate that a string is a valid git SHA (7-40 hex chars)
+function isValidGitSha(sha: string): boolean {
+  return /^[0-9a-f]{7,40}$/i.test(sha);
+}
+
+// Determine build info with separate gitSha and deployId
+interface BuildInfo {
+  buildId: string;   // Short identifier for build (sha prefix or cli-timestamp)
+  gitSha: string;    // Full git SHA if available, empty string otherwise
+  deployId: string;  // Deployment identifier (timestamp-based for CLI deploys)
+}
+
+function getBuildIdentifier(): BuildInfo {
+  const validSha = isValidGitSha(GIT_SHA_RAW) ? GIT_SHA_RAW : '';
+  const ts = new Date(DEPLOY_TIMESTAMP).toISOString().replace(/[-:T]/g, '').substring(0, 14);
+  
+  if (validSha) {
+    // We have a real git SHA
     return {
-      build: GIT_SHA_RAW.substring(0, 7),
-      commitSha: GIT_SHA_RAW,
+      buildId: validSha.substring(0, 7),
+      gitSha: validSha,
+      deployId: `deploy-${ts}`,
     };
   }
-  // For CLI deploys in production, use timestamp-based identifier
+  
+  // No valid git SHA - use timestamp-based identifiers
   if (IS_RAILWAY || DEPLOY_ENV === 'production') {
-    const ts = new Date(DEPLOY_TIMESTAMP).toISOString().replace(/[-:T]/g, '').substring(0, 14);
     return {
-      build: `cli-${ts}`,
-      commitSha: `cli-deploy-${DEPLOY_TIMESTAMP}`,
+      buildId: `cli-${ts}`,
+      gitSha: '',  // Empty - no valid SHA available
+      deployId: `cli-deploy-${DEPLOY_TIMESTAMP}`,
     };
   }
+  
   // Local development
   return {
-    build: 'local',
-    commitSha: 'local-dev',
+    buildId: 'local',
+    gitSha: '',
+    deployId: 'local-dev',
   };
 }
 
@@ -473,8 +492,12 @@ app.get('/version', (_req: Request, res: Response) => {
   res.json({
     service: 'nova-nexus-api',
     version: '1.0.0',
-    build: BUILD_INFO.build,
-    commitSha: BUILD_INFO.commitSha,
+    buildId: BUILD_INFO.buildId,
+    gitSha: BUILD_INFO.gitSha,
+    deployId: BUILD_INFO.deployId,
+    // Legacy field for backwards compatibility (deprecated)
+    build: BUILD_INFO.buildId,
+    commitSha: BUILD_INFO.gitSha || BUILD_INFO.deployId,
     deployedAt: DEPLOY_TIMESTAMP,
     environment: DEPLOY_ENV,
     railway: IS_RAILWAY,

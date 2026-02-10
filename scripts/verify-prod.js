@@ -49,7 +49,6 @@ const TESTS = [
         
         // Validate required fields
         if (!data.service) return { ok: false, error: 'Missing service field' };
-        if (!data.build && !data.commitSha) return { ok: false, error: 'Missing build/commitSha field' };
         if (!data.deployedAt) return { ok: false, error: 'Missing deployedAt field' };
         
         // Production identity checks
@@ -57,14 +56,29 @@ const TESTS = [
         if (data.environment !== 'production') {
           return { ok: false, error: `Expected env=production, got env=${data.environment}` };
         }
-        if (data.build === 'dev') {
-          return { ok: false, error: 'build=dev in production (should be commit SHA or cli-*)' };
+        
+        // PROD INTEGRITY: Require valid gitSha in production
+        const gitSha = data.gitSha || '';
+        const isValidGitSha = /^[0-9a-f]{7,40}$/i.test(gitSha);
+        
+        if (!isValidGitSha) {
+          // gitSha is missing or invalid - deployment integrity violation
+          return { 
+            ok: false, 
+            error: `PROD INTEGRITY: gitSha missing or invalid (got: "${gitSha || '(empty)'}"). Deploy with deploy:prod to inject GIT_SHA.` 
+          };
         }
         
-        const build = data.build || data.commitSha?.substring(0, 7) || 'unknown';
+        // Validate buildId exists (can be sha prefix or cli-*)
+        const buildId = data.buildId || data.build;
+        if (!buildId) return { ok: false, error: 'Missing buildId field' };
+        if (buildId === 'dev' || buildId === 'local') {
+          return { ok: false, error: `buildId=${buildId} in production (expected sha prefix or cli-*)` };
+        }
+        
         const env = data.environment || 'unknown';
         const features = data.features || {};
-        const notes = [`env: ${env}`, `build: ${build}`];
+        const notes = [`env: ${env}`, `gitSha: ${gitSha.substring(0, 7)}`];
         if (features.serverManagedAlpaca) notes.push('alpaca: server');
         if (features.progressiveBroker) notes.push('broker: progressive');
         return { ok: true, note: notes.join(', ') };
@@ -572,26 +586,25 @@ async function main() {
 
   console.log('✅ PRODUCTION VERIFICATION PASSED\n');
 
-  // Stale deploy detection
+  // PROD INTEGRITY: gitSha validation and stale deploy detection
   const versionData = global.__versionData;
   if (versionData && LOCAL_COMMIT !== 'unknown') {
-    const deployedSha = versionData.commitSha || '';
-    const isGitSha = /^[a-f0-9]{7,40}$/.test(deployedSha);
-    const isCliDeploy = deployedSha.startsWith('cli-deploy-');
+    const gitSha = versionData.gitSha || '';
+    const isValidGitSha = /^[0-9a-f]{7,40}$/i.test(gitSha);
     
-    if (isGitSha && deployedSha !== LOCAL_COMMIT && !LOCAL_COMMIT.startsWith(deployedSha)) {
+    if (!isValidGitSha) {
+      // This should have been caught earlier, but log warning anyway
+      console.log('⚠️  WARNING: Production missing valid gitSha');
+      console.log(`   gitSha: "${gitSha || '(empty)'}"`);
+      console.log(`   deployId: ${versionData.deployId || versionData.commitSha || 'unknown'}`);
+      console.log('   To fix: npm run deploy:prod (will inject GIT_SHA from local HEAD)\n');
+    } else if (gitSha !== LOCAL_COMMIT && !LOCAL_COMMIT.startsWith(gitSha) && !gitSha.startsWith(LOCAL_COMMIT.substring(0, 7))) {
       console.log('⚠️  STALE DEPLOY DETECTED');
       console.log(`   Local HEAD:  ${LOCAL_COMMIT.substring(0, 7)} (${LOCAL_COMMIT})`);
-      console.log(`   Deployed:    ${deployedSha.substring(0, 7)} (${deployedSha})`);
+      console.log(`   Deployed:    ${gitSha.substring(0, 7)} (${gitSha})`);
       console.log('   To redeploy: npm run deploy:prod\n');
-    } else if (isCliDeploy) {
-      console.log('ℹ️  CLI deployment detected (no git SHA)');
-      console.log(`   Build: ${versionData.build}`);
-      console.log(`   Deployed: ${versionData.deployedAt}`);
-      console.log(`   Local HEAD: ${LOCAL_COMMIT.substring(0, 7)}`);
-      console.log('   Note: GitHub-triggered deploys will include git SHA\n');
-    } else if (isGitSha) {
-      console.log(`✅ Deployed commit matches local HEAD: ${deployedSha.substring(0, 7)}\n`);
+    } else {
+      console.log(`✅ Production gitSha matches local HEAD: ${gitSha.substring(0, 7)}\n`);
     }
   }
 

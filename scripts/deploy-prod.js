@@ -73,6 +73,20 @@ async function main() {
     process.exit(1);
   }
 
+  // Inject GIT_SHA environment variable for production traceability
+  if (localCommit && localCommit !== 'unknown') {
+    console.log(`\n🔧 Setting GIT_SHA=${localCommit.substring(0, 7)}...`);
+    try {
+      exec(`npx @railway/cli variables set GIT_SHA=${localCommit}`, {
+        cwd: path.resolve(__dirname, '..'),
+      });
+      console.log('✅ GIT_SHA environment variable set');
+    } catch (e) {
+      console.warn('⚠️  Could not set GIT_SHA variable (may need manual setup)');
+      console.warn('    Run: npx @railway/cli variables set GIT_SHA=' + localCommit);
+    }
+  }
+
   // Deploy
   console.log('\n🚀 Deploying to Railway...\n');
   const startTime = Date.now();
