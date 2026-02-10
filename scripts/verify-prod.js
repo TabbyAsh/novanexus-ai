@@ -226,6 +226,80 @@ const TESTS = [
       return { ok: true, note: `Status ${res.status}` };
     },
   },
+  // Phase 6: Launch Loop Verification
+  {
+    name: 'Screener Returns Signals (Phase 6)',
+    url: `${API_URL}/v1/trade/scan`,
+    method: 'POST',
+    body: JSON.stringify({ symbols: ['SPY', 'QQQ', 'AAPL'], maxSymbols: 25 }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 401] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (data.success && Array.isArray(data.data?.signals)) {
+          const count = data.data.signals.length;
+          if (count === 0) return { ok: false, error: 'Screener returned empty signals' };
+          return { ok: true, note: `${count} signals returned` };
+        }
+        return { ok: false, error: 'No signals array in response' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  {
+    name: 'Thesis Generation Endpoint (Phase 6)',
+    url: `${API_URL}/v1/trade/theses`,
+    method: 'GET',
+    expect: { status: [200, 401, 403] },
+    customCheck: (res) => {
+      if (res.status === 401 || res.status === 403) {
+        return { ok: true, note: 'Auth/Subscription required (expected)' };
+      }
+      try {
+        const data = JSON.parse(res.body);
+        return { ok: true, note: `Theses endpoint active` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  {
+    name: 'Decision Cards Endpoint (Phase 6)',
+    url: `${API_URL}/v1/trade/decision-cards`,
+    method: 'GET',
+    expect: { status: [200, 401, 403] },
+    customCheck: (res) => {
+      if (res.status === 401 || res.status === 403) {
+        return { ok: true, note: 'Auth/Subscription required (expected)' };
+      }
+      try {
+        const data = JSON.parse(res.body);
+        return { ok: true, note: `Decision cards endpoint active` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  {
+    name: 'Paper Trades Endpoint (Phase 6)',
+    url: `${API_URL}/v1/trade/paper-trades`,
+    method: 'GET',
+    expect: { status: [200, 401, 403] },
+    customCheck: (res) => {
+      if (res.status === 401 || res.status === 403) {
+        return { ok: true, note: 'Auth/Subscription required (expected)' };
+      }
+      try {
+        const data = JSON.parse(res.body);
+        return { ok: true, note: `Paper trades endpoint active` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
 ];
 
 // HTTP request helper

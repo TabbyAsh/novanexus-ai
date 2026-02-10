@@ -6,6 +6,8 @@ import { motion } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import GlassCard, { GradientText } from '@/components/ui/GlassCard';
 import { api } from '@/lib/api';
+import OnboardingStepper, { UpgradeCTA } from '@/components/onboarding/OnboardingStepper';
+import { useOnboarding } from '@/contexts/OnboardingContext';
 
 interface QuickAction {
   name: string;
@@ -77,6 +79,16 @@ export default function DashboardPage() {
   const [opportunities, setOpportunities] = useState<OpportunitySignal[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  
+  // Onboarding state
+  const { state: onboardingState, completeStep } = useOnboarding();
+  
+  // Mark opportunities step complete when data loads
+  useEffect(() => {
+    if (opportunities.length > 0 && !onboardingState.completedSteps.includes('opportunities')) {
+      completeStep('opportunities');
+    }
+  }, [opportunities, onboardingState.completedSteps, completeStep]);
 
   const fetchData = useCallback(async () => {
     try {
@@ -190,6 +202,9 @@ export default function DashboardPage() {
   return (
     <DashboardLayout>
       <div className="space-y-6">
+        {/* Onboarding Stepper */}
+        <OnboardingStepper showWelcome={true} />
+        
         {/* Header */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
@@ -352,6 +367,9 @@ export default function DashboardPage() {
             </GlassCard>
           </motion.div>
         </div>
+        
+        {/* Upgrade CTA (shows after completing steps) */}
+        <UpgradeCTA visible={true} />
         
         {/* Welcome Banner */}
         <motion.div

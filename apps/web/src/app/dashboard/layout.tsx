@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuthStore, useKillSwitchStore } from '@/lib/store';
+import { OnboardingProvider } from '@/contexts/OnboardingContext';
 
 // This layout handles authentication only.
 // The visual sidebar/layout is provided by DashboardLayout component in each page.
@@ -46,5 +47,5 @@ export default function DashboardAuthLayout({ children }: { children: React.Reac
     return null;
   }
 
-  return <>{children}</>;
+  return <OnboardingProvider>{children}</OnboardingProvider>;
 }
