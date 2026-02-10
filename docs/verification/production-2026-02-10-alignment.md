@@ -1,8 +1,8 @@
 # Production Alignment & Launch Directive - Verification Evidence
 
 **Date**: 2026-02-10  
-**Commits**: `bcccb10` (bot fix), `98abb3a` (version endpoint), `c3740ab` (verify update)  
-**Status**: ✅ COMPLETE
+**Commits**: `bcccb10` (bot fix), `98abb3a` (version endpoint), `d7779ee` (version public fix)  
+**Status**: ✅ CODE COMPLETE - Awaiting deployment
 
 ## Critical Blocker Resolution
 
@@ -80,8 +80,31 @@ verify:prod 14/14 PASSED
 - **Cache**: Redis V5wQ with volume
 - **Environment**: ALPACA_API_KEY and ALPACA_SECRET_KEY configured
 
+## /version Public Fix (Commit d7779ee)
+
+**Issue**: `/version` was returning 401 (auth required)
+
+**Root Cause**: The stale compiled `services/gateway/src/index.js` didn't include `/version` in PUBLIC_ROUTES (the `.ts` source was correct).
+
+**Fix Applied**:
+1. Removed stale `services/gateway/src/index.js` (prod builds from `.ts` via esbuild)
+2. Verified `/version` is in PUBLIC_ROUTES at line 54 of `services/gateway/src/index.ts`
+3. Updated verify-prod to require `/version` returns 200 without auth
+
+**Deployment Status**: Code pushed to `origin/master`, awaiting Railway deployment.
+
+**Validation Command**:
+```bash
+curl https://abackend-production.up.railway.app/version
+```
+
+**Expected Response (post-deployment)**:
+```json
+{"service":"nova-nexus-api","version":"1.0.0","build":"d7779ee","deployedAt":"...","environment":"production","features":{...}}
+```
+
 ## Notes
 
-- `/version` endpoint may return 401 until Railway completes full deployment cycle
 - Server-managed Alpaca provides paper trading and market data without user configuration
 - Progressive broker model ready for monetization (Pro users can connect personal accounts)
+- Once Railway deploys `d7779ee`, run `npm run verify:prod` to confirm 14/14 pass
