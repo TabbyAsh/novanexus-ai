@@ -376,12 +376,18 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         initial={false}
         animate={{ marginLeft: mainMarginLeft }}
         transition={{ duration: 0.3, ease: 'easeInOut' }}
-        className="min-h-screen"
+        className="min-h-screen flex flex-col"
       >
         <Header onMenuClick={() => setSidebarCollapsed(false)} isMobile={isMobile} />
-        <main className="p-4 md:p-6">
+        <main className="p-4 md:p-6 flex-1">
           {children}
         </main>
+        {/* Build identity footer */}
+        <footer className="px-4 py-2 text-right text-xs text-gray-600 border-t border-white/5">
+          <span title={`Built: ${process.env.NEXT_PUBLIC_BUILD_TIME || 'unknown'}`}>
+            v{(process.env.NEXT_PUBLIC_GIT_SHA || 'dev').substring(0, 7)}
+          </span>
+        </footer>
       </motion.div>
     </div>
   );

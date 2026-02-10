@@ -36,6 +36,8 @@
     "nova:mvp:logs": "docker-compose -f docker-compose.mvp.yml logs -f",
     "verify:prod": "node scripts/verify-prod.js",
     "deploy:prod": "node scripts/deploy-prod.js",
+    "deploy:web": "node scripts/deploy-web.js",
+    "deploy:all": "node scripts/deploy-prod.js && node scripts/deploy-web.js",
     "seed:prod": "node scripts/seed-prod.js",
     "deploy:railway": "node scripts/deploy-railway.js",
     "db:migrate:prod": "railway run node scripts/run-migrations.js",
