@@ -395,11 +395,28 @@ app.post('/v1/tasks', async (req: Request, res: Response) => {
       });
     }
 
+    const normalizedAssigned = normalizeBotType(assignedToBot);
+    if (!normalizedAssigned) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: {
+          code: ERROR_CODES.INVALID_INPUT,
+          message: `Invalid assignedToBot. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+        },
+      });
+    }
+    if (normalizedAssigned.wasNormalized) {
+      logger.warn('Normalized assignedToBot to canonical form', {
+        original: assignedToBot,
+        normalized: normalizedAssigned.normalized,
+      });
+    }
+
     const result = await queryOne<any>(
       `INSERT INTO tasks (org_id, goal_id, assigned_to_bot, type, status, input_json)
        VALUES ($1, $2, $3, $4, 'QUEUED', $5)
        RETURNING *`,
-      [auth.orgId, goalId, assignedToBot, type, JSON.stringify(input || {})]
+      [auth.orgId, goalId, normalizedAssigned.normalized, type, JSON.stringify(input || {})]
     );
 
     if (!result) throw new Error('Failed to insert task');
@@ -459,8 +476,18 @@ app.get('/v1/tasks', async (req: Request, res: Response) => {
       params.push(status);
     }
     if (bot) {
+      const normalizedBot = normalizeBotType(String(bot));
+      if (!normalizedBot) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: {
+            code: ERROR_CODES.INVALID_INPUT,
+            message: `Invalid bot filter. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+          },
+        });
+      }
       sql += ` AND assigned_to_bot = $${paramIndex++}`;
-      params.push(bot);
+      params.push(normalizedBot.normalized);
     }
 
     sql += ' ORDER BY created_at DESC';
@@ -836,6 +863,34 @@ app.get('/v1/kill-switch/status', async (req: Request, res: Response) => {
 // ============================================
 // Bot Registry Routes
 // ============================================
+const CANONICAL_BOT_TYPES = [
+  'tradebot',
+  'storebot',
+  'socialbot',
+  'researchbot',
+  'opsbot',
+  'forgebot',
+] as const;
+
+type CanonicalBotType = typeof CANONICAL_BOT_TYPES[number];
+
+function normalizeBotType(input: string): { normalized: CanonicalBotType; wasNormalized: boolean } | null {
+  if (!input) return null;
+  const raw = String(input).trim();
+  const lower = raw.toLowerCase();
+
+  let normalized: CanonicalBotType | null = null;
+
+  if (lower === 'trade' || lower === 'tradebot') normalized = 'tradebot';
+  if (lower === 'store' || lower === 'storebot') normalized = 'storebot';
+  if (lower === 'social' || lower === 'socialbot') normalized = 'socialbot';
+  if (lower === 'research' || lower === 'researchbot') normalized = 'researchbot';
+  if (lower === 'ops' || lower === 'opsbot') normalized = 'opsbot';
+  if (lower === 'forge' || lower === 'forgebot') normalized = 'forgebot';
+
+  if (!normalized) return null;
+  return { normalized, wasNormalized: raw !== normalized };
+}
 
 export interface BotRegistration {
   id: string;
@@ -860,12 +915,18 @@ app.post('/v1/bots/register', async (req: Request, res: Response) => {
       });
     }
 
-    const validBotTypes = ['tradebot', 'storebot', 'socialbot', 'researchbot', 'opsbot', 'forgebot', 'TRADE', 'STORE', 'SOCIAL', 'ANALYTICS', 'CUSTOM'];
-    if (!validBotTypes.includes(botType)) {
+    const normalized = normalizeBotType(botType);
+    if (!normalized) {
       return res.status(HTTP_STATUS.BAD_REQUEST).json({
         success: false,
-        error: { code: ERROR_CODES.INVALID_INPUT, message: `Invalid botType. Must be one of: ${validBotTypes.join(', ')}` },
+        error: {
+          code: ERROR_CODES.INVALID_INPUT,
+          message: `Invalid botType. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+        },
       });
+    }
+    if (normalized.wasNormalized) {
+      logger.warn('Normalized botType to canonical form', { original: botType, normalized: normalized.normalized });
     }
 
     const result = await queryOne<any>(
@@ -880,7 +941,7 @@ app.post('/v1/bots/register', async (req: Request, res: Response) => {
          updated_at = NOW()
        RETURNING *`,
       [
-        botType,
+        normalized.normalized,
         instanceId,
         JSON.stringify(capabilities || []),
         JSON.stringify(permissions || []),
@@ -899,7 +960,7 @@ app.post('/v1/bots/register', async (req: Request, res: Response) => {
       registeredAt: result.registered_at,
     };
 
-    logger.info('Bot registered', { botType, instanceId });
+    logger.info('Bot registered', { botType: normalized.normalized, instanceId });
     res.status(HTTP_STATUS.CREATED).json({ success: true, data: { bot } });
   } catch (error) {
     logger.error('Failed to register bot', error as Error);
@@ -919,8 +980,18 @@ app.get('/v1/bots', async (req: Request, res: Response) => {
     let paramIndex = 1;
 
     if (type) {
+      const normalizedType = normalizeBotType(String(type));
+      if (!normalizedType) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: {
+            code: ERROR_CODES.INVALID_INPUT,
+            message: `Invalid bot type filter. Must be one of: ${CANONICAL_BOT_TYPES.join(', ')}`,
+          },
+        });
+      }
       sql += ` AND bot_type = $${paramIndex++}`;
-      params.push(type);
+      params.push(normalizedType.normalized);
     }
     if (status) {
       sql += ` AND status = $${paramIndex++}`;
@@ -955,6 +1026,16 @@ app.get('/v1/bots', async (req: Request, res: Response) => {
 // POST /v1/bots/:id/heartbeat - Bot heartbeat
 app.post('/v1/bots/:id/heartbeat', async (req: Request, res: Response) => {
   try {
+    const botId = req.params.id;
+
+    // Guard: reject invalid botId early
+    if (!botId || botId === 'undefined' || botId === 'null') {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Invalid botId - bot registration required' },
+      });
+    }
+
     const { status } = req.body;
 
     const result = await queryOne<any>(
@@ -1007,6 +1088,14 @@ app.delete('/v1/bots/:id', async (req: Request, res: Response) => {
 app.get('/v1/bots/:id/tasks', async (req: Request, res: Response) => {
   try {
     const botId = req.params.id;
+
+    // Guard: reject invalid botId early (prevents DB syntax errors)
+    if (!botId || botId === 'undefined' || botId === 'null') {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Invalid botId - bot registration required' },
+      });
+    }
 
     // Verify bot exists
     const bot = await queryOne<any>('SELECT * FROM bots WHERE id = $1', [botId]);

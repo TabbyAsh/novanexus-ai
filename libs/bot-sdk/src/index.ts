@@ -5,7 +5,7 @@ import { createLogger, Logger, Metrics } from '@nova/telemetry';
 // Bot Types
 // ============================================================================
 
-export type BotType = 'TRADE' | 'STORE' | 'SOCIAL' | 'ANALYTICS' | 'CUSTOM';
+export type BotType = 'tradebot' | 'storebot' | 'socialbot' | 'researchbot' | 'opsbot' | 'forgebot';
 export type BotStatus = 'STARTING' | 'READY' | 'BUSY' | 'STOPPING' | 'STOPPED' | 'ERROR';
 export type TaskStatus = 'QUEUED' | 'RUNNING' | 'DONE' | 'FAILED' | 'CANCELLED';
 
@@ -348,7 +348,8 @@ export class BotClient {
   }
 
   private async sendHeartbeat(): Promise<void> {
-    if (!this.registration) return;
+    // Guard: don't send heartbeat if not registered or no valid botId
+    if (!this.registration?.id) return;
 
     try {
       await this.orchestratorRequest('POST', `/v1/bots/${this.registration.id}/heartbeat`, {
@@ -361,7 +362,8 @@ export class BotClient {
   }
 
   private async pollForTasks(): Promise<void> {
-    if (!this.registration || this.status !== 'READY') return;
+    // Guard: don't poll if not registered, no valid botId, or not ready
+    if (!this.registration?.id || this.status !== 'READY') return;
 
     try {
       const response = await this.orchestratorRequest('GET', `/v1/bots/${this.registration.id}/tasks`);
