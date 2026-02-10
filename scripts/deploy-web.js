@@ -68,17 +68,27 @@ async function main() {
   const startTime = Date.now();
 
   try {
-    // Note: VERCEL_GIT_COMMIT_SHA is auto-set by Vercel for git-based deploys.
-    // For CLI deploys, we need to use `vercel env add` or set build env vars in project settings.
-    // The --env flag in vercel CLI is for runtime env vars, not build-time.
-    // Our next.config.js will use VERCEL_GIT_COMMIT_SHA when available.
+    // Build-time env vars for Vercel CLI deploy
+    // --build-env injects vars at BUILD time (not runtime)
+    const shortSha = localCommit.substring(0, 7);
+    const buildTime = new Date().toISOString();
+    const buildId = `cli-${shortSha}-${Date.now()}`;
     
-    // Deploy to production (--prod flag)
-    // Using execSync with inherit stdio so output streams in real-time
-    execSync(`npx vercel --prod --yes`, { 
+    console.log(`📝 Injecting build-time env vars:`);
+    console.log(`   NEXT_PUBLIC_GIT_SHA=${localCommit}`);
+    console.log(`   NEXT_PUBLIC_BUILD_TIME=${buildTime}`);
+    console.log(`   NEXT_PUBLIC_BUILD_ID=${buildId}\n`);
+    
+    // Deploy to production with build-time env vars
+    const buildEnvFlags = [
+      `--build-env NEXT_PUBLIC_GIT_SHA=${localCommit}`,
+      `--build-env NEXT_PUBLIC_BUILD_TIME=${buildTime}`,
+      `--build-env NEXT_PUBLIC_BUILD_ID=${buildId}`,
+    ].join(' ');
+    
+    execSync(`npx vercel --prod --yes ${buildEnvFlags}`, { 
       cwd: WEB_DIR,
-      stdio: 'inherit',
-      env: { ...process.env, GIT_SHA: localCommit }
+      stdio: 'inherit'
     });
 
     const duration = Math.round((Date.now() - startTime) / 1000);

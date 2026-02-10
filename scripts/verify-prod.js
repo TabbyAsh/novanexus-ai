@@ -94,15 +94,15 @@ const TESTS = [
     expect: { status: [200, 301, 302, 307, 308, 404] }, // 404 ok if frontend not deployed
     optional: true, // Frontend deployment is separate from backend
   },
-  // Phase 7.1: Web build identity verification
+  // Phase 7.1: Web build identity verification (REQUIRED - must have real gitSha)
   {
     name: 'Web Version Endpoint (Phase 7.1)',
     url: `${WEB_URL}/api/version`,
     method: 'GET',
-    expect: { status: [200, 404] },
+    expect: { status: [200] }, // Must exist and return 200
     customCheck: (res) => {
       if (res.status === 404) {
-        return { ok: true, note: 'Web version endpoint not deployed yet' };
+        return { ok: false, error: 'Web /api/version endpoint not deployed' };
       }
       try {
         const data = JSON.parse(res.body);
@@ -112,11 +112,12 @@ const TESTS = [
         const gitSha = data.gitSha || '';
         const isValidGitSha = /^[0-9a-f]{7,40}$/i.test(gitSha);
         
-        if (!isValidGitSha && gitSha !== 'dev') {
-          return { ok: false, error: `Web gitSha invalid: "${gitSha || '(empty)'}"` };
-        }
+        // Phase 7.1: FAIL if gitSha is 'dev' or invalid
         if (gitSha === 'dev') {
-          return { ok: true, note: 'Web build has gitSha=dev (needs redeploy)' };
+          return { ok: false, error: 'Web gitSha=dev (Phase 7.1 violation: must have real SHA). Run: npm run deploy:web' };
+        }
+        if (!isValidGitSha) {
+          return { ok: false, error: `Web gitSha invalid: "${gitSha || '(empty)'}". Run: npm run deploy:web` };
         }
         return { ok: true, note: `Web gitSha: ${gitSha.substring(0, 7)}` };
       } catch {
@@ -760,39 +761,41 @@ async function main() {
     }
   }
   
-  // Phase 7.1: Web build identity check
+  // Phase 7.1: Web build identity check (enforced)
   if (webVersionData) {
     const webGitSha = webVersionData.gitSha || '';
     const isValidWebSha = /^[0-9a-f]{7,40}$/i.test(webGitSha);
     
-    if (webGitSha === 'dev') {
-      console.log('⚠️  WARNING: Web build has gitSha=dev (local dev build or missing GIT_SHA)');
-      console.log('   To fix: npm run deploy:web\n');
-    } else if (!isValidWebSha) {
-      console.log('⚠️  WARNING: Web missing valid gitSha');
-      console.log(`   Web gitSha: "${webGitSha || '(empty)'}"`);
-      console.log('   To fix: npm run deploy:web\n');
-    } else if (LOCAL_COMMIT !== 'unknown' && webGitSha !== LOCAL_COMMIT && !webGitSha.startsWith(LOCAL_COMMIT.substring(0, 7))) {
-      console.log('⚠️  STALE WEB DEPLOY DETECTED');
-      console.log(`   Local HEAD:  ${LOCAL_COMMIT.substring(0, 7)}`);
-      console.log(`   Web:         ${webGitSha.substring(0, 7)}`);
-      console.log('   To redeploy: npm run deploy:web\n');
-    } else {
-      console.log(`✅ Web gitSha matches local HEAD: ${webGitSha.substring(0, 7)}`);
+    if (isValidWebSha) {
+      console.log(`✅ Web gitSha: ${webGitSha.substring(0, 7)}`);
+      
+      // Check if matches local HEAD
+      if (LOCAL_COMMIT !== 'unknown') {
+        if (webGitSha === LOCAL_COMMIT || webGitSha.startsWith(LOCAL_COMMIT.substring(0, 7)) || LOCAL_COMMIT.startsWith(webGitSha.substring(0, 7))) {
+          console.log(`✅ Web gitSha matches local HEAD`);
+        } else {
+          console.log('⚠️  STALE WEB DEPLOY DETECTED');
+          console.log(`   Local HEAD:  ${LOCAL_COMMIT.substring(0, 7)}`);
+          console.log(`   Web:         ${webGitSha.substring(0, 7)}`);
+          console.log('   To redeploy: npm run deploy:web');
+        }
+      }
+      
+      // Check if backend and web are in sync
+      const backendSha = versionData?.gitSha || '';
+      if (backendSha && webGitSha !== backendSha && !webGitSha.startsWith(backendSha.substring(0, 7)) && !backendSha.startsWith(webGitSha.substring(0, 7))) {
+        console.log('⚠️  WEB/BACKEND VERSION MISMATCH');
+        console.log(`   Backend: ${backendSha.substring(0, 7)}`);
+        console.log(`   Web:     ${webGitSha.substring(0, 7)}`);
+        console.log('   This can cause "is not a function" errors. Run: npm run deploy:all');
+      } else if (backendSha) {
+        console.log(`✅ Web and Backend in sync: ${webGitSha.substring(0, 7)}`);
+      }
     }
-    
-    // Check if backend and web are in sync
-    const backendSha = versionData?.gitSha || '';
-    if (isValidWebSha && backendSha && webGitSha !== backendSha) {
-      console.log('⚠️  WEB/BACKEND VERSION MISMATCH');
-      console.log(`   Backend: ${backendSha.substring(0, 7)}`);
-      console.log(`   Web:     ${webGitSha.substring(0, 7)}`);
-      console.log('   This can cause "is not a function" errors. Run: npm run deploy:all\n');
-    } else if (isValidWebSha && backendSha === webGitSha) {
-      console.log(`✅ Web and Backend in sync: ${webGitSha.substring(0, 7)}\n`);
-    }
+    // Note: Invalid/dev gitSha cases are now FAIL conditions in the test itself
+    console.log('');
   } else {
-    console.log('ℹ️  Web version endpoint not available (deploy web to enable)\n');
+    console.log('ℹ️  Web version endpoint not available\n');
   }
 
   // Output summary for documentation
