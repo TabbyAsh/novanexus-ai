@@ -7,15 +7,19 @@
 // 3. We need to detect the actual runtime environment
 
 function getApiBase(): string {
-  // NEXT_PUBLIC_API_URL is the ONLY source of truth for production.
-  // Do NOT auto-detect api.novanexus-ai.com - that domain uses Cloudflare Tunnel
-  // which is unreliable. Production must use Railway/Render URL set in Vercel env vars.
-  if (process.env.NEXT_PUBLIC_API_URL) {
-    return process.env.NEXT_PUBLIC_API_URL;
+  // In browser: use same-origin proxy to avoid CORS issues
+  // The proxy routes to the actual backend (Railway)
+  if (typeof window !== 'undefined') {
+    return '/api/proxy';
   }
   
-  // Development fallback only
-  return 'http://localhost:3000';
+  // Server-side: use direct backend URL
+  if (process.env.BACKEND_URL) {
+    return process.env.BACKEND_URL;
+  }
+  
+  // Fallback to Railway production URL
+  return 'https://abackend-production.up.railway.app';
 }
 
 

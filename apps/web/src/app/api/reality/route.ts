@@ -1,23 +1,24 @@
 import { NextResponse } from 'next/server';
 import buildInfo from '@/build-info.json';
 
-const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || 'https://gateway.novanexus-ai.com';
+// Direct backend URL for server-side checks
+const BACKEND_URL = process.env.BACKEND_URL || 'https://abackend-production.up.railway.app';
 
 export async function GET(request: Request) {
   const host = request.headers.get('host') || 'unknown';
   
-  // Fetch backend version
+  // Fetch backend version directly (server-side)
   let apiGitSha = 'unknown';
   let apiError: string | null = null;
   
   try {
-    const response = await fetch(`${GATEWAY_URL}/version`, {
+    const response = await fetch(`${BACKEND_URL}/version`, {
       cache: 'no-store',
       signal: AbortSignal.timeout(5000),
     });
     if (response.ok) {
       const data = await response.json();
-      apiGitSha = data.gitSha || data.version || 'unknown';
+      apiGitSha = data.gitSha || data.commitSha || data.buildId || 'unknown';
     } else {
       apiError = `Backend returned ${response.status}`;
     }
@@ -37,7 +38,8 @@ export async function GET(request: Request) {
     host,
     webGitSha,
     webBuildTime,
-    apiBaseUrl: GATEWAY_URL,
+    apiBaseUrl: '/api/proxy',  // Client uses same-origin proxy
+    backendUrl: BACKEND_URL,   // Actual backend (for debugging)
     apiGitSha,
     mismatch,
     ...(apiError && { apiError }),
