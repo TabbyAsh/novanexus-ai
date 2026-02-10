@@ -125,6 +125,33 @@ const TESTS = [
       }
     },
   },
+  // Phase 7.2: API Client Contract Verification (REQUIRED - methods must exist)
+  {
+    name: 'Web API Contract (Phase 7.2)',
+    url: `${WEB_URL}/api/contract`,
+    method: 'GET',
+    expect: { status: [200] },
+    customCheck: (res) => {
+      if (res.status === 404) {
+        return { ok: false, error: 'Web /api/contract endpoint not deployed. Run: npm run deploy:web' };
+      }
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) {
+          const missing = data.contract?.missing || [];
+          return { 
+            ok: false, 
+            error: `API CONTRACT VIOLATION: Missing methods: ${missing.join(', ')}. This causes "is not a function" errors.` 
+          };
+        }
+        const present = data.contract?.present || 0;
+        const required = data.contract?.required || 0;
+        return { ok: true, note: `${present}/${required} required methods present` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON from contract endpoint' };
+      }
+    },
+  },
   {
     name: 'Auth Endpoint (Validation)',
     url: `${API_URL}/v1/auth/login`,
