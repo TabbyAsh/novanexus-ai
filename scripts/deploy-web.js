@@ -68,18 +68,18 @@ async function main() {
   const startTime = Date.now();
 
   try {
-    // Set GIT_SHA env var for the deployment
-    // Note: VERCEL_GIT_COMMIT_SHA is auto-set by Vercel for git-based deploys,
-    // but for CLI deploys we pass GIT_SHA explicitly
-    const envFlag = localCommit !== 'unknown' ? `--env GIT_SHA=${localCommit}` : '';
+    // Note: VERCEL_GIT_COMMIT_SHA is auto-set by Vercel for git-based deploys.
+    // For CLI deploys, we need to use `vercel env add` or set build env vars in project settings.
+    // The --env flag in vercel CLI is for runtime env vars, not build-time.
+    // Our next.config.js will use VERCEL_GIT_COMMIT_SHA when available.
     
     // Deploy to production (--prod flag)
-    const result = exec(`npx vercel --prod --yes ${envFlag}`, { 
+    // Using execSync with inherit stdio so output streams in real-time
+    execSync(`npx vercel --prod --yes`, { 
       cwd: WEB_DIR,
-      stdio: 'inherit' // Show output in real-time
+      stdio: 'inherit',
+      env: { ...process.env, GIT_SHA: localCommit }
     });
-    
-    console.log(result);
 
     const duration = Math.round((Date.now() - startTime) / 1000);
     
