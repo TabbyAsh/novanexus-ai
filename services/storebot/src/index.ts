@@ -332,6 +332,257 @@ app.get('/api/products/price-check/:query', async (req: Request, res: Response) 
 });
 
 // ============================================================================
+// Phase 7: Dropshipping MVP - Listing Draft + Export (Keyless)
+// ============================================================================
+
+interface ListingDraft {
+  id: string;
+  productIdea: string;
+  title: string;
+  description: string;
+  category: string;
+  suggestedPrice: number;
+  priceRange: { min: number; max: number };
+  imageRequirements: string[];
+  keywords: string[];
+  targetMarketplace: string;
+  profitMargin: number;
+  confidence: number;
+  createdAt: string;
+}
+
+// In-memory store for listing drafts (would be DB in production)
+const listingDrafts: Map<string, ListingDraft> = new Map();
+
+/**
+ * Generate a listing draft from a product idea
+ */
+function generateListingDraft(productIdea: string, niche?: string): ListingDraft {
+  const id = `listing_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  
+  // Detect category and pricing
+  const q = productIdea.toLowerCase();
+  let category = niche || 'general';
+  let basePrice = 29.99;
+  let margin = 0.30;
+  
+  if (/phone|electronic|gadget|tech/.test(q)) {
+    category = 'electronics';
+    basePrice = 49.99;
+    margin = 0.25;
+  } else if (/fashion|clothing|apparel|shirt|dress/.test(q)) {
+    category = 'fashion';
+    basePrice = 34.99;
+    margin = 0.40;
+  } else if (/home|kitchen|decor|furniture/.test(q)) {
+    category = 'home-garden';
+    basePrice = 39.99;
+    margin = 0.35;
+  } else if (/beauty|skincare|makeup|cosmetic/.test(q)) {
+    category = 'beauty';
+    basePrice = 24.99;
+    margin = 0.45;
+  } else if (/pet|dog|cat|animal/.test(q)) {
+    category = 'pet-supplies';
+    basePrice = 19.99;
+    margin = 0.40;
+  } else if (/toy|game|kids|children/.test(q)) {
+    category = 'toys';
+    basePrice = 24.99;
+    margin = 0.35;
+  }
+  
+  // Generate title variations
+  const titleWords = productIdea.split(' ').map(w => w.charAt(0).toUpperCase() + w.slice(1).toLowerCase());
+  const title = `Premium ${titleWords.join(' ')} - High Quality ${category.charAt(0).toUpperCase() + category.slice(1)} Product`;
+  
+  // Generate description
+  const description = `Introducing our ${productIdea}! ` +
+    `This premium quality product is perfect for ${category === 'fashion' ? 'style-conscious shoppers' : category === 'home-garden' ? 'home enthusiasts' : 'discerning customers'}. ` +
+    `Features include durable construction, modern design, and excellent value. ` +
+    `Order now and experience the difference quality makes!\n\n` +
+    `KEY FEATURES:\n` +
+    `• Premium materials for long-lasting durability\n` +
+    `• Modern, sleek design\n` +
+    `• Easy to use and maintain\n` +
+    `• Fast shipping available\n` +
+    `• 30-day satisfaction guarantee`;
+  
+  // Generate keywords
+  const keywords = [
+    ...productIdea.toLowerCase().split(' ').filter(w => w.length > 2),
+    category,
+    'best seller',
+    'top rated',
+    'premium quality',
+    'fast shipping',
+  ];
+  
+  // Image requirements
+  const imageRequirements = [
+    'Main product image on white background (1000x1000px)',
+    'Lifestyle shot showing product in use',
+    'Close-up of product details/features',
+    'Size comparison or scale reference',
+    'Packaging/unboxing photo',
+  ];
+  
+  const draft: ListingDraft = {
+    id,
+    productIdea,
+    title,
+    description,
+    category,
+    suggestedPrice: basePrice,
+    priceRange: { min: basePrice * 0.8, max: basePrice * 1.5 },
+    imageRequirements,
+    keywords,
+    targetMarketplace: 'shopify',
+    profitMargin: margin,
+    confidence: 70,
+    createdAt: nowTimestamp(),
+  };
+  
+  listingDrafts.set(id, draft);
+  return draft;
+}
+
+// Generate listing draft from product idea
+app.post('/api/dropship/generate', (req: Request, res: Response) => {
+  const { productIdea, niche } = req.body;
+  
+  if (!productIdea) {
+    return res.status(400).json({ success: false, error: 'productIdea is required' });
+  }
+  
+  const draft = generateListingDraft(productIdea, niche);
+  
+  res.json({
+    success: true,
+    data: {
+      draft,
+      message: 'Listing draft generated successfully. Use /api/dropship/export/:id for CSV export.',
+    },
+  });
+});
+
+// List all drafts
+app.get('/api/dropship/drafts', (_req: Request, res: Response) => {
+  const drafts = Array.from(listingDrafts.values()).sort(
+    (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+  );
+  res.json({ success: true, data: { drafts, count: drafts.length } });
+});
+
+// Get single draft
+app.get('/api/dropship/drafts/:id', (req: Request, res: Response) => {
+  const draft = listingDrafts.get(req.params.id);
+  if (!draft) {
+    return res.status(404).json({ success: false, error: 'Draft not found' });
+  }
+  res.json({ success: true, data: { draft } });
+});
+
+// Export draft as CSV (Shopify/WooCommerce compatible)
+app.get('/api/dropship/export/:id', (req: Request, res: Response) => {
+  const draft = listingDrafts.get(req.params.id);
+  if (!draft) {
+    return res.status(404).json({ success: false, error: 'Draft not found' });
+  }
+  
+  const format = req.query.format || 'shopify';
+  
+  // Shopify CSV format
+  const csvHeaders = [
+    'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Product Category', 'Type',
+    'Tags', 'Published', 'Variant SKU', 'Variant Price', 'Variant Compare At Price',
+    'Variant Requires Shipping', 'Variant Taxable', 'Image Src', 'Image Position',
+  ];
+  
+  const handle = draft.productIdea.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+  const sku = `NOVA-${draft.id.split('_')[1]}`;
+  
+  const csvRow = [
+    handle,
+    `"${draft.title.replace(/"/g, '""')}"`,
+    `"${draft.description.replace(/"/g, '""').replace(/\n/g, '<br>')}"`,
+    'Nova Dropship',
+    draft.category,
+    draft.category,
+    `"${draft.keywords.join(', ')}"`,
+    'TRUE',
+    sku,
+    draft.suggestedPrice.toFixed(2),
+    (draft.suggestedPrice * 1.3).toFixed(2),
+    'TRUE',
+    'TRUE',
+    '', // Image placeholder
+    '1',
+  ];
+  
+  const csv = csvHeaders.join(',') + '\n' + csvRow.join(',');
+  
+  if (req.query.download === 'true') {
+    res.setHeader('Content-Type', 'text/csv');
+    res.setHeader('Content-Disposition', `attachment; filename="${handle}.csv"`);
+    return res.send(csv);
+  }
+  
+  res.json({
+    success: true,
+    data: {
+      format,
+      csv,
+      draft,
+      downloadUrl: `/api/dropship/export/${draft.id}?download=true`,
+    },
+  });
+});
+
+// Batch export all drafts
+app.get('/api/dropship/export', (_req: Request, res: Response) => {
+  const drafts = Array.from(listingDrafts.values());
+  
+  if (drafts.length === 0) {
+    return res.status(404).json({ success: false, error: 'No drafts to export' });
+  }
+  
+  const csvHeaders = [
+    'Handle', 'Title', 'Body (HTML)', 'Vendor', 'Product Category', 'Type',
+    'Tags', 'Published', 'Variant SKU', 'Variant Price', 'Variant Compare At Price',
+  ];
+  
+  const csvRows = drafts.map(draft => {
+    const handle = draft.productIdea.toLowerCase().replace(/[^a-z0-9]+/g, '-');
+    const sku = `NOVA-${draft.id.split('_')[1]}`;
+    return [
+      handle,
+      `"${draft.title.replace(/"/g, '""')}"`,
+      `"${draft.description.replace(/"/g, '""').replace(/\n/g, '<br>')}"`,
+      'Nova Dropship',
+      draft.category,
+      draft.category,
+      `"${draft.keywords.join(', ')}"`,
+      'TRUE',
+      sku,
+      draft.suggestedPrice.toFixed(2),
+      (draft.suggestedPrice * 1.3).toFixed(2),
+    ].join(',');
+  });
+  
+  const csv = csvHeaders.join(',') + '\n' + csvRows.join('\n');
+  
+  res.json({
+    success: true,
+    data: {
+      csv,
+      count: drafts.length,
+      message: `Exported ${drafts.length} listing drafts`,
+    },
+  });
+});
+
+// ============================================================================
 // Start Server
 // ============================================================================
 

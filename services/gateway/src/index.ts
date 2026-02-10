@@ -765,6 +765,28 @@ app.post('/v1/store/products/appraise', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.novaHub, '/v1/marketplace/appraise', req, res);
 });
 
+// Phase 7: Dropshipping MVP routes -> StoreBot
+app.post('/v1/dropship/generate', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.storebot, '/api/dropship/generate', req, res);
+});
+
+app.get('/v1/dropship/drafts', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.storebot, '/api/dropship/drafts', req, res);
+});
+
+app.get('/v1/dropship/drafts/:id', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.storebot, `/api/dropship/drafts/${req.params.id}`, req, res);
+});
+
+app.get('/v1/dropship/export/:id', (req: Request, res: Response) => {
+  const qs = req.originalUrl.split('?')[1] || '';
+  proxyRequestRewrite(SERVICE_URLS.storebot, `/api/dropship/export/${req.params.id}${qs ? '?' + qs : ''}`, req, res);
+});
+
+app.get('/v1/dropship/export', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.storebot, '/api/dropship/export', req, res);
+});
+
 // Catch-all for other store routes
 app.all('/v1/store/*', (_req: Request, res: Response) => {
   res.json({
@@ -845,6 +867,28 @@ app.get('/v1/social/engagement', (req: Request, res: Response) => {
 
 app.get('/v1/social/alerts', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.socialbot, '/api/alerts', req, res);
+});
+
+// Phase 7: Social MVP routes -> SocialBot
+app.post('/v1/social/plan/generate', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.socialbot, '/api/social/plan/generate', req, res);
+});
+
+app.get('/v1/social/plans', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.socialbot, '/api/social/plans', req, res);
+});
+
+app.get('/v1/social/plans/:id', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.socialbot, `/api/social/plans/${req.params.id}`, req, res);
+});
+
+app.get('/v1/social/plan/export/:id', (req: Request, res: Response) => {
+  const qs = req.originalUrl.split('?')[1] || '';
+  proxyRequestRewrite(SERVICE_URLS.socialbot, `/api/social/plan/export/${req.params.id}${qs ? '?' + qs : ''}`, req, res);
+});
+
+app.get('/v1/social/drafts/export', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.socialbot, '/api/social/drafts/export', req, res);
 });
 
 app.all('/v1/social/*', (req: Request, res: Response) => {

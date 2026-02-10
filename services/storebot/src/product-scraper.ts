@@ -178,8 +178,110 @@ export async function searchProducts(query: string): Promise<ProductSearchResult
   };
 }
 
+// ============================================================================
+// Heuristic Pricing (Keyless Mode)
+// ============================================================================
+
+/**
+ * Category-based heuristic pricing when no comps available
+ */
+function detectCategory(query: string): { category: string; basePrice: number; variance: number } {
+  const q = query.toLowerCase();
+  
+  // Electronics
+  if (/iphone|samsung|pixel|android|phone|mobile/.test(q)) {
+    return { category: 'smartphones', basePrice: 450, variance: 0.4 };
+  }
+  if (/macbook|laptop|chromebook|thinkpad|notebook/.test(q)) {
+    return { category: 'laptops', basePrice: 800, variance: 0.5 };
+  }
+  if (/ipad|tablet|surface/.test(q)) {
+    return { category: 'tablets', basePrice: 400, variance: 0.4 };
+  }
+  if (/airpods|earbuds|headphones|speaker/.test(q)) {
+    return { category: 'audio', basePrice: 120, variance: 0.6 };
+  }
+  if (/tv|television|monitor|display/.test(q)) {
+    return { category: 'displays', basePrice: 350, variance: 0.5 };
+  }
+  if (/playstation|xbox|nintendo|console|gaming/.test(q)) {
+    return { category: 'gaming', basePrice: 350, variance: 0.4 };
+  }
+  if (/camera|canon|nikon|sony|gopro|dslr/.test(q)) {
+    return { category: 'cameras', basePrice: 500, variance: 0.6 };
+  }
+  
+  // Fashion
+  if (/nike|adidas|jordan|sneaker|shoe/.test(q)) {
+    return { category: 'sneakers', basePrice: 120, variance: 0.5 };
+  }
+  if (/jacket|coat|hoodie|sweater/.test(q)) {
+    return { category: 'outerwear', basePrice: 80, variance: 0.5 };
+  }
+  if (/watch|rolex|omega|seiko|casio/.test(q)) {
+    return { category: 'watches', basePrice: 200, variance: 0.8 };
+  }
+  if (/bag|purse|backpack|handbag/.test(q)) {
+    return { category: 'bags', basePrice: 60, variance: 0.6 };
+  }
+  
+  // Home
+  if (/furniture|chair|desk|table|sofa|couch/.test(q)) {
+    return { category: 'furniture', basePrice: 200, variance: 0.7 };
+  }
+  if (/kitchen|blender|mixer|appliance|instant pot/.test(q)) {
+    return { category: 'kitchen', basePrice: 80, variance: 0.5 };
+  }
+  
+  // Collectibles
+  if (/pokemon|card|yugioh|trading|collectible/.test(q)) {
+    return { category: 'collectibles', basePrice: 25, variance: 0.9 };
+  }
+  if (/lego|toy|figure|action/.test(q)) {
+    return { category: 'toys', basePrice: 40, variance: 0.6 };
+  }
+  
+  // Default
+  return { category: 'general', basePrice: 50, variance: 0.5 };
+}
+
+/**
+ * Generate heuristic-based appraisal when no real data available
+ */
+function generateHeuristicAppraisal(query: string): ProductAppraisal {
+  const { category, basePrice, variance } = detectCategory(query);
+  
+  // Generate price range based on category
+  const minPrice = Math.round(basePrice * (1 - variance) * 100) / 100;
+  const maxPrice = Math.round(basePrice * (1 + variance) * 100) / 100;
+  const avgPrice = Math.round(basePrice * 100) / 100;
+  const medianPrice = avgPrice;
+  const recommendedPrice = Math.round(basePrice * 0.9 * 100) / 100; // 10% below average
+  
+  return {
+    query,
+    avgPrice,
+    minPrice,
+    maxPrice,
+    medianPrice,
+    priceRange: `$${minPrice.toFixed(2)} - $${maxPrice.toFixed(2)}`,
+    recommendedPrice,
+    marketDemand: 'medium',
+    confidence: 25, // Low confidence for heuristic
+    sources: [], // No real sources
+    appraisedAt: new Date().toISOString(),
+    // Phase 7: Additional provenance fields
+    provenance: {
+      method: 'heuristic',
+      category,
+      note: 'No comparable listings found; estimate based on category heuristics',
+    },
+  } as ProductAppraisal & { provenance: { method: string; category: string; note: string } };
+}
+
 /**
  * Appraise a product by analyzing pricing across multiple sources
+ * Phase 7: NEVER returns unavailable - falls back to heuristics
  */
 export async function appraiseProduct(query: string): Promise<ProductAppraisal> {
   logger.info(`Appraising product: ${query}`);
@@ -187,8 +289,10 @@ export async function appraiseProduct(query: string): Promise<ProductAppraisal> 
   const searchResult = await searchProducts(query);
   const products = searchResult.products;
   
+  // Phase 7: If no comps found, use heuristic pricing instead of throwing error
   if (products.length === 0) {
-    throw new Error('No pricing data available for this product');
+    logger.warn(`No comps found for "${query}", using heuristic pricing`);
+    return generateHeuristicAppraisal(query);
   }
   
   // Calculate statistics
@@ -226,7 +330,13 @@ export async function appraiseProduct(query: string): Promise<ProductAppraisal> 
     confidence: Math.round(confidence),
     sources: products.slice(0, 10), // Top 10 sources
     appraisedAt: new Date().toISOString(),
-  };
+    // Phase 7: Provenance for comp-based appraisal
+    provenance: {
+      method: 'comps',
+      sourceCount: products.length,
+      note: `Based on ${products.length} comparable listings`,
+    },
+  } as ProductAppraisal & { provenance: { method: string; sourceCount?: number; note: string } };
 }
 
 /**

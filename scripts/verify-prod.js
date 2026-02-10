@@ -419,6 +419,126 @@ const TESTS = [
       }
     },
   },
+  // =========================================================================
+  // Phase 7: Operational Loop E2E Artifact Checks
+  // =========================================================================
+  // Phase 7: Marketplace appraisal returns valuation artifact (with heuristic fallback)
+  {
+    name: 'Marketplace Appraisal Artifact (Phase 7)',
+    url: `${API_URL}/v1/marketplace/appraise`,
+    method: 'POST',
+    body: JSON.stringify({ query: 'iPhone 15 Pro' }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 401] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) return { ok: false, error: 'API returned success=false' };
+        const appraisal = data.data?.appraisal || data.data;
+        // Phase 7: Must have valuation fields, never "unavailable"
+        if (typeof appraisal?.recommendedPrice !== 'number') {
+          return { ok: false, error: 'Missing recommendedPrice in valuation artifact' };
+        }
+        if (typeof appraisal?.confidence !== 'number') {
+          return { ok: false, error: 'Missing confidence in valuation artifact' };
+        }
+        const provenance = appraisal.provenance?.method || (appraisal.sources?.length > 0 ? 'comps' : 'heuristic');
+        return { ok: true, note: `Valuation: $${appraisal.recommendedPrice}, conf=${appraisal.confidence}%, method=${provenance}` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 7: Dropshipping listing draft generation
+  {
+    name: 'Dropship Listing Draft (Phase 7)',
+    url: `${API_URL}/v1/dropship/generate`,
+    method: 'POST',
+    body: JSON.stringify({ productIdea: 'wireless earbuds', niche: 'electronics' }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 401, 503] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 503) return { ok: true, note: 'StoreBot not deployed (expected in monolith mode)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) return { ok: false, error: 'API returned success=false' };
+        const draft = data.data?.draft;
+        if (!draft?.id) return { ok: false, error: 'Missing draft ID' };
+        if (!draft?.title) return { ok: false, error: 'Missing draft title' };
+        if (typeof draft?.suggestedPrice !== 'number') return { ok: false, error: 'Missing suggested price' };
+        return { ok: true, note: `Draft created: ${draft.id.substring(0, 20)}..., price=$${draft.suggestedPrice}` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 7: Social post plan generation
+  {
+    name: 'Social Post Plan (Phase 7)',
+    url: `${API_URL}/v1/social/plan/generate`,
+    method: 'POST',
+    body: JSON.stringify({ niche: 'tech', frequency: '3x-week', days: 7 }),
+    headers: { 'Content-Type': 'application/json' },
+    expect: { status: [200, 401, 503] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 503) return { ok: true, note: 'SocialBot not deployed (expected in monolith mode)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) return { ok: false, error: 'API returned success=false' };
+        const plan = data.data?.plan;
+        if (!plan?.id) return { ok: false, error: 'Missing plan ID' };
+        if (!Array.isArray(plan?.posts) || plan.posts.length === 0) {
+          return { ok: false, error: 'Plan has no posts' };
+        }
+        return { ok: true, note: `Plan created: ${plan.id.substring(0, 20)}..., ${plan.posts.length} posts` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 7: Paper trade execution returns receipt
+  {
+    name: 'Paper Trade Endpoint (Phase 7)',
+    url: `${API_URL}/v1/trade/paper-trades`,
+    method: 'GET',
+    expect: { status: [200, 401, 403] },
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 403) return { ok: true, note: 'Subscription required (expected)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) return { ok: false, error: 'API returned success=false' };
+        // Should have trades array and stats
+        const trades = data.data?.trades || [];
+        const stats = data.data?.stats;
+        if (stats && typeof stats.totalTrades === 'number') {
+          return { ok: true, note: `${trades.length} trades, total=${stats.totalTrades}` };
+        }
+        return { ok: true, note: `${trades.length} trades loaded` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  // Phase 7: Simulator run endpoint
+  {
+    name: 'Simulator Run Endpoint (Phase 7)',
+    url: `${API_URL}/v1/sim/health`,
+    method: 'GET',
+    expect: { status: [200] },
+    customCheck: (res) => {
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) return { ok: false, error: 'Simulator health check failed' };
+        return { ok: true, note: 'Simulator operational' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
 ];
 
 // HTTP request helper
