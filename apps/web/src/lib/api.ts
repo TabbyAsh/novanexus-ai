@@ -1367,6 +1367,83 @@ class ApiClient {
   async getCardExecutions() {
     return this.request<{ executions: any[] }>('GET', '/v1/cards/executions');
   }
+
+  // ==========================================================================
+  // UDM v2: Universal Decision Matrix (3-Tier)
+  // ==========================================================================
+  async getUdmWallet() {
+    return this.request<{ clarity: number; foresight: number; autonomy: number }>('GET', '/v1/udm/wallet');
+  }
+
+  async applyUdm(params: { domain: string; target: string; tier: 'clarity' | 'foresight' | 'autonomy'; notional?: number }) {
+    return this.request<{
+      runId: string;
+      snapshot: any;
+      preview: any;
+      sim: any | null;
+      actionability: any;
+      status: string;
+    }>('POST', '/v1/udm/apply', params);
+  }
+
+  async quoteUdm(params: { runId: string; notional?: number }) {
+    return this.request<{
+      runId: string;
+      notional: number;
+      sim: any;
+      knobs: any;
+    }>('POST', '/v1/udm/quote', params);
+  }
+
+  async confirmUdm(params: { runId: string; notional: number }) {
+    return this.request<{
+      confirmed: boolean;
+      runId: string;
+      executionId: string | null;
+      wallet: { clarity: number; foresight: number; autonomy: number };
+    }>('POST', '/v1/udm/confirm', params);
+  }
+
+  async getUdmRun(runId: string) {
+    return this.request<{ run: any }>('GET', `/v1/udm/runs/${runId}`);
+  }
+
+  async getDailyDrop() {
+    return this.request<{
+      items: Array<{
+        symbol: string;
+        actionability: number;
+        strategyId: string;
+        preview: any;
+      }>;
+      generatedAt: string;
+      count: number;
+    }>('GET', '/v1/daily-drop');
+  }
+
+  async getLatestProofPack() {
+    return this.request<{
+      proofPack: {
+        id: string;
+        generatedAt: string;
+        gitSha: string;
+        tests: any;
+        deployment: any;
+        signature: string;
+      } | null;
+    }>('GET', '/v1/proofpacks/latest');
+  }
+
+  // Reality check (via proxy to backend)
+  async getReality() {
+    return this.request<{
+      online: boolean;
+      marketOpen: boolean;
+      dataFresh: boolean;
+      backendsHealthy: boolean;
+      lastCheck: string;
+    }>('GET', '/v1/reality');
+  }
 }
 
 export const api = new ApiClient();

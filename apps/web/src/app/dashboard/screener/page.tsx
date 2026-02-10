@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { GradientText } from '@/components/ui/GlassCard';
 import TrustPanel from '@/components/trading/TrustPanel';
+import { RealityBanner, UdmDecisionPanel } from '@/components/udm';
 import { api } from '@/lib/api';
 
 type ConfidenceTag = 'high' | 'medium' | 'low';
@@ -282,13 +283,14 @@ function DecisionCardModal({
 }
 
 // Signal Card Component with enhanced visuals
-function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow, onApplyCard, cardBalance }: { 
+function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow, onApplyCard, onOpenUdm, cardBalance }: { 
   signal: Signal; 
   index: number;
   onAddToWatchlist: (symbol: string) => void;
   onPaperTrade: (signal: Signal) => void;
   onStartGuidedFlow: (signal: Signal) => Promise<void> | void;
   onApplyCard: (signal: Signal) => Promise<void>;
+  onOpenUdm: (symbol: string) => void;
   cardBalance: number;
 }) {
   const [expanded, setExpanded] = useState(false);
@@ -584,7 +586,19 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuid
                                       : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:shadow-lg hover:shadow-indigo-500/30'
                                   }`}
                                 >
-                                  {isApplyingCard ? '⏳ Applying...' : cardBalance < 1 ? '🎴 No Cards Left' : `🎴 Apply Decision Card (${cardBalance} left)`}
+                                {isApplyingCard ? '⏳ Applying...' : cardBalance < 1 ? '🎴 No Cards Left' : `🎴 Apply Decision Card (${cardBalance} left)`}
+                                </motion.button>
+                                {/* UDM v2: Universal Decision Matrix */}
+                                <motion.button
+                                  whileHover={{ scale: 1.02 }}
+                                  whileTap={{ scale: 0.98 }}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    onOpenUdm(signal.symbol);
+                                  }}
+                                  className="w-full py-3 rounded-xl text-white font-semibold text-sm transition-all bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 hover:shadow-lg hover:shadow-purple-500/30"
+                                >
+                                  🧬 UDM v2 Analysis
                                 </motion.button>
                                 {/* Phase 6.1: Direct thesis generation link */}
                                 <Link
@@ -687,6 +701,8 @@ export default function ScreenerPage() {
   const [cardRun, setCardRun] = useState<{ runId: string; snapshot: any; sim: any; costs: any; tradeoffs: string[] } | null>(null);
   const [isConfirmingCard, setIsConfirmingCard] = useState(false);
   const [cardError, setCardError] = useState<string | null>(null);
+  // UDM v2: Universal Decision Matrix state
+  const [udmSymbol, setUdmSymbol] = useState<string | null>(null);
 
   const formatCurrency = (value: number | null | undefined) => {
     if (value === null || value === undefined || Number.isNaN(value)) return '—';
@@ -1016,6 +1032,8 @@ export default function ScreenerPage() {
 
   return (
     <DashboardLayout>
+      {/* UDM v2: Reality Guardrail Banner */}
+      <RealityBanner />
       <div className="space-y-6">
         {/* Header */}
         <motion.div
@@ -1545,6 +1563,7 @@ export default function ScreenerPage() {
                 onPaperTrade={handlePaperTrade}
                 onStartGuidedFlow={handleStartGuidedFlow}
                 onApplyCard={handleApplyCard}
+                onOpenUdm={(symbol) => setUdmSymbol(symbol)}
                 cardBalance={cardBalance}
               />
             ))
@@ -1588,6 +1607,19 @@ export default function ScreenerPage() {
           {cardError}
           <button onClick={() => setCardError(null)} className="ml-3 font-bold">×</button>
         </div>
+      )}
+
+      {/* UDM v2: Universal Decision Matrix Panel */}
+      {udmSymbol && (
+        <UdmDecisionPanel
+          symbol={udmSymbol}
+          domain="stocks"
+          onClose={() => setUdmSymbol(null)}
+          onConfirm={(runId, executionId) => {
+            console.log('UDM confirmed:', runId, executionId);
+            setUdmSymbol(null);
+          }}
+        />
       )}
       
       <style jsx global>{`
