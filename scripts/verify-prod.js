@@ -84,6 +84,79 @@ const TESTS = [
     headers: { 'Content-Type': 'application/json' },
     expect: { status: 200, json: true },
   },
+  // Progressive Broker: Server-managed Alpaca checks
+  {
+    name: 'Alpaca Status (Server-Managed)',
+    url: `${API_URL}/v1/alpaca/status`,
+    method: 'GET',
+    expect: { status: [200, 401] }, // 200 with mode, 401 if auth required
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      try {
+        const data = JSON.parse(res.body);
+        if (!data.success) return { ok: false, error: 'Response not successful' };
+        const mode = data.data?.mode;
+        if (!mode) return { ok: false, error: 'No mode in response' };
+        if (mode === 'server') return { ok: true, note: 'Server-managed mode active' };
+        if (mode === 'user') return { ok: true, note: 'User mode (user has connection)' };
+        if (mode === 'none') return { ok: true, note: 'No broker configured (env vars missing)' };
+        return { ok: false, error: `Unknown mode: ${mode}` };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  {
+    name: 'Alpaca Account (Server-Managed)',
+    url: `${API_URL}/v1/alpaca/account`,
+    method: 'GET',
+    expect: { status: [200, 400, 401] }, // 200 if configured, 400 if not, 401 if auth
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 400) {
+        try {
+          const data = JSON.parse(res.body);
+          if (data.error?.code === 'ALPACA_NOT_CONFIGURED') {
+            return { ok: true, note: 'Server-managed not configured (env vars missing)' };
+          }
+        } catch {}
+        return { ok: true, note: 'Broker not available' };
+      }
+      try {
+        const data = JSON.parse(res.body);
+        if (data.success && data.data?.account) {
+          const mode = data.data.mode;
+          return { ok: true, note: `Account loaded (mode: ${mode || 'unknown'})` };
+        }
+        return { ok: false, error: 'No account data' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
+  {
+    name: 'Alpaca History (Server-Managed)',
+    url: `${API_URL}/v1/alpaca/history?timeframe=1D`,
+    method: 'GET',
+    expect: { status: [200, 400, 401, 503] }, // 200 if working, 400/503 if issues, 401 if auth
+    customCheck: (res) => {
+      if (res.status === 401) return { ok: true, note: 'Auth required (expected)' };
+      if (res.status === 400 || res.status === 503) {
+        return { ok: true, note: 'History not available (broker issue or not configured)' };
+      }
+      try {
+        const data = JSON.parse(res.body);
+        if (data.success && Array.isArray(data.data?.history)) {
+          const count = data.data.history.length;
+          const mode = data.data.mode;
+          return { ok: true, note: `${count} history points (mode: ${mode || 'unknown'})` };
+        }
+        return { ok: false, error: 'No history data' };
+      } catch {
+        return { ok: false, error: 'Invalid JSON' };
+      }
+    },
+  },
 ];
 
 // HTTP request helper
@@ -167,6 +240,19 @@ async function runTest(test) {
       }
     }
 
+    // Run custom check if present
+    if (test.customCheck) {
+      const checkResult = test.customCheck(res);
+      return {
+        name: test.name,
+        passed: checkResult.ok,
+        duration,
+        status: res.status,
+        note: checkResult.note,
+        error: checkResult.error,
+      };
+    }
+
     return {
       name: test.name,
       passed: true,
@@ -201,9 +287,11 @@ async function main() {
     results.push(result);
 
     const icon = result.passed ? '✅' : '❌';
-    const status = result.passed ? `(${result.status})` : `- ${result.error}`;
+    const statusText = result.passed 
+      ? `(${result.status})${result.note ? ` - ${result.note}` : ''}`
+      : `- ${result.error}`;
     const time = `${result.duration}ms`;
-    console.log(`  ${icon} ${result.name} ${status} [${time}]`);
+    console.log(`  ${icon} ${result.name} ${statusText} [${time}]`);
   }
 
   console.log('\n──────────────────────────────────────────────────\n');

@@ -83,9 +83,12 @@ export default function TradingDashboard() {
   const [marketError, setMarketError] = useState<string | null>(null);
 
   const [alpacaStatus, setAlpacaStatus] = useState<{
+    mode: 'server' | 'user' | 'none';
     connected: boolean;
     endpoint?: string;
     environment?: 'paper' | 'live';
+    message?: string;
+    canTradeLive?: boolean;
   } | null>(null);
   const [alpacaEnabled, setAlpacaEnabled] = useState<boolean | null>(null);
   const [alpacaError, setAlpacaError] = useState<string | null>(null);
@@ -116,9 +119,12 @@ export default function TradingDashboard() {
         return;
       }
       setAlpacaStatus({
+        mode: statusRes.data.mode || (statusRes.data.connected ? 'user' : 'none'),
         connected: statusRes.data.connected,
         endpoint: statusRes.data.endpoint,
         environment: statusRes.data.environment,
+        message: statusRes.data.message,
+        canTradeLive: statusRes.data.canTradeLive,
       });
       setAlpacaEnabled(statusRes.data.enabled);
 
@@ -281,11 +287,13 @@ export default function TradingDashboard() {
             className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-sm ${
               alpacaStatus === null
                 ? 'bg-gray-500/10 text-gray-300'
-                : alpacaStatus.connected
+                : alpacaStatus.mode === 'user'
                   ? 'bg-green-500/20 text-green-400'
-                  : 'bg-yellow-500/20 text-yellow-400'
+                  : alpacaStatus.mode === 'server'
+                    ? 'bg-cyan-500/20 text-cyan-400'
+                    : 'bg-yellow-500/20 text-yellow-400'
             }`}
-            title={alpacaStatus === null ? 'Alpaca status unavailable' : undefined}
+            title={alpacaStatus === null ? 'Broker status unavailable' : undefined}
           >
             {alpacaStatus === null ? (
               <AlertTriangle className="w-4 h-4" />
@@ -295,10 +303,12 @@ export default function TradingDashboard() {
               <AlertTriangle className="w-4 h-4" />
             )}
             {alpacaStatus === null
-              ? 'Alpaca Unknown'
-              : alpacaStatus.connected
-                ? `Alpaca Connected${alpacaStatus.environment ? ` (${alpacaStatus.environment})` : ''}`
-                : 'Alpaca Not Connected'}
+              ? 'Loading...'
+              : alpacaStatus.mode === 'user'
+                ? `Personal Account${alpacaStatus.environment ? ` (${alpacaStatus.environment})` : ''}`
+                : alpacaStatus.mode === 'server'
+                  ? `Platform Intelligence${alpacaStatus.environment ? ` (${alpacaStatus.environment})` : ''}`
+                  : 'Broker Unavailable'}
           </div>
           <button
             onClick={loadAll}
@@ -318,18 +328,27 @@ export default function TradingDashboard() {
         </div>
       )}
 
-      {!alpacaConnected && alpacaStatus && (
-        <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl text-sm text-yellow-200 flex items-center justify-between gap-4">
+      {alpacaStatus?.mode === 'server' && (
+        <div className="mb-6 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl text-sm text-cyan-200 flex items-center justify-between gap-4">
           <div>
-            <p className="font-semibold">Alpaca not connected</p>
-            <p className="text-xs text-yellow-200/80">Connect your Alpaca keys in Settings to load account analytics.</p>
+            <p className="font-semibold">Platform Intelligence Active</p>
+            <p className="text-xs text-cyan-200/80">
+              {alpacaStatus.message || 'Using platform analytics. Connect your account in Settings to trade live.'}
+            </p>
           </div>
           <Link
             href="/dashboard/settings"
-            className="px-3 py-2 bg-yellow-500/20 hover:bg-yellow-500/30 rounded-lg text-xs font-semibold"
+            className="px-3 py-2 bg-cyan-500/20 hover:bg-cyan-500/30 rounded-lg text-xs font-semibold"
           >
-            Open Settings
+            Trade with my account
           </Link>
+        </div>
+      )}
+
+      {alpacaStatus?.mode === 'none' && (
+        <div className="mb-6 p-4 bg-yellow-500/10 border border-yellow-500/30 rounded-xl text-sm text-yellow-200 flex items-center gap-2">
+          <AlertTriangle className="w-4 h-4" />
+          <span>Broker unavailable. Contact support if this persists.</span>
         </div>
       )}
 

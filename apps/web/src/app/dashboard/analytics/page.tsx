@@ -188,7 +188,7 @@ export default function AnalyticsDashboard() {
             </div>
           ) : (
             <div className="text-gray-400 text-sm">
-              {isLoading ? 'Loading…' : 'Unavailable — connect Alpaca to view trading analytics.'}
+              {isLoading ? 'Loading…' : 'Trading analytics temporarily unavailable.'}
             </div>
           )}
         </div>

@@ -45,6 +45,12 @@ const INTERNAL_VERIFY_ALPACA_SECRET = process.env.INTERNAL_VERIFY_ALPACA_SECRET 
 const INTERNAL_VERIFY_ALPACA_ENDPOINT = process.env.INTERNAL_VERIFY_ALPACA_ENDPOINT || process.env.ALPACA_ENDPOINT || '';
 const INTERNAL_DECISION_CARDS_TOKEN = process.env.INTERNAL_DECISION_CARDS_TOKEN || '';
 
+// Server-managed Alpaca (progressive broker model)
+const SERVER_ALPACA_API_KEY = process.env.ALPACA_API_KEY || '';
+const SERVER_ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY || '';
+const SERVER_ALPACA_ENDPOINT = process.env.ALPACA_ENDPOINT || 'https://paper-api.alpaca.markets/v2';
+const SERVER_ALPACA_CONFIGURED = !!(SERVER_ALPACA_API_KEY && SERVER_ALPACA_SECRET_KEY);
+
 // ============================================
 // Middleware
 // ============================================
@@ -313,6 +319,28 @@ function decryptSecret(payload: string): string {
 function resolveAlpacaEndpoint(env: 'paper' | 'live', endpoint?: string): string {
   const base = endpoint || (env === 'live' ? ALPACA_DEFAULT_LIVE_ENDPOINT : ALPACA_DEFAULT_PAPER_ENDPOINT);
   return base.replace(/\/$/, '');
+}
+
+// Server-managed Alpaca client (for platform intelligence)
+function getServerAlpacaClient(): AlpacaClient | null {
+  if (!SERVER_ALPACA_CONFIGURED) return null;
+  return new AlpacaClient({
+    apiKey: SERVER_ALPACA_API_KEY,
+    apiSecret: SERVER_ALPACA_SECRET_KEY,
+    endpoint: SERVER_ALPACA_ENDPOINT.replace(/\/$/, ''),
+  });
+}
+
+type AlpacaMode = 'server' | 'user' | 'none';
+
+interface AlpacaStatusResult {
+  mode: AlpacaMode;
+  configured: boolean;
+  environment: 'paper' | 'live';
+  endpoint?: string;
+  keyLast4?: string;
+  lastVerifiedAt?: string;
+  reason?: string;
 }
 
 // ============================================
@@ -4663,22 +4691,54 @@ app.post('/v1/thesis', authMiddleware, async (req: AuthenticatedRequest, res: Re
 
 app.get('/v1/alpaca/status', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
-  const connection = await getActiveAlpacaConnection(userId);
   const liveTradingEnabled = process.env.FEATURE_LIVE_TRADING === 'true';
 
-  if (!connection) {
-    return res.json({ success: true, data: { connected: false, liveTradingEnabled } });
+  // Check for user-managed connection first (takes precedence)
+  const userConnection = await getActiveAlpacaConnection(userId);
+  if (userConnection) {
+    return res.json({
+      success: true,
+      data: {
+        mode: 'user' as AlpacaMode,
+        connected: true,
+        configured: true,
+        endpoint: userConnection.endpoint,
+        environment: userConnection.environment,
+        keyLast4: userConnection.key_last4,
+        lastVerifiedAt: userConnection.last_verified_at,
+        liveTradingEnabled,
+        canTradeLive: userConnection.environment === 'live' && liveTradingEnabled,
+      },
+    });
   }
 
+  // Fall back to server-managed mode
+  if (SERVER_ALPACA_CONFIGURED) {
+    const isLive = SERVER_ALPACA_ENDPOINT.includes('api.alpaca.markets') && !SERVER_ALPACA_ENDPOINT.includes('paper');
+    return res.json({
+      success: true,
+      data: {
+        mode: 'server' as AlpacaMode,
+        connected: true,
+        configured: true,
+        endpoint: SERVER_ALPACA_ENDPOINT,
+        environment: isLive ? 'live' : 'paper',
+        liveTradingEnabled,
+        canTradeLive: false, // Server-managed is for platform intelligence only
+        message: 'Platform intelligence active. Connect your account to trade live.',
+      },
+    });
+  }
+
+  // No configuration available
   res.json({
     success: true,
     data: {
-      connected: true,
-      endpoint: connection.endpoint,
-      environment: connection.environment,
-      keyLast4: connection.key_last4,
-      lastVerifiedAt: connection.last_verified_at,
+      mode: 'none' as AlpacaMode,
+      connected: false,
+      configured: false,
       liveTradingEnabled,
+      reason: 'Broker not configured. Contact support if this persists.',
     },
   });
 });
@@ -4770,19 +4830,30 @@ app.delete('/v1/alpaca/connect', authMiddleware, async (req: AuthenticatedReques
 
 app.get('/v1/alpaca/account', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
-  const connection = await getActiveAlpacaConnection(userId);
+  const userConnection = await getActiveAlpacaConnection(userId);
 
-  if (!connection) {
+  // Determine which client to use: user > server > none
+  let client: AlpacaClient | null = null;
+  let mode: AlpacaMode = 'none';
+
+  if (userConnection) {
+    client = buildAlpacaClient(userConnection);
+    mode = 'user';
+  } else if (SERVER_ALPACA_CONFIGURED) {
+    client = getServerAlpacaClient();
+    mode = 'server';
+  }
+
+  if (!client) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+      error: { code: 'ALPACA_NOT_CONFIGURED', message: 'Broker not configured' },
     });
   }
 
   try {
-    const client = buildAlpacaClient(connection);
     const account = await client.getAccount();
-    res.json({ success: true, data: { account } });
+    res.json({ success: true, data: { account, mode } });
   } catch (error) {
     res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
@@ -4793,19 +4864,29 @@ app.get('/v1/alpaca/account', authMiddleware, async (req: AuthenticatedRequest, 
 
 app.get('/v1/alpaca/positions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
-  const connection = await getActiveAlpacaConnection(userId);
+  const userConnection = await getActiveAlpacaConnection(userId);
 
-  if (!connection) {
+  let client: AlpacaClient | null = null;
+  let mode: AlpacaMode = 'none';
+
+  if (userConnection) {
+    client = buildAlpacaClient(userConnection);
+    mode = 'user';
+  } else if (SERVER_ALPACA_CONFIGURED) {
+    client = getServerAlpacaClient();
+    mode = 'server';
+  }
+
+  if (!client) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+      error: { code: 'ALPACA_NOT_CONFIGURED', message: 'Broker not configured' },
     });
   }
 
   try {
-    const client = buildAlpacaClient(connection);
     const positions = await client.getPositions();
-    res.json({ success: true, data: { positions } });
+    res.json({ success: true, data: { positions, mode } });
   } catch (error) {
     res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
@@ -4817,19 +4898,29 @@ app.get('/v1/alpaca/positions', authMiddleware, async (req: AuthenticatedRequest
 app.get('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
   const status = (req.query.status as 'open' | 'closed' | 'all') || 'all';
-  const connection = await getActiveAlpacaConnection(userId);
+  const userConnection = await getActiveAlpacaConnection(userId);
 
-  if (!connection) {
+  let client: AlpacaClient | null = null;
+  let mode: AlpacaMode = 'none';
+
+  if (userConnection) {
+    client = buildAlpacaClient(userConnection);
+    mode = 'user';
+  } else if (SERVER_ALPACA_CONFIGURED) {
+    client = getServerAlpacaClient();
+    mode = 'server';
+  }
+
+  if (!client) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+      error: { code: 'ALPACA_NOT_CONFIGURED', message: 'Broker not configured' },
     });
   }
 
   try {
-    const client = buildAlpacaClient(connection);
     const orders = await client.getOrders(status);
-    res.json({ success: true, data: { orders } });
+    res.json({ success: true, data: { orders, mode } });
   } catch (error) {
     res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
@@ -4840,7 +4931,7 @@ app.get('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, r
 
 app.post('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId, orgId } = req.user!;
-  const { symbol, qty, side, type, time_in_force, limit_price, stop_price } = req.body || {};
+  const { symbol, qty, side, type, time_in_force, limit_price, stop_price, allow_paper } = req.body || {};
 
   if (!symbol || !qty || !side) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -4849,15 +4940,34 @@ app.post('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, 
     });
   }
 
-  const connection = await getActiveAlpacaConnection(userId);
-  if (!connection) {
+  const userConnection = await getActiveAlpacaConnection(userId);
+  let client: AlpacaClient | null = null;
+  let mode: AlpacaMode = 'none';
+  let environment: 'paper' | 'live' = 'paper';
+
+  if (userConnection) {
+    client = buildAlpacaClient(userConnection);
+    mode = 'user';
+    environment = userConnection.environment as 'paper' | 'live';
+  } else if (SERVER_ALPACA_CONFIGURED && allow_paper) {
+    // Allow paper trading via server-managed for demo/simulation
+    client = getServerAlpacaClient();
+    mode = 'server';
+    environment = 'paper';
+  }
+
+  if (!client) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+      error: { 
+        code: 'ALPACA_NOT_CONNECTED', 
+        message: 'Connect your broker account to place orders. Platform intelligence is read-only.' 
+      },
     });
   }
 
-  if (connection.environment === 'live' && process.env.FEATURE_LIVE_TRADING !== 'true') {
+  // Live trading policy gate
+  if (environment === 'live' && process.env.FEATURE_LIVE_TRADING !== 'true') {
     return res.status(HTTP_STATUS.FORBIDDEN).json({
       success: false,
       error: { code: 'LIVE_TRADING_DISABLED', message: 'Live trading is disabled by policy' },
@@ -4865,7 +4975,6 @@ app.post('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, 
   }
 
   try {
-    const client = buildAlpacaClient(connection);
     const order = await client.placeOrder({
       symbol: String(symbol).toUpperCase(),
       qty: Number(qty),
@@ -4882,9 +4991,11 @@ app.post('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, 
       side,
       qty: Number(qty),
       orderId: order.id,
+      mode,
+      environment,
     });
 
-    res.status(HTTP_STATUS.CREATED).json({ success: true, data: { order } });
+    res.status(HTTP_STATUS.CREATED).json({ success: true, data: { order, mode, environment } });
   } catch (error) {
     res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
@@ -4895,12 +5006,23 @@ app.post('/v1/alpaca/orders', authMiddleware, async (req: AuthenticatedRequest, 
 
 app.get('/v1/alpaca/history', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId, orgId } = req.user!;
-  const connection = await getActiveAlpacaConnection(userId);
+  const userConnection = await getActiveAlpacaConnection(userId);
 
-  if (!connection) {
+  let client: AlpacaClient | null = null;
+  let mode: AlpacaMode = 'none';
+
+  if (userConnection) {
+    client = buildAlpacaClient(userConnection);
+    mode = 'user';
+  } else if (SERVER_ALPACA_CONFIGURED) {
+    client = getServerAlpacaClient();
+    mode = 'server';
+  }
+
+  if (!client) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: { code: 'ALPACA_NOT_CONNECTED', message: 'Alpaca connection not found' },
+      error: { code: 'ALPACA_NOT_CONFIGURED', message: 'Broker not configured' },
     });
   }
 
@@ -4921,7 +5043,6 @@ app.get('/v1/alpaca/history', authMiddleware, async (req: AuthenticatedRequest, 
   }
 
   try {
-    const client = buildAlpacaClient(connection);
     const history = await client.getPortfolioHistory({ period, timeframe: requestedTimeframe });
 
     const points = history.timestamp.map((ts, idx) => ({
@@ -4936,6 +5057,7 @@ app.get('/v1/alpaca/history', authMiddleware, async (req: AuthenticatedRequest, 
       period,
       timeframe: requestedTimeframe,
       points: points.length,
+      mode,
     });
 
     res.json({
@@ -4945,6 +5067,7 @@ app.get('/v1/alpaca/history', authMiddleware, async (req: AuthenticatedRequest, 
         timeframe: requestedTimeframe,
         plan,
         history: points,
+        mode,
       },
     });
   } catch (error) {

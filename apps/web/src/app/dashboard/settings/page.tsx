@@ -31,7 +31,19 @@ type EntitlementView = {
 export default function SettingsPage() {
   const [me, setMe] = useState<MeView | null>(null);
   const [entitlement, setEntitlement] = useState<EntitlementView | null>(null);
-  const [alpaca, setAlpaca] = useState<{ enabled: boolean; endpoint: string } | null>(null);
+  const [alpaca, setAlpaca] = useState<{
+    mode: 'server' | 'user' | 'none';
+    connected: boolean;
+    endpoint?: string;
+    environment?: 'paper' | 'live';
+    keyLast4?: string | null;
+    lastVerifiedAt?: string | null;
+    message?: string;
+    reason?: string;
+    canTradeLive?: boolean;
+  } | null>(null);
+  const [alpacaBusy, setAlpacaBusy] = useState(false);
+  const [alpacaMessage, setAlpacaMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -67,7 +79,17 @@ export default function SettingsPage() {
       }
 
       if (alpacaRes.success && alpacaRes.data) {
-        setAlpaca({ enabled: alpacaRes.data.enabled, endpoint: alpacaRes.data.endpoint });
+        setAlpaca({
+          mode: alpacaRes.data.mode || (alpacaRes.data.connected ? 'user' : 'none'),
+          connected: alpacaRes.data.connected,
+          endpoint: alpacaRes.data.endpoint,
+          environment: alpacaRes.data.environment,
+          keyLast4: alpacaRes.data.keyLast4,
+          lastVerifiedAt: alpacaRes.data.lastVerifiedAt,
+          message: alpacaRes.data.message,
+          reason: alpacaRes.data.reason,
+          canTradeLive: alpacaRes.data.canTradeLive,
+        });
       }
     } catch (err) {
       setError((err as Error).message || 'Failed to load settings');
@@ -96,6 +118,36 @@ export default function SettingsPage() {
     } finally {
       setPortalLoading(false);
     }
+  };
+
+  const disconnectAlpaca = async () => {
+    setAlpacaBusy(true);
+    setAlpacaMessage(null);
+    setError(null);
+
+    try {
+      const res = await api.disconnectAlpaca();
+      if (res.success) {
+        // Reload to get fresh status (will fall back to server mode)
+        await load();
+        setAlpacaMessage({ type: 'success', text: 'Personal account disconnected. Using platform intelligence.' });
+      } else {
+        setAlpacaMessage({ type: 'error', text: res.error?.message || 'Failed to disconnect' });
+      }
+    } catch (err) {
+      setAlpacaMessage({ type: 'error', text: (err as Error).message || 'Failed to disconnect' });
+    } finally {
+      setAlpacaBusy(false);
+    }
+  };
+
+  const connectPersonalAccount = async () => {
+    // Future: OAuth flow with Alpaca
+    // For now, show informational message
+    setAlpacaMessage({ 
+      type: 'success', 
+      text: 'Personal account connection coming soon. Use platform intelligence for now.' 
+    });
   };
 
   const badge = (ok: boolean, labelOk: string, labelBad: string) => (
@@ -241,28 +293,120 @@ export default function SettingsPage() {
               <div className="p-2 bg-green-500/20 rounded-lg">
                 <Shield className="w-5 h-5 text-green-400" />
               </div>
-              <h2 className="text-lg font-semibold text-white">Connectivity</h2>
+              <h2 className="text-lg font-semibold text-white">Broker Connection</h2>
             </div>
 
             <div className="space-y-4">
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-white font-medium">Broker (Alpaca)</p>
-                  <p className="text-gray-500 text-xs">Execution remains policy-gated by default.</p>
-                </div>
-                {badge(!!alpaca?.enabled, 'Configured', 'Not configured')}
-              </div>
+              {/* Mode-based status display */}
+              {alpaca?.mode === 'server' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-white font-medium">Platform Intelligence</p>
+                      <p className="text-gray-500 text-xs">Analytics, screener, and paper trading active</p>
+                    </div>
+                    {badge(true, 'Active', '')}
+                  </div>
+                  <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3">
+                    <p className="text-cyan-300 text-sm">
+                      {alpaca.message || 'Using platform intelligence. Connect your account to trade live.'}
+                    </p>
+                  </div>
+                  {alpaca.environment && (
+                    <div>
+                      <p className="text-gray-500 text-xs">Environment</p>
+                      <p className="text-gray-300 text-sm capitalize">{alpaca.environment}</p>
+                    </div>
+                  )}
+                  <button
+                    onClick={connectPersonalAccount}
+                    disabled={alpacaBusy}
+                    className="w-full px-4 py-2 bg-cyan-600 hover:bg-cyan-700 disabled:opacity-50 text-white rounded-lg transition flex items-center justify-center gap-2"
+                  >
+                    <ExternalLink className="w-4 h-4" />
+                    Trade with my account
+                  </button>
+                </>
+              )}
 
-              {alpaca?.endpoint && (
-                <div>
-                  <p className="text-gray-500 text-xs">Endpoint</p>
-                  <p className="text-gray-300 text-sm break-all">{alpaca.endpoint}</p>
+              {alpaca?.mode === 'user' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-white font-medium">Personal Account</p>
+                      <p className="text-gray-500 text-xs">Your Alpaca account is connected</p>
+                    </div>
+                    {badge(true, 'Connected', '')}
+                  </div>
+                  {alpaca.environment && (
+                    <div>
+                      <p className="text-gray-500 text-xs">Environment</p>
+                      <p className="text-gray-300 text-sm capitalize">{alpaca.environment}</p>
+                    </div>
+                  )}
+                  {alpaca.keyLast4 && (
+                    <div>
+                      <p className="text-gray-500 text-xs">API Key</p>
+                      <p className="text-gray-300 text-sm">•••• {alpaca.keyLast4}</p>
+                    </div>
+                  )}
+                  {alpaca.lastVerifiedAt && (
+                    <div>
+                      <p className="text-gray-500 text-xs">Last Verified</p>
+                      <p className="text-gray-300 text-sm">{new Date(alpaca.lastVerifiedAt).toLocaleString()}</p>
+                    </div>
+                  )}
+                  {alpaca.canTradeLive && (
+                    <div className="bg-green-500/10 border border-green-500/30 rounded-lg p-3">
+                      <p className="text-green-300 text-sm">Live trading eligible (policy-gated)</p>
+                    </div>
+                  )}
+                  <button
+                    onClick={disconnectAlpaca}
+                    disabled={alpacaBusy}
+                    className="w-full px-4 py-2 border border-red-500/40 text-red-300 hover:bg-red-500/10 rounded-lg transition"
+                  >
+                    {alpacaBusy ? 'Disconnecting…' : 'Disconnect personal account'}
+                  </button>
+                </>
+              )}
+
+              {alpaca?.mode === 'none' && (
+                <>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <p className="text-white font-medium">Broker</p>
+                      <p className="text-gray-500 text-xs">No broker configured</p>
+                    </div>
+                    {badge(false, '', 'Unavailable')}
+                  </div>
+                  <div className="bg-yellow-500/10 border border-yellow-500/30 rounded-lg p-3">
+                    <p className="text-yellow-300 text-sm">
+                      {alpaca.reason || 'Broker not configured. Contact support if this persists.'}
+                    </p>
+                  </div>
+                </>
+              )}
+
+              {!alpaca && (
+                <div className="text-gray-400 text-sm">Loading broker status…</div>
+              )}
+
+              {alpacaMessage && (
+                <div
+                  className={`text-xs px-3 py-2 rounded-lg ${
+                    alpacaMessage.type === 'success'
+                      ? 'bg-green-500/10 text-green-300 border border-green-500/30'
+                      : 'bg-red-500/10 text-red-300 border border-red-500/30'
+                  }`}
+                >
+                  {alpacaMessage.text}
                 </div>
               )}
 
               <div className="pt-2 text-xs text-gray-500">
-                Market data and execution providers are enforced by policy. If a provider is unavailable,
-                the system must return an explicit error — never fabricated outputs.
+                Market data and execution are policy-gated. Platform intelligence works immediately.
+                Connect your personal account to trade with your own capital.
               </div>
             </div>
           </div>
