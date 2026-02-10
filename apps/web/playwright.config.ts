@@ -14,7 +14,7 @@ export default defineConfig({
   
   use: {
     // Base URL for production testing
-    baseURL: process.env.PROD_WEB_URL || 'https://web-nine-sigma-92.vercel.app',
+    baseURL: process.env.PROD_WEB_URL || 'https://novanexus-ai.com',
     trace: 'on-first-retry',
   },
 
