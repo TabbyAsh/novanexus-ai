@@ -231,11 +231,11 @@ export default function StorePage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
                     <p className="text-gray-500 text-xs mb-1">Suggested Price</p>
-                    <p className="text-xl font-bold text-green-400">${displayDraft.suggestedPrice.toFixed(2)}</p>
+                    <p className="text-xl font-bold text-green-400">${(displayDraft.suggestedPrice ?? 0).toFixed(2)}</p>
                   </div>
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
                     <p className="text-gray-500 text-xs mb-1">Price Range</p>
-                    <p className="text-xl font-bold text-white">${displayDraft.priceRange.min} - ${displayDraft.priceRange.max}</p>
+                    <p className="text-xl font-bold text-white">${displayDraft.priceRange?.min ?? 0} - ${displayDraft.priceRange?.max ?? 0}</p>
                   </div>
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
                     <p className="text-gray-500 text-xs mb-1">Profit Margin</p>
@@ -250,13 +250,13 @@ export default function StorePage() {
                 </div>
 
                 {/* Keywords */}
-                {displayDraft.keywords.length > 0 && (
+                {(displayDraft.keywords?.length ?? 0) > 0 && (
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
                     <h4 className="text-white font-medium mb-3 flex items-center gap-2">
                       <Tag className="w-4 h-4 text-orange-400" /> SEO Keywords
                     </h4>
                     <div className="flex flex-wrap gap-2">
-                      {displayDraft.keywords.map((kw, i) => (
+                      {(displayDraft.keywords ?? []).map((kw, i) => (
                         <span key={i} className="px-3 py-1 bg-orange-500/20 text-orange-300 rounded-full text-sm">{kw}</span>
                       ))}
                     </div>
@@ -264,13 +264,13 @@ export default function StorePage() {
                 )}
 
                 {/* Image Requirements */}
-                {displayDraft.imageRequirements.length > 0 && (
+                {(displayDraft.imageRequirements?.length ?? 0) > 0 && (
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
                     <h4 className="text-white font-medium mb-3 flex items-center gap-2">
                       <Eye className="w-4 h-4 text-cyan-400" /> Image Requirements
                     </h4>
                     <ul className="space-y-1">
-                      {displayDraft.imageRequirements.map((req, i) => (
+                      {(displayDraft.imageRequirements ?? []).map((req, i) => (
                         <li key={i} className="text-gray-300 text-sm flex items-start gap-2">
                           <CheckCircle className="w-4 h-4 text-cyan-400 mt-0.5 flex-shrink-0" />
                           {req}
@@ -321,7 +321,7 @@ export default function StorePage() {
                         <h4 className="text-white font-medium">{draft.title}</h4>
                         <div className="flex items-center gap-3 mt-1 text-sm">
                           <span className="px-2 py-0.5 bg-orange-500/20 text-orange-300 rounded text-xs">{draft.category}</span>
-                          <span className="text-green-400 font-medium">${draft.suggestedPrice.toFixed(2)}</span>
+                          <span className="text-green-400 font-medium">${(draft.suggestedPrice ?? 0).toFixed(2)}</span>
                           <span className={`text-xs ${draft.profitMargin > 30 ? 'text-green-400' : draft.profitMargin > 15 ? 'text-yellow-400' : 'text-red-400'}`}>
                             {draft.profitMargin}% margin
                           </span>

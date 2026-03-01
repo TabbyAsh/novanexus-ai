@@ -228,7 +228,7 @@ export default function MarketplaceDashboard() {
                     <div key={idx} className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-cyan-500/30 transition">
                       <p className="text-white font-medium text-sm line-clamp-2 mb-2">{product.title}</p>
                       <div className="flex items-center justify-between mb-3">
-                        <span className="text-green-400 font-bold text-lg">${product.price.toFixed(2)}</span>
+                        <span className="text-green-400 font-bold text-lg">${(product.price ?? 0).toFixed(2)}</span>
                         <div className="flex items-center gap-2 text-xs text-gray-500">
                           <span className="capitalize">{product.source}</span>
                           {product.condition && <span className="px-1.5 py-0.5 bg-gray-700 rounded">{product.condition}</span>}
@@ -268,7 +268,7 @@ export default function MarketplaceDashboard() {
                         <span className="text-2xl">{cat.icon}</span>
                         <span className="text-white font-medium">{cat.category}</span>
                       </div>
-                      <p className="text-green-400 font-bold">${cat.avgPrice.toFixed(0)} avg</p>
+                      <p className="text-green-400 font-bold">${(cat.avgPrice ?? 0).toFixed(0)} avg</p>
                       <p className="text-gray-500 text-xs mt-1 capitalize">{cat.demand} demand</p>
                     </button>
                   ))}
@@ -309,13 +309,13 @@ export default function MarketplaceDashboard() {
                   <div className="flex items-center justify-between">
                     <div>
                       <h3 className="text-xl font-bold text-white">{appraisal.query}</h3>
-                      <p className="text-sm mt-1 opacity-80">{appraisal.provenance.note}</p>
+                      <p className="text-sm mt-1 opacity-80">{appraisal.provenance?.note ?? ''}</p>
                     </div>
                     <div className="text-right">
-                      <span className={`text-2xl font-bold px-4 py-2 rounded-xl border ${VERDICT_STYLES[appraisal.flipVerdict]}`}>
-                        {appraisal.flipVerdict.toUpperCase().replace('-', ' ')}
+                      <span className={`text-2xl font-bold px-4 py-2 rounded-xl border ${VERDICT_STYLES[appraisal.flipVerdict] || ''}`}>
+                        {(appraisal.flipVerdict ?? 'hold').toUpperCase().replace('-', ' ')}
                       </span>
-                      <p className="text-xs mt-2 text-gray-400">{appraisal.confidence}% confidence</p>
+                      <p className="text-xs mt-2 text-gray-400">{appraisal.confidence ?? 0}% confidence</p>
                     </div>
                   </div>
                 </div>
@@ -323,11 +323,11 @@ export default function MarketplaceDashboard() {
                 {/* Flip Economics */}
                 <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
                   {[
-                    { label: 'Buy At', value: `$${appraisal.recommendedBuyPrice.toFixed(2)}`, color: 'text-cyan-400', sub: '25th percentile' },
-                    { label: 'Sell At', value: `$${appraisal.recommendedSellPrice.toFixed(2)}`, color: 'text-green-400', sub: '75th percentile' },
-                    { label: 'Est. Profit', value: `$${appraisal.estimatedProfit.toFixed(2)}`, color: appraisal.estimatedProfit > 0 ? 'text-green-400' : 'text-red-400', sub: `${appraisal.estimatedProfitPercent}% ROI` },
-                    { label: 'eBay Fees', value: `$${appraisal.platformFees.toFixed(2)}`, color: 'text-orange-400', sub: '~13% FVF' },
-                    { label: 'Shipping', value: `$${appraisal.shippingEstimate.toFixed(2)}`, color: 'text-gray-400', sub: 'estimated' },
+                    { label: 'Buy At', value: `$${(appraisal.recommendedBuyPrice ?? 0).toFixed(2)}`, color: 'text-cyan-400', sub: '25th percentile' },
+                    { label: 'Sell At', value: `$${(appraisal.recommendedSellPrice ?? 0).toFixed(2)}`, color: 'text-green-400', sub: '75th percentile' },
+                    { label: 'Est. Profit', value: `$${(appraisal.estimatedProfit ?? 0).toFixed(2)}`, color: (appraisal.estimatedProfit ?? 0) > 0 ? 'text-green-400' : 'text-red-400', sub: `${appraisal.estimatedProfitPercent ?? 0}% ROI` },
+                    { label: 'eBay Fees', value: `$${(appraisal.platformFees ?? 0).toFixed(2)}`, color: 'text-orange-400', sub: '~13% FVF' },
+                    { label: 'Shipping', value: `$${(appraisal.shippingEstimate ?? 0).toFixed(2)}`, color: 'text-gray-400', sub: 'estimated' },
                   ].map(s => (
                     <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
                       <p className="text-gray-500 text-xs mb-1">{s.label}</p>
@@ -343,19 +343,19 @@ export default function MarketplaceDashboard() {
                   <p className="text-gray-300 text-sm leading-relaxed">{appraisal.flipExplanation}</p>
                   <div className="flex items-center gap-3 mt-3">
                     <span className={`px-2 py-1 rounded text-xs ${appraisal.marketDemand === 'high' ? 'bg-green-500/20 text-green-400' : appraisal.marketDemand === 'medium' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
-                      {appraisal.marketDemand} demand
+                      {appraisal.marketDemand ?? 'unknown'} demand
                     </span>
-                    <span className="text-xs text-gray-500">Range: {appraisal.priceRange}</span>
-                    <span className="text-xs text-gray-500">Method: {appraisal.provenance.method}</span>
+                    <span className="text-xs text-gray-500">Range: {appraisal.priceRange ?? 'N/A'}</span>
+                    <span className="text-xs text-gray-500">Method: {appraisal.provenance?.method ?? 'unknown'}</span>
                   </div>
                 </div>
 
                 {/* Comparable Listings */}
-                {appraisal.sources.length > 0 && (
+                {(appraisal.sources?.length ?? 0) > 0 && (
                   <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-                    <h4 className="text-white font-medium mb-3">Comparable Listings ({appraisal.sources.length})</h4>
+                    <h4 className="text-white font-medium mb-3">Comparable Listings ({appraisal.sources?.length ?? 0})</h4>
                     <div className="space-y-2 max-h-64 overflow-y-auto">
-                      {appraisal.sources.map((src, i) => (
+                      {(appraisal.sources ?? []).map((src, i) => (
                         <a key={i} href={src.url} target="_blank" rel="noopener noreferrer"
                           className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700/80 transition">
                           <div className="flex-1 min-w-0">
@@ -365,7 +365,7 @@ export default function MarketplaceDashboard() {
                               {src.condition && <span className="px-1 py-0.5 bg-gray-700 rounded">{src.condition}</span>}
                             </div>
                           </div>
-                          <span className="text-green-400 font-bold ml-4">${src.price.toFixed(2)}</span>
+                          <span className="text-green-400 font-bold ml-4">${(src.price ?? 0).toFixed(2)}</span>
                         </a>
                       ))}
                     </div>
@@ -373,7 +373,7 @@ export default function MarketplaceDashboard() {
                 )}
 
                 {/* Add to Pipeline */}
-                <button onClick={() => addToPipeline(appraisal.query, appraisal.recommendedBuyPrice)}
+                <button onClick={() => addToPipeline(appraisal.query, appraisal.recommendedBuyPrice ?? 0)}
                   className="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-pink-500/20 transition flex items-center justify-center gap-2">
                   <Package className="w-5 h-5" /> Add to Flip Pipeline
                 </button>
@@ -419,8 +419,8 @@ export default function MarketplaceDashboard() {
                       <div className="flex-1">
                         <h4 className="text-white font-medium">{item.name}</h4>
                         <div className="flex items-center gap-3 mt-1 text-sm">
-                          <span className="text-cyan-400">Buy: ${item.buyPrice.toFixed(2)}</span>
-                          {item.sellPrice && <span className="text-green-400">Sell: ${item.sellPrice.toFixed(2)}</span>}
+                          <span className="text-cyan-400">Buy: ${(item.buyPrice ?? 0).toFixed(2)}</span>
+                          {item.sellPrice != null && <span className="text-green-400">Sell: ${(item.sellPrice ?? 0).toFixed(2)}</span>}
                           <span className="text-gray-500">{new Date(item.addedAt).toLocaleDateString()}</span>
                         </div>
                       </div>

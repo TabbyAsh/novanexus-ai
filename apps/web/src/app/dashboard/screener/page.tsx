@@ -233,7 +233,7 @@ function DecisionCardModal({
             </div>
           </div>
           <div className="mt-3 text-xs text-gray-400">
-            Backtest: {run.sim.backtest?.wins}/{run.sim.backtest?.trades} wins ({Math.round((run.sim.backtest?.wins / run.sim.backtest?.trades) * 100)}%)
+            Backtest: {run.sim.backtest?.wins ?? 0}/{run.sim.backtest?.trades ?? 0} wins ({run.sim.backtest?.trades ? Math.round(((run.sim.backtest?.wins ?? 0) / run.sim.backtest.trades) * 100) : 0}%)
           </div>
         </div>
 
@@ -418,21 +418,21 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuid
         <div className="grid grid-cols-4 gap-4 mb-4">
           <div className="p-3 rounded-xl bg-white/5 border border-white/10">
             <p className="text-gray-500 text-xs mb-1 uppercase tracking-wide">Entry</p>
-            <p className="text-white font-bold text-lg">${signal.entry.toFixed(2)}</p>
+            <p className="text-white font-bold text-lg">${(signal.entry ?? 0).toFixed(2)}</p>
           </div>
           <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30">
             <p className="text-green-400 text-xs mb-1 uppercase tracking-wide">Target</p>
-            <p className="text-green-400 font-bold text-lg">${signal.target.toFixed(2)}</p>
-            <p className="text-green-400/60 text-xs">+{((signal.target - signal.entry) / signal.entry * 100).toFixed(1)}%</p>
+            <p className="text-green-400 font-bold text-lg">${(signal.target ?? 0).toFixed(2)}</p>
+            <p className="text-green-400/60 text-xs">+{(signal.entry ? ((signal.target - signal.entry) / signal.entry * 100) : 0).toFixed(1)}%</p>
           </div>
           <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30">
             <p className="text-red-400 text-xs mb-1 uppercase tracking-wide">Stop Loss</p>
-            <p className="text-red-400 font-bold text-lg">${signal.stopLoss.toFixed(2)}</p>
-            <p className="text-red-400/60 text-xs">{((signal.stopLoss - signal.entry) / signal.entry * 100).toFixed(1)}%</p>
+            <p className="text-red-400 font-bold text-lg">${(signal.stopLoss ?? 0).toFixed(2)}</p>
+            <p className="text-red-400/60 text-xs">{(signal.entry ? ((signal.stopLoss - signal.entry) / signal.entry * 100) : 0).toFixed(1)}%</p>
           </div>
           <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
             <p className="text-cyan-400 text-xs mb-1 uppercase tracking-wide">Risk/Reward</p>
-            <p className="text-cyan-400 font-bold text-lg">{signal.riskReward.toFixed(2)}:1</p>
+            <p className="text-cyan-400 font-bold text-lg">{(signal.riskReward ?? 0).toFixed(2)}:1</p>
             <p className="text-cyan-400/60 text-xs">{signal.riskReward >= 2 ? 'Excellent' : signal.riskReward >= 1.5 ? 'Good' : 'Fair'}</p>
           </div>
         </div>
@@ -1131,11 +1131,11 @@ export default function ScreenerPage() {
                 </div>
                 <div>
                   <p className="text-gray-500 text-xs">Max Drawdown</p>
-                  <p className="text-white font-semibold">{paperStats.maxDrawdown.toFixed(2)}%</p>
+                  <p className="text-white font-semibold">{(paperStats.maxDrawdown ?? 0).toFixed(2)}%</p>
                 </div>
                 <div>
                   <p className="text-gray-500 text-xs">Avg Slippage</p>
-                  <p className="text-white font-semibold">{paperStats.avgSlippageBps.toFixed(2)} bps</p>
+                  <p className="text-white font-semibold">{(paperStats.avgSlippageBps ?? 0).toFixed(2)} bps</p>
                 </div>
               </div>
             ) : (

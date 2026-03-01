@@ -204,7 +204,7 @@ export default function SocialPage() {
 
   const displayPlan = generatedPlan || selectedPlan;
 
-  const formatNum = (n: number) => n >= 1000000 ? `${(n / 1000000).toFixed(1)}M` : n >= 1000 ? `${(n / 1000).toFixed(1)}K` : n.toString();
+  const formatNum = (n: number) => { const v = n ?? 0; return v >= 1000000 ? `${(v / 1000000).toFixed(1)}M` : v >= 1000 ? `${(v / 1000).toFixed(1)}K` : v.toString(); };
 
   return (
     <DashboardLayout>
@@ -320,14 +320,14 @@ export default function SocialPage() {
                           <Calendar className="w-3 h-3 text-gray-500" />
                           <span className="text-gray-400">{post.dayOfWeek} {post.optimalTime}</span>
                           <span className="px-2 py-0.5 bg-violet-500/20 text-violet-300 rounded text-xs">
-                            {post.predictedEngagement}% est. engagement
+                            {post.predictedEngagement ?? 0}% est. engagement
                           </span>
                         </div>
                       </div>
                       <p className="text-gray-200 text-sm leading-relaxed mb-2">{post.caption}</p>
-                      {post.hashtags.length > 0 && (
+                      {(post.hashtags?.length ?? 0) > 0 && (
                         <div className="flex flex-wrap gap-1">
-                          {post.hashtags.map((tag, i) => (
+                          {(post.hashtags ?? []).map((tag, i) => (
                             <span key={i} className="px-2 py-0.5 bg-blue-500/20 text-blue-300 rounded text-xs">#{tag}</span>
                           ))}
                         </div>
@@ -502,7 +502,7 @@ export default function SocialPage() {
                         <div key={post.id} className="flex items-center gap-4 p-3 bg-gray-800 rounded-lg">
                           <span className="text-lg font-bold text-gray-500">#{i + 1}</span>
                           <span className="flex-1 text-white">{post.title}</span>
-                          <span className="text-green-400 font-medium">{post.engagementRate.toFixed(1)}%</span>
+                          <span className="text-green-400 font-medium">{(post.engagementRate ?? 0).toFixed(1)}%</span>
                         </div>
                       ))}
                     </div>
