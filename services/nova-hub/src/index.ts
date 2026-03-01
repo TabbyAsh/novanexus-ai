@@ -130,7 +130,7 @@ async function getUserPlan(userId: string): Promise<{ plan: string; limits: Plan
     [plan]
   );
   
-  const limits = config?.limits_json ? JSON.parse(config.limits_json) : {
+  const DEFAULT_LIMITS = {
     daily_journal_entries: 3,
     daily_backtests: 1,
     daily_decision_cards: 3,
@@ -142,6 +142,15 @@ async function getUserPlan(userId: string): Promise<{ plan: string; limits: Plan
     csv_export: false,
     pdf_reports: false,
   };
+
+  let limits: PlanLimits;
+  try {
+    const raw = config?.limits_json;
+    limits = raw && typeof raw === 'string' && raw.startsWith('{') ? JSON.parse(raw) : DEFAULT_LIMITS;
+  } catch {
+    logger.warn('Corrupt limits_json, using defaults', { plan });
+    limits = DEFAULT_LIMITS;
+  }
   
   return { plan, limits };
 }

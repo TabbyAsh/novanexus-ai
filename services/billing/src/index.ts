@@ -145,6 +145,18 @@ async function getEntitlement(userId: string): Promise<Entitlement | null> {
 
   if (!result) return null;
 
+  // Safely parse features_json — old rows may have corrupt data
+  let features: string[];
+  try {
+    features = result.features_json ? JSON.parse(result.features_json) : getDefaultFeatures(result.plan as Entitlement['plan']);
+    if (!Array.isArray(features)) features = getDefaultFeatures(result.plan as Entitlement['plan']);
+  } catch {
+    logger.warn('Corrupt features_json, using defaults', { userId, plan: result.plan });
+    features = getDefaultFeatures(result.plan as Entitlement['plan']);
+    // Auto-repair: update the row with valid JSON
+    query('UPDATE entitlements SET features_json = $1 WHERE user_id = $2', [JSON.stringify(features), userId]).catch(() => {});
+  }
+
   return {
     id: result.id,
     userId: result.user_id,
@@ -154,7 +166,7 @@ async function getEntitlement(userId: string): Promise<Entitlement | null> {
     stripeCustomerId: result.stripe_customer_id,
     stripeSubscriptionId: result.stripe_subscription_id,
     currentPeriodEnd: result.current_period_end,
-    features: result.features_json ? JSON.parse(result.features_json) : getDefaultFeatures(result.plan as Entitlement['plan']),
+    features,
     createdAt: result.created_at,
     updatedAt: result.updated_at,
   };
