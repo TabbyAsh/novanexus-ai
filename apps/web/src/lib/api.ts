@@ -619,6 +619,22 @@ class ApiClient {
     return this.request<{ currentStreak: number; longestStreak: number; totalDays: number }>('GET', '/v1/journal/streak');
   }
 
+  async getWeeklyReport() {
+    return this.request<{
+      period: { start: string; end: string };
+      journal: {
+        trades: number; wins: number; losses: number; winRate: number;
+        totalPnl: number; avgPnlPercent: number; bestTradePct: number; worstTradePct: number;
+      };
+      comparison: { priorTrades: number; priorWinRate: number; winRateDelta: number; pnlDelta: number };
+      decisionCards: { total: number; accuracy: number | null; avgConfidence: number };
+      streak: { current: number; longest: number; totalDays: number };
+      topMistakes: Array<{ strategy: string; count: number; totalLoss: number }>;
+      topWins: Array<{ strategy: string; count: number; totalGain: number }>;
+      generatedAt: string;
+    }>('GET', '/v1/weekly-report');
+  }
+
   // Decisions (Decision -> Replay)
   async getDecisions(params?: { status?: string; symbol?: string; limit?: number; offset?: number }) {
     const qs = new URLSearchParams();
@@ -1672,6 +1688,29 @@ class ApiClient {
 
   async exportAllDropshipDrafts() {
     return this.request<{ csv: string; count: number }>('GET', '/v1/dropship/export');
+  }
+
+  // ==========================================================================
+  // Flip Pipeline
+  // ==========================================================================
+  async getFlips(status?: string) {
+    const qs = status ? `?status=${status}` : '';
+    return this.request<{
+      flips: Array<any>;
+      summary: { totalInvested: number; totalRevenue: number; totalFees: number; netProfit: number; count: number };
+    }>('GET', `/v1/flips${qs}`);
+  }
+
+  async createFlip(params: { itemName: string; category?: string; source?: string; sourceUrl?: string; purchasePrice?: number; repairCost?: number; listingPrice?: number; notes?: string }) {
+    return this.request<{ flip: any }>('POST', '/v1/flips', params);
+  }
+
+  async updateFlip(id: string, params: { status?: string; listingPrice?: number; soldPrice?: number; shippingCost?: number; platformFees?: number; repairCost?: number; notes?: string }) {
+    return this.request<{ flip: any }>('PUT', `/v1/flips/${id}`, params);
+  }
+
+  async deleteFlip(id: string) {
+    return this.request<{ deleted: boolean }>('DELETE', `/v1/flips/${id}`);
   }
 
   // ==========================================================================

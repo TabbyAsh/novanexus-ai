@@ -54,6 +54,7 @@ function Navbar() {
         <div className="hidden md:flex items-center gap-8">
           <Link href="#features" className="text-gray-300 hover:text-white transition-colors">Features</Link>
           <Link href="#about" className="text-gray-300 hover:text-white transition-colors">About</Link>
+          <Link href="/pricing" className="text-amber-400 hover:text-amber-300 transition-colors font-medium">Pricing</Link>
           <Link href="/dashboard" className="text-gray-300 hover:text-white transition-colors">Dashboard</Link>
         </div>
         
@@ -87,10 +88,10 @@ function HeroSection() {
             initial={{ scale: 0.8, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
             transition={{ duration: 0.5, delay: 0.2 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-white/5 border border-cyan-500/30 mb-8"
+            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/30 mb-8"
           >
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse" />
-            <span className="text-cyan-400 text-sm font-medium">AI-Powered • Always Active</span>
+            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
+            <span className="text-amber-400 text-sm font-medium">Founding Members — Only 50 Seats Available</span>
           </motion.div>
           
           <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white mb-6 leading-tight">
@@ -127,14 +128,14 @@ function HeroSection() {
             transition={{ duration: 0.6, delay: 0.9 }}
             className="flex flex-col sm:flex-row items-center justify-center gap-4"
           >
-            <Link href="/dashboard">
-              <GlassButton variant="primary" className="text-lg">
-                Launch Dashboard →
-              </GlassButton>
+            <Link href="/pricing">
+              <button className="px-8 py-4 rounded-xl text-lg font-semibold bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30 transition-all">
+                Become a Founding Member →
+              </button>
             </Link>
-            <Link href="#features">
+            <Link href="/register">
               <GlassButton variant="secondary" className="text-lg">
-                Explore Features
+                Start Free
               </GlassButton>
             </Link>
           </motion.div>
@@ -257,14 +258,24 @@ function CTASection() {
           <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
             Ready to take <GradientText>control</GradientText>?
           </h2>
-          <p className="text-xl text-gray-400 mb-10">
-            Join the ecosystem. Start with AI-powered trading intelligence—completely free.
+          <p className="text-xl text-gray-400 mb-4">
+            50 Founding Member seats. $99/month. Unlimited everything. Lock it in forever.
           </p>
-          <Link href="/register">
-            <GlassButton variant="primary" className="text-xl !px-12 !py-5">
-              Start Your Journey →
-            </GlassButton>
-          </Link>
+          <p className="text-gray-500 mb-10">
+            Or start free — no credit card required.
+          </p>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
+            <Link href="/pricing">
+              <button className="px-10 py-5 rounded-xl text-xl font-semibold bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30 transition-all">
+                Claim Your Founding Seat →
+              </button>
+            </Link>
+            <Link href="/register">
+              <GlassButton variant="secondary" className="text-lg !px-8 !py-4">
+                Start Free
+              </GlassButton>
+            </Link>
+          </div>
         </motion.div>
       </div>
     </section>
@@ -291,6 +302,15 @@ function Footer() {
           
           <p className="text-gray-500 text-sm">
             © 2026 NovaNexus AI. All rights reserved.
+          </p>
+        </div>
+        
+        <div className="mt-8 pt-6 border-t border-white/5">
+          <p className="text-gray-600 text-xs leading-relaxed text-center max-w-4xl mx-auto">
+            <strong className="text-gray-500">Risk Disclosure:</strong> NovaNexus AI provides informational tools only. 
+            Nothing on this platform constitutes financial, investment, or trading advice. All trading and investment decisions 
+            are made by you. Past performance, backtests, and AI-generated signals do not guarantee future results. 
+            You may lose money. Use at your own risk.
           </p>
         </div>
       </div>

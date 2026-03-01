@@ -8,7 +8,7 @@ import {
   TaskContext,
   TaskResult,
 } from '@nova/bot-sdk';
-import { generateId, nowTimestamp, HTTP_STATUS } from '@nova/shared';
+import { generateId, nowTimestamp, HTTP_STATUS, query, queryOne } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { PricingEngine, Product as PricingProduct, PriceRecommendation } from './pricing-engine';
 import { searchProducts, appraiseProduct, batchAppraise, ScrapedProduct, ProductAppraisal } from './product-scraper';
@@ -581,6 +581,157 @@ app.get('/api/dropship/export', (_req: Request, res: Response) => {
     },
   });
 });
+
+// ============================================================================
+// Flip Pipeline CRUD
+// ============================================================================
+
+const FLIP_STATUSES = ['SOURCED', 'ACQUIRED', 'REPAIRING', 'LISTED', 'SOLD', 'ARCHIVED'] as const;
+
+// List flips for a user (user_id passed via header from gateway)
+app.get('/api/flips', async (req: Request, res: Response) => {
+  const userId = req.headers['x-user-id'] as string;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  const status = req.query.status as string | undefined;
+  let sql = 'SELECT * FROM flip_plans WHERE user_id = $1';
+  const params: (string)[] = [userId];
+  if (status && FLIP_STATUSES.includes(status as any)) {
+    sql += ' AND status = $2';
+    params.push(status);
+  }
+  sql += ' ORDER BY updated_at DESC LIMIT 100';
+
+  try {
+    const result = await query<any>(sql, params);
+    const flips = result.rows.map(formatFlip);
+    // Compute summary
+    const totalInvested = flips.reduce((s: number, f: any) => s + (f.purchasePrice || 0) + (f.repairCost || 0), 0);
+    const totalRevenue = flips.filter((f: any) => f.status === 'SOLD').reduce((s: number, f: any) => s + (f.soldPrice || 0), 0);
+    const totalFees = flips.filter((f: any) => f.status === 'SOLD').reduce((s: number, f: any) => s + (f.shippingCost || 0) + (f.platformFees || 0), 0);
+    res.json({ success: true, data: { flips, summary: { totalInvested, totalRevenue, totalFees, netProfit: totalRevenue - totalInvested - totalFees, count: flips.length } } });
+  } catch (err) {
+    logger.error('Failed to list flips', err as Error);
+    res.status(500).json({ success: false, error: 'Failed to list flips' });
+  }
+});
+
+// Create flip
+app.post('/api/flips', async (req: Request, res: Response) => {
+  const userId = req.headers['x-user-id'] as string;
+  const orgId = req.headers['x-org-id'] as string || null;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  const { itemName, category, source, sourceUrl, purchasePrice, repairCost, listingPrice, notes } = req.body;
+  if (!itemName) return res.status(400).json({ success: false, error: 'itemName is required' });
+
+  try {
+    const row = await queryOne<any>(
+      `INSERT INTO flip_plans (user_id, org_id, item_name, category, source, source_url, purchase_price, repair_cost, listing_price, notes)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`,
+      [userId, orgId, itemName, category || null, source || null, sourceUrl || null, purchasePrice || 0, repairCost || 0, listingPrice || null, notes || null]
+    );
+    res.status(201).json({ success: true, data: { flip: formatFlip(row) } });
+  } catch (err) {
+    logger.error('Failed to create flip', err as Error);
+    res.status(500).json({ success: false, error: 'Failed to create flip' });
+  }
+});
+
+// Get single flip
+app.get('/api/flips/:id', async (req: Request, res: Response) => {
+  const userId = req.headers['x-user-id'] as string;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  try {
+    const row = await queryOne<any>('SELECT * FROM flip_plans WHERE id = $1 AND user_id = $2', [req.params.id, userId]);
+    if (!row) return res.status(404).json({ success: false, error: 'Flip not found' });
+    res.json({ success: true, data: { flip: formatFlip(row) } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to get flip' });
+  }
+});
+
+// Update flip (status transitions, price updates, notes)
+app.put('/api/flips/:id', async (req: Request, res: Response) => {
+  const userId = req.headers['x-user-id'] as string;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  const { status, listingPrice, soldPrice, shippingCost, platformFees, repairCost, notes } = req.body;
+
+  const sets: string[] = ['updated_at = NOW()'];
+  const vals: any[] = [];
+  let i = 1;
+
+  if (status && FLIP_STATUSES.includes(status)) { sets.push(`status = $${i++}`); vals.push(status); }
+  if (listingPrice !== undefined) { sets.push(`listing_price = $${i++}`); vals.push(listingPrice); }
+  if (soldPrice !== undefined) { sets.push(`sold_price = $${i++}`); vals.push(soldPrice); }
+  if (shippingCost !== undefined) { sets.push(`shipping_cost = $${i++}`); vals.push(shippingCost); }
+  if (platformFees !== undefined) { sets.push(`platform_fees = $${i++}`); vals.push(platformFees); }
+  if (repairCost !== undefined) { sets.push(`repair_cost = $${i++}`); vals.push(repairCost); }
+  if (notes !== undefined) { sets.push(`notes = $${i++}`); vals.push(notes); }
+
+  // Auto-set date columns on status transitions
+  if (status === 'ACQUIRED') { sets.push(`acquired_at = COALESCE(acquired_at, NOW())`); }
+  if (status === 'LISTED') { sets.push(`listed_at = COALESCE(listed_at, NOW())`); }
+  if (status === 'SOLD') { sets.push(`sold_at = COALESCE(sold_at, NOW())`); }
+
+  vals.push(req.params.id, userId);
+
+  try {
+    const row = await queryOne<any>(
+      `UPDATE flip_plans SET ${sets.join(', ')} WHERE id = $${i++} AND user_id = $${i} RETURNING *`,
+      vals
+    );
+    if (!row) return res.status(404).json({ success: false, error: 'Flip not found' });
+    res.json({ success: true, data: { flip: formatFlip(row) } });
+  } catch (err) {
+    logger.error('Failed to update flip', err as Error);
+    res.status(500).json({ success: false, error: 'Failed to update flip' });
+  }
+});
+
+// Delete flip
+app.delete('/api/flips/:id', async (req: Request, res: Response) => {
+  const userId = req.headers['x-user-id'] as string;
+  if (!userId) return res.status(401).json({ success: false, error: 'Unauthorized' });
+
+  try {
+    const row = await queryOne<any>('DELETE FROM flip_plans WHERE id = $1 AND user_id = $2 RETURNING id', [req.params.id, userId]);
+    if (!row) return res.status(404).json({ success: false, error: 'Flip not found' });
+    res.json({ success: true, data: { deleted: true } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: 'Failed to delete flip' });
+  }
+});
+
+function formatFlip(row: any) {
+  return {
+    id: row.id,
+    itemName: row.item_name,
+    category: row.category,
+    source: row.source,
+    sourceUrl: row.source_url,
+    purchasePrice: row.purchase_price ? parseFloat(row.purchase_price) : 0,
+    repairCost: row.repair_cost ? parseFloat(row.repair_cost) : 0,
+    listingPrice: row.listing_price ? parseFloat(row.listing_price) : null,
+    soldPrice: row.sold_price ? parseFloat(row.sold_price) : null,
+    shippingCost: row.shipping_cost ? parseFloat(row.shipping_cost) : 0,
+    platformFees: row.platform_fees ? parseFloat(row.platform_fees) : 0,
+    status: row.status,
+    notes: row.notes,
+    acquiredAt: row.acquired_at,
+    listedAt: row.listed_at,
+    soldAt: row.sold_at,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    roi: row.sold_price ? (() => {
+      const cost = parseFloat(row.purchase_price || '0') + parseFloat(row.repair_cost || '0') + parseFloat(row.shipping_cost || '0') + parseFloat(row.platform_fees || '0');
+      const revenue = parseFloat(row.sold_price);
+      return cost > 0 ? Math.round(((revenue - cost) / cost) * 10000) / 100 : null;
+    })() : null,
+  };
+}
 
 // ============================================================================
 // Start Server

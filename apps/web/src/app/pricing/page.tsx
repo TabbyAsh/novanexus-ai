@@ -15,6 +15,7 @@ interface Plan {
   interval: string | null;
   features: string[];
   comingSoon?: boolean;
+  founding?: boolean;
 }
 
 export default function PricingPage() {
@@ -24,9 +25,11 @@ export default function PricingPage() {
   const [billingInterval, setBillingInterval] = useState<'monthly' | 'yearly'>('monthly');
   const [isLoading, setIsLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
+  const [foundingSeats, setFoundingSeats] = useState<{ maxSeats: number; taken: number; remaining: number } | null>(null);
 
   useEffect(() => {
     fetchPricing();
+    fetchFoundingSeats();
   }, []);
 
   const fetchPricing = async () => {
@@ -38,6 +41,18 @@ export default function PricingPage() {
       }
     } catch (error) {
       console.error('Failed to fetch pricing:', error);
+    }
+  };
+
+  const fetchFoundingSeats = async () => {
+    try {
+      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/v1/billing/founding-seats`);
+      const data = await res.json();
+      if (data.success) {
+        setFoundingSeats(data.data);
+      }
+    } catch {
+      setFoundingSeats({ maxSeats: 50, taken: 0, remaining: 50 });
     }
   };
 
@@ -148,63 +163,78 @@ export default function PricingPage() {
         </div>
 
         {/* Plans Grid */}
-        <div className="grid md:grid-cols-3 gap-8">
-          {plans.map((plan) => (
-            <div
-              key={plan.id}
-              className={`rounded-2xl p-8 ${
-                plan.id === 'LITE'
-                  ? 'bg-gradient-to-b from-blue-900/50 to-gray-900 border-2 border-blue-500/50 ring-2 ring-blue-500/20'
-                  : 'bg-gray-900 border border-gray-800'
-              }`}
-            >
-              {plan.id === 'LITE' && (
-                <div className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-4">
-                  Most Popular
-                </div>
-              )}
-              
-              <h3 className="text-xl font-bold text-white mb-2">{plan.name}</h3>
-              
-              <div className="mb-6">
-                <span className="text-4xl font-bold text-white">{getPrice(plan)}</span>
-                {getSavings(plan) && (
-                  <span className="ml-2 text-sm text-green-400">{getSavings(plan)}</span>
-                )}
-              </div>
-
-              <ul className="space-y-3 mb-8">
-                {plan.features.map((feature, idx) => (
-                  <li key={idx} className="flex items-center gap-3 text-gray-300">
-                    <svg className="w-5 h-5 text-green-400 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
-                    </svg>
-                    {feature}
-                  </li>
-                ))}
-              </ul>
-
-              <button
-                onClick={() => handleSubscribe(plan.id)}
-                disabled={plan.comingSoon || checkoutLoading === plan.id}
-                className={`w-full py-3 px-4 rounded-lg font-medium transition ${
-                  plan.id === 'LITE'
-                    ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                    : plan.id === 'FREE'
-                    ? 'bg-gray-800 hover:bg-gray-700 text-white'
-                    : 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                } disabled:opacity-50`}
+        <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
+          {plans.map((plan) => {
+            const isFounding = plan.id === 'FOUNDING' || plan.founding;
+            const isLite = plan.id === 'LITE';
+            return (
+              <div
+                key={plan.id}
+                className={`rounded-2xl p-8 relative ${
+                  isFounding
+                    ? 'bg-gradient-to-b from-amber-900/40 via-yellow-900/20 to-gray-900 border-2 border-amber-500/60 ring-2 ring-amber-500/20'
+                    : isLite
+                    ? 'bg-gradient-to-b from-blue-900/50 to-gray-900 border-2 border-blue-500/50 ring-2 ring-blue-500/20'
+                    : 'bg-gray-900 border border-gray-800'
+                }`}
               >
-                {checkoutLoading === plan.id
-                  ? 'Loading...'
-                  : plan.comingSoon
-                  ? 'Coming Soon'
-                  : plan.id === 'FREE'
-                  ? 'Get Started Free'
-                  : 'Subscribe Now'}
-              </button>
-            </div>
-          ))}
+                {isFounding && (
+                  <div className="text-xs font-semibold text-amber-400 uppercase tracking-wider mb-4 flex items-center gap-2">
+                    <span className="text-base">\u2B50</span> Limited — {foundingSeats ? `${foundingSeats.remaining} of ${foundingSeats.maxSeats} seats left` : '50 seats'}
+                  </div>
+                )}
+                {isLite && (
+                  <div className="text-xs font-semibold text-blue-400 uppercase tracking-wider mb-4">
+                    Most Popular
+                  </div>
+                )}
+                
+                <h3 className={`text-xl font-bold mb-2 ${isFounding ? 'text-amber-100' : 'text-white'}`}>{plan.name}</h3>
+                
+                <div className="mb-6">
+                  <span className="text-4xl font-bold text-white">{getPrice(plan)}</span>
+                  {getSavings(plan) && (
+                    <span className="ml-2 text-sm text-green-400">{getSavings(plan)}</span>
+                  )}
+                </div>
+
+                <ul className="space-y-3 mb-8">
+                  {plan.features.map((feature, idx) => (
+                    <li key={idx} className="flex items-center gap-3 text-gray-300 text-sm">
+                      <svg className={`w-5 h-5 flex-shrink-0 ${isFounding ? 'text-amber-400' : 'text-green-400'}`} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                      </svg>
+                      {feature}
+                    </li>
+                  ))}
+                </ul>
+
+                <button
+                  onClick={() => handleSubscribe(plan.id)}
+                  disabled={plan.comingSoon || checkoutLoading === plan.id}
+                  className={`w-full py-3 px-4 rounded-lg font-medium transition ${
+                    isFounding
+                      ? 'bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30'
+                      : isLite
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
+                      : plan.id === 'FREE'
+                      ? 'bg-gray-800 hover:bg-gray-700 text-white'
+                      : 'bg-gray-800 text-gray-500 cursor-not-allowed'
+                  } disabled:opacity-50`}
+                >
+                  {checkoutLoading === plan.id
+                    ? 'Loading...'
+                    : plan.comingSoon
+                    ? 'Coming Soon'
+                    : isFounding
+                    ? 'Claim Founding Seat'
+                    : plan.id === 'FREE'
+                    ? 'Get Started Free'
+                    : 'Subscribe Now'}
+                </button>
+              </div>
+            );
+          })}
         </div>
 
         {/* Disclaimer */}

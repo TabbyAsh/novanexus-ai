@@ -2465,14 +2465,15 @@ app.post('/internal/decision-cards', async (req: Request, res: Response) => {
   const regime = metadata?.regime || scorePayload?.regime || null;
 
   const cardHash = buildDecisionCardHash(card, scorePayload as unknown as Record<string, unknown>);
+  const domain = metadata?.domain || 'STOCKS';
 
   const result = await queryOne<DecisionCardRow>(
     `INSERT INTO decision_cards (
         id, org_id, user_id, symbol, strategy_tag, confidence_score, source_type,
-        latency_class, regime, status, expires_at, card_hash, card_json, score_json
+        latency_class, regime, status, expires_at, card_hash, card_json, score_json, domain
      )
      VALUES ($1, $2, $3, $4, $5, $6, $7,
-             $8, $9, $10, $11, $12, $13, $14)
+             $8, $9, $10, $11, $12, $13, $14, $15)
      ON CONFLICT (id) DO UPDATE SET
        symbol = EXCLUDED.symbol,
        strategy_tag = EXCLUDED.strategy_tag,
@@ -2484,7 +2485,8 @@ app.post('/internal/decision-cards', async (req: Request, res: Response) => {
        expires_at = EXCLUDED.expires_at,
        card_hash = EXCLUDED.card_hash,
        card_json = EXCLUDED.card_json,
-       score_json = EXCLUDED.score_json
+       score_json = EXCLUDED.score_json,
+       domain = EXCLUDED.domain
      RETURNING *`,
     [
       card.id,
@@ -2501,6 +2503,7 @@ app.post('/internal/decision-cards', async (req: Request, res: Response) => {
       cardHash,
       JSON.stringify(card),
       JSON.stringify(scorePayload),
+      domain,
     ]
   );
 
@@ -2510,7 +2513,7 @@ app.post('/internal/decision-cards', async (req: Request, res: Response) => {
 // Decision card feed (auth)
 app.get('/v1/decision-cards', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId, orgId } = req.user!;
-  const { symbol, strategy, sourceType, latencyClass, regime, status, minConfidence, maxConfidence, limit = '50', offset = '0' } = req.query;
+  const { symbol, strategy, sourceType, latencyClass, regime, status, domain, minConfidence, maxConfidence, limit = '50', offset = '0' } = req.query;
 
   let whereClause = 'WHERE (org_id IS NULL OR org_id = $1)';
   const params: (string | number)[] = [orgId];
@@ -2539,6 +2542,10 @@ app.get('/v1/decision-cards', authMiddleware, async (req: AuthenticatedRequest, 
   if (status) {
     whereClause += ` AND status = $${paramIndex++}`;
     params.push(String(status).toUpperCase());
+  }
+  if (domain) {
+    whereClause += ` AND domain = $${paramIndex++}`;
+    params.push(String(domain).toUpperCase());
   }
   if (minConfidence && !Number.isNaN(Number(minConfidence))) {
     whereClause += ` AND confidence_score >= $${paramIndex++}`;
@@ -7987,6 +7994,268 @@ app.get('/v1/dashboard/stats', async (_req: Request, res: Response) => {
   } catch (error) {
     logger.error('Dashboard stats failed', error as Error);
     res.json({ success: true, data: { sectors: {}, performance: {}, updatedAt: new Date().toISOString() } });
+  }
+});
+
+// ============================================
+// Mode Control (RECOMMEND / ASSIST / AUTOMATE per sector)
+// ============================================
+
+const VALID_MODES = ['RECOMMEND', 'ASSIST', 'AUTOMATE'] as const;
+const VALID_SECTORS = ['stocks', 'marketplace', 'flipper', 'dropship', 'social'] as const;
+
+app.get('/v1/ops/modes', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  try {
+    const result = await query<{ sector: string; mode: string; updated_at: string }>(
+      'SELECT sector, mode, updated_at FROM system_modes WHERE user_id = $1',
+      [userId]
+    );
+    const modes: Record<string, string> = {};
+    for (const sector of VALID_SECTORS) modes[sector] = 'RECOMMEND';
+    for (const row of result.rows) modes[row.sector] = row.mode;
+    res.json({ success: true, data: { modes } });
+  } catch (error) {
+    logger.error('Failed to get modes', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'MODES_FAILED', message: 'Failed to get modes' } });
+  }
+});
+
+app.put('/v1/ops/modes', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { sector, mode } = req.body;
+  if (!VALID_SECTORS.includes(sector)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_SECTOR', message: `Valid sectors: ${VALID_SECTORS.join(', ')}` } });
+  }
+  if (!VALID_MODES.includes(mode)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_MODE', message: `Valid modes: ${VALID_MODES.join(', ')}` } });
+  }
+  try {
+    await query(
+      `INSERT INTO system_modes (user_id, sector, mode, updated_at) VALUES ($1, $2, $3, NOW())
+       ON CONFLICT (user_id, sector) DO UPDATE SET mode = $3, updated_at = NOW()`,
+      [userId, sector, mode]
+    );
+    res.json({ success: true, data: { sector, mode } });
+  } catch (error) {
+    logger.error('Failed to set mode', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'MODE_FAILED', message: 'Failed to set mode' } });
+  }
+});
+
+// ============================================
+// Calibration (Brier Score)
+// ============================================
+
+app.post('/v1/calibration', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { predictedConfidence, actualOutcome, domain, decisionCardId } = req.body;
+
+  if (typeof predictedConfidence !== 'number' || predictedConfidence < 0 || predictedConfidence > 1) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_INPUT', message: 'predictedConfidence must be between 0 and 1' } });
+  }
+  if (typeof actualOutcome !== 'boolean') {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_INPUT', message: 'actualOutcome must be boolean' } });
+  }
+
+  try {
+    await query(
+      `INSERT INTO calibration_records (user_id, domain, predicted_confidence, actual_outcome, decision_card_id)
+       VALUES ($1, $2, $3, $4, $5)`,
+      [userId, domain || 'STOCKS', predictedConfidence, actualOutcome, decisionCardId || null]
+    );
+    res.status(HTTP_STATUS.CREATED).json({ success: true, data: { recorded: true } });
+  } catch (error) {
+    logger.error('Failed to record calibration', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Failed to record calibration' } });
+  }
+});
+
+app.get('/v1/calibration', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const domain = (req.query.domain as string) || undefined;
+
+  try {
+    let sql = 'SELECT predicted_confidence, actual_outcome FROM calibration_records WHERE user_id = $1';
+    const params: string[] = [userId];
+    if (domain) { sql += ' AND domain = $2'; params.push(domain); }
+    sql += ' ORDER BY created_at DESC LIMIT 500';
+
+    const result = await query<{ predicted_confidence: string; actual_outcome: boolean }>(sql, params);
+    const records = result.rows;
+    const n = records.length;
+
+    if (n === 0) {
+      return res.json({ success: true, data: { brierScore: null, count: 0, message: 'No calibration records yet' } });
+    }
+
+    // Brier score: mean of (predicted - actual)^2, lower is better
+    let brierSum = 0;
+    for (const r of records) {
+      const p = parseFloat(r.predicted_confidence);
+      const o = r.actual_outcome ? 1 : 0;
+      brierSum += (p - o) ** 2;
+    }
+    const brierScore = Math.round((brierSum / n) * 10000) / 10000;
+
+    // Calibration buckets (0.0-0.1, 0.1-0.2, ... 0.9-1.0)
+    const buckets: { range: string; predicted: number; actual: number; count: number }[] = [];
+    for (let b = 0; b < 10; b++) {
+      const low = b / 10;
+      const high = (b + 1) / 10;
+      const inBucket = records.filter(r => { const p = parseFloat(r.predicted_confidence); return p >= low && p < (b === 9 ? high + 0.0001 : high); });
+      if (inBucket.length > 0) {
+        const avgPredicted = inBucket.reduce((s, r) => s + parseFloat(r.predicted_confidence), 0) / inBucket.length;
+        const avgActual = inBucket.filter(r => r.actual_outcome).length / inBucket.length;
+        buckets.push({ range: `${(low * 100).toFixed(0)}-${(high * 100).toFixed(0)}%`, predicted: Math.round(avgPredicted * 100) / 100, actual: Math.round(avgActual * 100) / 100, count: inBucket.length });
+      }
+    }
+
+    res.json({ success: true, data: { brierScore, count: n, buckets } });
+  } catch (error) {
+    logger.error('Failed to compute calibration', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Failed to compute calibration' } });
+  }
+});
+
+// ============================================
+// Weekly Improvement Report
+// ============================================
+
+app.get('/v1/weekly-report', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+
+  try {
+    // Journal stats — last 7 days
+    const journalWeek = await queryOne<{
+      total: string;
+      wins: string;
+      losses: string;
+      total_pnl: string;
+      avg_pnl_pct: string;
+      best_pnl: string;
+      worst_pnl: string;
+    }>(
+      `SELECT
+         COUNT(*) as total,
+         COUNT(*) FILTER (WHERE pnl > 0) as wins,
+         COUNT(*) FILTER (WHERE pnl < 0) as losses,
+         COALESCE(SUM(pnl), 0) as total_pnl,
+         COALESCE(AVG(pnl_percent) FILTER (WHERE status = 'CLOSED'), 0) as avg_pnl_pct,
+         COALESCE(MAX(pnl_percent), 0) as best_pnl,
+         COALESCE(MIN(pnl_percent), 0) as worst_pnl
+       FROM journal_entries
+       WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'`,
+      [userId]
+    );
+
+    // Journal stats — prior 7 days (for comparison)
+    const journalPrior = await queryOne<{
+      total: string;
+      wins: string;
+      total_pnl: string;
+    }>(
+      `SELECT
+         COUNT(*) as total,
+         COUNT(*) FILTER (WHERE pnl > 0) as wins,
+         COALESCE(SUM(pnl), 0) as total_pnl
+       FROM journal_entries
+       WHERE user_id = $1 AND created_at BETWEEN NOW() - INTERVAL '14 days' AND NOW() - INTERVAL '7 days'`,
+      [userId]
+    );
+
+    // Decision card accuracy — cards created in last 7 days with known outcomes
+    const cardStats = await queryOne<{
+      total: string;
+      correct: string;
+      avg_confidence: string;
+    }>(
+      `SELECT
+         COUNT(*) as total,
+         COUNT(*) FILTER (WHERE status IN ('EXECUTED', 'ARCHIVED')) as correct,
+         COALESCE(AVG(confidence_score), 0) as avg_confidence
+       FROM decision_cards
+       WHERE (user_id = $1 OR org_id IN (SELECT org_id FROM users WHERE id = $1))
+         AND created_at > NOW() - INTERVAL '7 days'`,
+      [userId]
+    );
+
+    // Streak
+    const streak = await queryOne<{ journal_streak: number; longest_streak: number; total_journal_days: number }>(
+      'SELECT journal_streak, longest_streak, total_journal_days FROM user_streaks WHERE user_id = $1',
+      [userId]
+    );
+
+    // Top losing strategies (mistakes)
+    const topLosers = await query<{ strategy_tag: string; loss_count: string; total_loss: string }>(
+      `SELECT strategy_tag, COUNT(*) as loss_count, COALESCE(SUM(pnl), 0) as total_loss
+       FROM journal_entries
+       WHERE user_id = $1 AND pnl < 0 AND strategy_tag IS NOT NULL AND created_at > NOW() - INTERVAL '7 days'
+       GROUP BY strategy_tag ORDER BY total_loss ASC LIMIT 3`,
+      [userId]
+    );
+
+    // Top winning strategies
+    const topWinners = await query<{ strategy_tag: string; win_count: string; total_gain: string }>(
+      `SELECT strategy_tag, COUNT(*) as win_count, COALESCE(SUM(pnl), 0) as total_gain
+       FROM journal_entries
+       WHERE user_id = $1 AND pnl > 0 AND strategy_tag IS NOT NULL AND created_at > NOW() - INTERVAL '7 days'
+       GROUP BY strategy_tag ORDER BY total_gain DESC LIMIT 3`,
+      [userId]
+    );
+
+    const thisTotal = parseInt(journalWeek?.total || '0', 10);
+    const thisWins = parseInt(journalWeek?.wins || '0', 10);
+    const thisWinRate = thisTotal > 0 ? Math.round((thisWins / thisTotal) * 100) : 0;
+    const priorTotal = parseInt(journalPrior?.total || '0', 10);
+    const priorWins = parseInt(journalPrior?.wins || '0', 10);
+    const priorWinRate = priorTotal > 0 ? Math.round((priorWins / priorTotal) * 100) : 0;
+
+    const cardTotal = parseInt(cardStats?.total || '0', 10);
+    const cardCorrect = parseInt(cardStats?.correct || '0', 10);
+    const cardAccuracy = cardTotal > 0 ? Math.round((cardCorrect / cardTotal) * 100) : null;
+
+    res.json({
+      success: true,
+      data: {
+        period: { start: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString().split('T')[0], end: new Date().toISOString().split('T')[0] },
+        journal: {
+          trades: thisTotal,
+          wins: thisWins,
+          losses: parseInt(journalWeek?.losses || '0', 10),
+          winRate: thisWinRate,
+          totalPnl: parseFloat(journalWeek?.total_pnl || '0'),
+          avgPnlPercent: Math.round(parseFloat(journalWeek?.avg_pnl_pct || '0') * 100) / 100,
+          bestTradePct: Math.round(parseFloat(journalWeek?.best_pnl || '0') * 100) / 100,
+          worstTradePct: Math.round(parseFloat(journalWeek?.worst_pnl || '0') * 100) / 100,
+        },
+        comparison: {
+          priorTrades: priorTotal,
+          priorWinRate: priorWinRate,
+          winRateDelta: thisWinRate - priorWinRate,
+          pnlDelta: parseFloat(journalWeek?.total_pnl || '0') - parseFloat(journalPrior?.total_pnl || '0'),
+        },
+        decisionCards: {
+          total: cardTotal,
+          accuracy: cardAccuracy,
+          avgConfidence: Math.round(parseFloat(cardStats?.avg_confidence || '0') * 100) / 100,
+        },
+        streak: {
+          current: streak?.journal_streak || 0,
+          longest: streak?.longest_streak || 0,
+          totalDays: streak?.total_journal_days || 0,
+        },
+        topMistakes: topLosers.rows.map(r => ({ strategy: r.strategy_tag, count: parseInt(r.loss_count, 10), totalLoss: parseFloat(r.total_loss) })),
+        topWins: topWinners.rows.map(r => ({ strategy: r.strategy_tag, count: parseInt(r.win_count, 10), totalGain: parseFloat(r.total_gain) })),
+        generatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    logger.error('Weekly report generation failed', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+      success: false,
+      error: { code: 'REPORT_FAILED', message: 'Failed to generate weekly report' },
+    });
   }
 });
 

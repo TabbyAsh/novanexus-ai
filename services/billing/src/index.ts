@@ -29,7 +29,7 @@ interface Entitlement {
   id: string;
   userId: string;
   orgId: string;
-  plan: 'FREE' | 'LITE' | 'PRO';
+  plan: 'FREE' | 'LITE' | 'PRO' | 'FOUNDING';
   status: 'ACTIVE' | 'CANCELED' | 'PAST_DUE' | 'TRIALING';
   stripeCustomerId: string | null;
   stripeSubscriptionId: string | null;
@@ -224,6 +224,9 @@ function getDefaultFeatures(plan: Entitlement['plan']): string[] {
       return [...CORE_FEATURES, 'reports', 'csv_export', 'decision_replay'];
     case 'PRO':
       return [...CORE_FEATURES, 'reports', 'csv_export', 'pdf_export', 'api_access', 'priority_support', 'decision_replay'];
+    case 'FOUNDING':
+      return [...CORE_FEATURES, 'reports', 'csv_export', 'pdf_export', 'api_access', 'priority_support', 'decision_replay',
+        'founding_badge', 'concierge_onboarding', 'early_access', 'flip_pipeline', 'deal_cards', 'mode_control', 'advanced_analytics'];
     default:
       return [...CORE_FEATURES];
   }
@@ -627,23 +630,60 @@ app.get('/v1/billing/pricing', async (_req: Request, res: Response) => {
           ],
         },
         {
-          id: 'PRO',
-          name: 'Nova Hub Pro',
+          id: 'FOUNDING',
+          name: 'Founding Member',
           priceMonthly: 99,
           priceYearly: 990,
           interval: 'month',
+          founding: true,
+          features: [
+            'Everything in Lite — unlimited',
+            'Founding Member badge',
+            'Concierge onboarding (ASSIST mode)',
+            'Flip pipeline + deal cards',
+            'Weekly improvement reports',
+            'Priority support + early access',
+            'API access',
+            'Advanced analytics',
+            'Limited to 50 seats',
+          ],
+        },
+        {
+          id: 'PRO',
+          name: 'Nova Hub Pro',
+          priceMonthly: 149,
+          priceYearly: 1490,
+          interval: 'month',
           comingSoon: true,
           features: [
-            'Everything in Lite',
-            'API access',
-            'Real-time alerts',
+            'Everything in Founding',
+            'Full automation gates',
             'Custom indicators',
-            'Priority support',
+            'Real-time alerts',
+            'Team collaboration',
           ],
         },
       ],
     },
   });
+});
+
+// Founding Member seat count (public)
+app.get('/v1/billing/founding-seats', async (_req: Request, res: Response) => {
+  try {
+    const seatConfig = await queryOne<{ max_seats: number }>('SELECT max_seats FROM founding_seats LIMIT 1');
+    const taken = await queryOne<{ count: string }>(
+      `SELECT COUNT(*) as count FROM entitlements WHERE plan = 'FOUNDING' AND status = 'ACTIVE'`
+    );
+    const maxSeats = seatConfig?.max_seats || 50;
+    const takenCount = parseInt(taken?.count || '0', 10);
+    res.json({
+      success: true,
+      data: { maxSeats, taken: takenCount, remaining: Math.max(0, maxSeats - takenCount) },
+    });
+  } catch (error) {
+    res.json({ success: true, data: { maxSeats: 50, taken: 0, remaining: 50 } });
+  }
 });
 
 // ============================================

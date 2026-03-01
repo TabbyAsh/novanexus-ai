@@ -57,6 +57,7 @@ const PUBLIC_ROUTES = [
   '/v1/auth/login',
   '/v1/auth/refresh',
   '/v1/billing/pricing',
+  '/v1/billing/founding-seats',
   '/billing/webhook',  // Stripe webhook - authenticated by signature
   // Nova Nexus AI - public status
   '/v1/nexus/status',
@@ -979,6 +980,26 @@ app.all('/v1/alpaca*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Weekly improvement report -> Nova Hub
+app.get('/v1/weekly-report', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Flip pipeline -> StoreBot
+app.all('/v1/flips*', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.storebot, req.originalUrl.replace('/v1/flips', '/api/flips'), req, res);
+});
+
+// Mode control -> Nova Hub
+app.all('/v1/ops/modes*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Calibration -> Nova Hub
+app.all('/v1/calibration*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 app.all('/v1/dashboard/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
@@ -1002,6 +1023,10 @@ app.post('/v1/billing/checkout-session', (req: Request, res: Response) => {
 });
 
 app.post('/v1/billing/portal', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.billing, req, res);
+});
+
+app.get('/v1/billing/founding-seats', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.billing, req, res);
 });
 
