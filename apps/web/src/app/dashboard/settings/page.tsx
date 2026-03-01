@@ -10,6 +10,8 @@ import {
   Shield,
   AlertTriangle,
   User,
+  Radio,
+  Zap,
 } from 'lucide-react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { api } from '@/lib/api';
@@ -19,6 +21,25 @@ type MeView = {
   role: string;
   orgName?: string;
   scopes: string[];
+};
+
+type ProviderView = {
+  id: string;
+  name: string;
+  enabled: boolean;
+  health: string;
+  dataClass: string;
+  requiresKey: boolean;
+  configured: boolean;
+  signupUrl: string | null;
+  signupTime: string | null;
+};
+
+type MarketStatusView = {
+  providers: ProviderView[];
+  activeDataClass: string;
+  upgradeHint: string | null;
+  marketOpen: boolean;
 };
 
 type EntitlementView = {
@@ -44,6 +65,7 @@ export default function SettingsPage() {
   } | null>(null);
   const [alpacaBusy, setAlpacaBusy] = useState(false);
   const [alpacaMessage, setAlpacaMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+  const [marketStatus, setMarketStatus] = useState<MarketStatusView | null>(null);
   const [loading, setLoading] = useState(true);
   const [portalLoading, setPortalLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -53,10 +75,11 @@ export default function SettingsPage() {
     setError(null);
 
     try {
-      const [meRes, entRes, alpacaRes] = await Promise.all([
+      const [meRes, entRes, alpacaRes, mktRes] = await Promise.all([
         api.getMe(),
         api.getBillingEntitlement(),
         api.getAlpacaStatus(),
+        api.getMarketStatus().catch(() => null),
       ]);
 
       if (meRes.success && meRes.data) {
@@ -89,6 +112,14 @@ export default function SettingsPage() {
           message: alpacaRes.data.message,
           reason: alpacaRes.data.reason,
           canTradeLive: alpacaRes.data.canTradeLive,
+        });
+      }
+      if (mktRes && mktRes.success && mktRes.data) {
+        setMarketStatus({
+          providers: mktRes.data.providers,
+          activeDataClass: mktRes.data.activeDataClass,
+          upgradeHint: mktRes.data.upgradeHint,
+          marketOpen: mktRes.data.marketOpen,
         });
       }
     } catch (err) {
@@ -186,7 +217,18 @@ export default function SettingsPage() {
           </div>
         )}
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Data Sources Banner */}
+        {marketStatus && marketStatus.activeDataClass !== 'real-time' && marketStatus.upgradeHint && (
+          <div className="mb-6 p-4 bg-cyan-500/10 border border-cyan-500/30 rounded-xl flex items-start gap-3">
+            <Zap className="w-5 h-5 text-cyan-400 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-cyan-300 font-medium">Unlock Real-Time Market Data</p>
+              <p className="text-gray-400 text-sm mt-1">{marketStatus.upgradeHint}</p>
+            </div>
+          </div>
+        )}
+
+        <div className="grid grid-cols-1 lg:grid-cols-2 xl:grid-cols-4 gap-6">
           {/* Account */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -408,6 +450,75 @@ export default function SettingsPage() {
                 Market data and execution are policy-gated. Platform intelligence works immediately.
                 Connect your personal account to trade with your own capital.
               </div>
+            </div>
+          </div>
+          {/* Data Sources */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="p-2 bg-orange-500/20 rounded-lg">
+                <Radio className="w-5 h-5 text-orange-400" />
+              </div>
+              <h2 className="text-lg font-semibold text-white">Data Sources</h2>
+            </div>
+
+            {marketStatus ? (
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-gray-500 text-xs">Active Data Class</p>
+                    <p className="text-white font-medium capitalize">{marketStatus.activeDataClass}</p>
+                  </div>
+                  {badge(
+                    marketStatus.activeDataClass === 'real-time',
+                    'Real-Time',
+                    marketStatus.activeDataClass === 'near-real-time' ? 'Near Real-Time' : 'Delayed'
+                  )}
+                </div>
+
+                <div>
+                  <p className="text-gray-500 text-xs mb-2">Market</p>
+                  {badge(marketStatus.marketOpen, 'Open', 'Closed')}
+                </div>
+
+                <div className="pt-2">
+                  <p className="text-gray-500 text-xs mb-2">Providers</p>
+                  <div className="space-y-2">
+                    {marketStatus.providers.map((p) => (
+                      <div key={p.id} className="flex items-center justify-between text-sm">
+                        <div className="flex items-center gap-2">
+                          <div className={`w-2 h-2 rounded-full ${p.enabled && p.health === 'healthy' ? 'bg-green-500' : p.enabled ? 'bg-yellow-500' : 'bg-gray-600'}`} />
+                          <span className={p.enabled ? 'text-gray-200' : 'text-gray-500'}>{p.name}</span>
+                        </div>
+                        {!p.configured && p.signupUrl && (
+                          <a
+                            href={p.signupUrl}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-cyan-400 text-xs hover:underline flex items-center gap-1"
+                          >
+                            Setup <ExternalLink className="w-3 h-3" />
+                          </a>
+                        )}
+                        {p.configured && (
+                          <span className="text-xs text-green-400">Active</span>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                </div>
+
+                {marketStatus.upgradeHint && marketStatus.activeDataClass !== 'real-time' && (
+                  <div className="bg-cyan-500/10 border border-cyan-500/30 rounded-lg p-3 mt-2">
+                    <p className="text-cyan-300 text-xs">{marketStatus.upgradeHint}</p>
+                  </div>
+                )}
+              </div>
+            ) : (
+              <div className="text-gray-400 text-sm">Loading data sources…</div>
+            )}
+
+            <div className="mt-4 text-xs text-gray-500">
+              Yahoo Finance provides zero-config data. Add free Alpaca or Finnhub keys for real-time.
             </div>
           </div>
         </div>

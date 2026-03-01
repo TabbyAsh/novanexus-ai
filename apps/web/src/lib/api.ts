@@ -479,6 +479,26 @@ class ApiClient {
     }>('GET', `/v1/market/quote/${symbol}`);
   }
 
+  async getMarketStatus() {
+    return this.request<{
+      providers: Array<{
+        id: string;
+        name: string;
+        enabled: boolean;
+        health: string;
+        dataClass: string;
+        requiresKey: boolean;
+        configured: boolean;
+        signupUrl: string | null;
+        signupTime: string | null;
+      }>;
+      activeDataClass: string;
+      upgradeHint: string | null;
+      marketOpen: boolean;
+      timestamp: string;
+    }>('GET', '/v1/market/status');
+  }
+
   async getMarketQuotes(symbols: string[]) {
     return this.request<{
       quotes: Array<{

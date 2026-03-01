@@ -20,10 +20,15 @@ const ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY || '';
 const ALPACA_DATA_BASE_URL = process.env.ALPACA_DATA_URL || 'https://data.alpaca.markets';
 const ALPACA_DATA_FEED = (process.env.ALPACA_DATA_FEED || 'iex').toLowerCase();
 
+// Yahoo Finance — zero-config, no API key required.
+// Provides real market data as the always-available fallback before synthetic.
+const YAHOO_BASE_URL = 'https://query1.finance.yahoo.com';
+const USE_YAHOO = true; // Always available — no key needed
+
 const USE_POLYGON = !!POLYGON_API_KEY;
 const USE_FINNHUB = !!FINNHUB_API_KEY;
 const USE_ALPACA = !!ALPACA_API_KEY && !!ALPACA_SECRET_KEY;
-const USE_REAL_DATA = USE_POLYGON || USE_FINNHUB || USE_ALPACA;
+const USE_REAL_DATA = USE_POLYGON || USE_FINNHUB || USE_ALPACA || USE_YAHOO;
 
 // ============================================
 // Cache Implementation
@@ -34,7 +39,7 @@ interface CacheEntry<T> {
   expiresAt: number;
 }
 
-type CandleProvider = 'polygon' | 'finnhub' | 'alpaca' | 'synthetic';
+type CandleProvider = 'polygon' | 'finnhub' | 'alpaca' | 'yahoo' | 'synthetic';
 
 type CandleProvenance = {
   source: CandleProvider;
@@ -83,6 +88,7 @@ const providerHealth: Record<CandleProvider, ProviderHealth> = {
   polygon: { provider: 'polygon', status: 'healthy', consecutiveFailures: 0 },
   finnhub: { provider: 'finnhub', status: 'healthy', consecutiveFailures: 0 },
   alpaca: { provider: 'alpaca', status: 'healthy', consecutiveFailures: 0 },
+  yahoo: { provider: 'yahoo', status: 'healthy', consecutiveFailures: 0 },
   synthetic: { provider: 'synthetic', status: 'healthy', consecutiveFailures: 0 },
 };
 
@@ -90,7 +96,8 @@ const lastGoodCandles = new Map<string, { candles: Candle[]; provider: CandlePro
 
 function getProviderPriority(): CandleProvider[] {
   const raw = process.env.CANDLE_PROVIDER_PRIORITY;
-  const fallback = ['alpaca', 'polygon', 'finnhub'];
+  // Yahoo is always last real provider before synthetic — it's the safety net
+  const fallback = ['alpaca', 'polygon', 'finnhub', 'yahoo'];
   const list = raw
     ? raw
         .split(',')
@@ -98,8 +105,9 @@ function getProviderPriority(): CandleProvider[] {
         .filter(Boolean)
     : fallback;
 
+  const validProviders = ['alpaca', 'polygon', 'finnhub', 'yahoo'] as const;
   return list
-    .map((p) => (p === 'alpaca' || p === 'polygon' || p === 'finnhub' ? (p as CandleProvider) : null))
+    .map((p) => (validProviders.includes(p as any) ? (p as CandleProvider) : null))
     .filter((p): p is CandleProvider => Boolean(p));
 }
 
@@ -107,6 +115,7 @@ function isProviderEnabled(provider: CandleProvider): boolean {
   if (provider === 'alpaca') return USE_ALPACA;
   if (provider === 'polygon') return USE_POLYGON;
   if (provider === 'finnhub') return USE_FINNHUB;
+  if (provider === 'yahoo') return USE_YAHOO;
   return true;
 }
 
@@ -415,6 +424,10 @@ async function getFallbackQuotePrice(symbol: string): Promise<number | null> {
     const quote = await fetchFinnhubQuote(symbol);
     if (quote && Number.isFinite(quote.price)) return quote.price;
   }
+  if (USE_YAHOO) {
+    const quote = await fetchYahooQuote(symbol);
+    if (quote && Number.isFinite(quote.price)) return quote.price;
+  }
 
   return null;
 }
@@ -572,7 +585,7 @@ interface Quote {
   bid: number | null;
   ask: number | null;
   timestamp: string;
-  source: 'polygon' | 'finnhub' | 'alpaca';
+  source: 'polygon' | 'finnhub' | 'alpaca' | 'yahoo';
 }
 
 interface Candle {
@@ -987,6 +1000,136 @@ async function fetchAlpacaCandles(symbol: string, intervalKey: string, limit: nu
 }
 
 // ============================================
+// Yahoo Finance Data Fetchers (Zero-Config)
+// ============================================
+
+const yahooRateLimiter = new RateLimiter(30, 60000); // Conservative limit
+
+const YAHOO_INTERVAL_MAP: Record<string, string> = {
+  '1m': '1m',
+  '5m': '5m',
+  '15m': '15m',
+  '1h': '60m',
+  '1d': '1d',
+  '1w': '1wk',
+};
+
+const YAHOO_RANGE_MAP: Record<string, string> = {
+  '1m': '1d',
+  '5m': '5d',
+  '15m': '5d',
+  '1h': '1mo',
+  '1d': '1y',
+  '1w': '5y',
+};
+
+async function fetchYahooQuote(symbol: string): Promise<Quote | null> {
+  const canProceed = await yahooRateLimiter.acquire();
+  if (!canProceed) {
+    logger.warn('Rate limit exceeded for Yahoo Finance');
+    return null;
+  }
+
+  const sym = symbol.toUpperCase();
+  const url = `${YAHOO_BASE_URL}/v8/finance/chart/${sym}?interval=1d&range=2d`;
+
+  try {
+    const response = await fetchWithRetry(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NovaNexus/1.0)' },
+    }, 2, 500);
+
+    if (!response.ok) return null;
+
+    const data = await response.json() as any;
+    const result = data?.chart?.result?.[0];
+    if (!result) return null;
+
+    const meta = result.meta;
+    const price = meta?.regularMarketPrice;
+    const prevClose = meta?.chartPreviousClose ?? meta?.previousClose;
+
+    if (typeof price !== 'number' || !Number.isFinite(price)) return null;
+
+    const change = typeof prevClose === 'number' ? price - prevClose : null;
+    const changePercent = typeof prevClose === 'number' && prevClose !== 0
+      ? ((price - prevClose) / prevClose) * 100
+      : null;
+
+    const volume = typeof meta?.regularMarketVolume === 'number' ? meta.regularMarketVolume : null;
+
+    return {
+      symbol: sym,
+      price: Math.round(price * 100) / 100,
+      change: typeof change === 'number' ? Math.round(change * 100) / 100 : null,
+      changePercent: typeof changePercent === 'number' ? Math.round(changePercent * 100) / 100 : null,
+      volume,
+      bid: null,
+      ask: null,
+      timestamp: new Date().toISOString(),
+      source: 'yahoo',
+    };
+  } catch (error) {
+    logger.warn('Yahoo Finance quote failed', { symbol: sym, error: (error as Error).message });
+    return null;
+  }
+}
+
+async function fetchYahooCandles(symbol: string, intervalKey: string, limit: number): Promise<Candle[] | null> {
+  const canProceed = await yahooRateLimiter.acquire();
+  if (!canProceed) return null;
+
+  const interval = YAHOO_INTERVAL_MAP[intervalKey];
+  const range = YAHOO_RANGE_MAP[intervalKey];
+  if (!interval || !range) return null;
+
+  const sym = symbol.toUpperCase();
+  const url = `${YAHOO_BASE_URL}/v8/finance/chart/${sym}?interval=${interval}&range=${range}`;
+
+  try {
+    const response = await fetchWithRetry(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (compatible; NovaNexus/1.0)' },
+    }, 2, 500);
+
+    if (!response.ok) return null;
+
+    const data = await response.json() as any;
+    const result = data?.chart?.result?.[0];
+    if (!result) return null;
+
+    const timestamps: number[] = result.timestamp || [];
+    const quote = result.indicators?.quote?.[0];
+    if (!quote || timestamps.length === 0) return null;
+
+    const candles: Candle[] = [];
+    for (let i = 0; i < timestamps.length; i++) {
+      const o = quote.open?.[i];
+      const h = quote.high?.[i];
+      const l = quote.low?.[i];
+      const c = quote.close?.[i];
+      const v = quote.volume?.[i];
+
+      // Skip null/NaN bars (Yahoo returns nulls for non-trading periods)
+      if (typeof o !== 'number' || typeof c !== 'number' || !Number.isFinite(o) || !Number.isFinite(c)) continue;
+
+      candles.push({
+        timestamp: new Date(timestamps[i] * 1000).toISOString(),
+        open: Math.round(o * 100) / 100,
+        high: Math.round((h ?? o) * 100) / 100,
+        low: Math.round((l ?? o) * 100) / 100,
+        close: Math.round(c * 100) / 100,
+        volume: typeof v === 'number' ? v : 0,
+      });
+    }
+
+    // Return the most recent `limit` candles
+    return candles.length > 0 ? candles.slice(-limit) : null;
+  } catch (error) {
+    logger.warn('Yahoo Finance candles failed', { symbol: sym, error: (error as Error).message });
+    return null;
+  }
+}
+
+// ============================================
 // Polygon Data Fetchers
 // ============================================
 
@@ -1106,6 +1249,10 @@ async function fetchProviderCandles(params: {
       const candles = await fetchFinnhubCandles(symbol, resolution, from, to);
       return { candles: candles && candles.length > 0 ? candles : null, error: candles ? undefined : 'empty' };
     }
+    if (provider === 'yahoo') {
+      const candles = await fetchYahooCandles(symbol, intervalKey, limit);
+      return { candles: candles && candles.length > 0 ? candles : null, error: candles ? undefined : 'empty' };
+    }
   } catch (error) {
     return { candles: null, error: (error as Error).message || 'error' };
   }
@@ -1140,13 +1287,12 @@ app.get('/v1/market/symbols', async (_req: Request, res: Response) => {
   }
 
   if (!USE_POLYGON && !USE_FINNHUB && !USE_ALPACA) {
-    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
-      success: false,
-      error: {
-        code: 'MARKETDATA_NOT_CONFIGURED',
-        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY.',
-      },
-    });
+    // No keyed providers — return a curated default symbol set from Yahoo
+    const defaultSymbols: SymbolInfo[] = [
+      'SPY', 'QQQ', 'DIA', 'IWM', 'AAPL', 'MSFT', 'GOOGL', 'AMZN', 'NVDA', 'TSLA',
+      'META', 'AMD', 'NFLX', 'JPM', 'V', 'MA', 'BA', 'DIS', 'COIN', 'PLTR',
+    ].map((s) => ({ symbol: s, description: s, exchange: 'US', type: 'Common Stock', currency: 'USD' }));
+    return res.json({ success: true, data: { symbols: defaultSymbols, source: 'default' }, cached: false });
   }
 
   let symbols: SymbolInfo[] | null = null;
@@ -1184,6 +1330,7 @@ app.get('/health', (_req, res) => {
       polygon: USE_POLYGON,
       finnhub: USE_FINNHUB,
       alpaca: USE_ALPACA,
+      yahoo: USE_YAHOO,
     },
     providerHealth,
     cacheSize: quoteCache.size() + candleCache.size() + indicatorCache.size(),
@@ -1205,28 +1352,19 @@ app.get('/v1/market/quote/:symbol', async (req: Request, res: Response) => {
     return res.json({ success: true, data: { quote: cached }, cached: true });
   }
   
-  if (!USE_POLYGON && !USE_FINNHUB && !USE_ALPACA) {
-    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
-      success: false,
-      error: {
-        code: 'MARKETDATA_NOT_CONFIGURED',
-        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY and/or ALPACA_API_KEY/ALPACA_SECRET_KEY.',
-        details: { symbol: symbol.toUpperCase() },
-      },
-    });
-  }
-
   let quote: Quote | null = null;
 
-  if (USE_POLYGON) {
+  if (USE_ALPACA) {
+    quote = await fetchAlpacaQuote(symbol);
+  }
+  if (!quote && USE_POLYGON) {
     quote = await fetchPolygonQuote(symbol);
   }
-
   if (!quote && USE_FINNHUB) {
     quote = await fetchFinnhubQuote(symbol);
   }
-  if (!quote && USE_ALPACA) {
-    quote = await fetchAlpacaQuote(symbol);
+  if (!quote && USE_YAHOO) {
+    quote = await fetchYahooQuote(symbol);
   }
 
   if (!quote) {
@@ -1584,6 +1722,103 @@ app.get('/v1/market/fundamentals/:symbol', async (req: Request, res: Response) =
 });
 
 // ============================================
+// Market Status + Data Source Intelligence
+// ============================================
+
+app.get('/v1/market/status', (_req: Request, res: Response) => {
+  type ProviderInfo = {
+    id: string;
+    name: string;
+    enabled: boolean;
+    health: ProviderHealthStatus;
+    dataClass: 'real-time' | 'near-real-time' | 'delayed' | 'unavailable';
+    requiresKey: boolean;
+    configured: boolean;
+    signupUrl: string | null;
+    signupTime: string | null;
+  };
+
+  const providers: ProviderInfo[] = [
+    {
+      id: 'alpaca',
+      name: 'Alpaca (IEX Real-Time)',
+      enabled: USE_ALPACA,
+      health: providerHealth.alpaca.status,
+      dataClass: USE_ALPACA ? 'real-time' : 'unavailable',
+      requiresKey: true,
+      configured: USE_ALPACA,
+      signupUrl: 'https://app.alpaca.markets/signup',
+      signupTime: '60 seconds — free paper trading account',
+    },
+    {
+      id: 'finnhub',
+      name: 'Finnhub (Real-Time)',
+      enabled: USE_FINNHUB,
+      health: providerHealth.finnhub.status,
+      dataClass: USE_FINNHUB ? 'real-time' : 'unavailable',
+      requiresKey: true,
+      configured: USE_FINNHUB,
+      signupUrl: 'https://finnhub.io/register',
+      signupTime: '30 seconds — free API key',
+    },
+    {
+      id: 'polygon',
+      name: 'Polygon.io (Premium)',
+      enabled: USE_POLYGON,
+      health: providerHealth.polygon.status,
+      dataClass: USE_POLYGON ? 'real-time' : 'unavailable',
+      requiresKey: true,
+      configured: USE_POLYGON,
+      signupUrl: 'https://polygon.io/pricing',
+      signupTime: null,
+    },
+    {
+      id: 'yahoo',
+      name: 'Yahoo Finance (Zero-Config)',
+      enabled: USE_YAHOO,
+      health: providerHealth.yahoo.status,
+      dataClass: 'near-real-time',
+      requiresKey: false,
+      configured: true,
+      signupUrl: null,
+      signupTime: null,
+    },
+  ];
+
+  // Determine the best active data class
+  const activeProviders = providers.filter((p) => p.enabled && p.health !== 'down' && p.health !== 'open');
+  const bestDataClass = activeProviders.length > 0
+    ? activeProviders.reduce((best, p) => {
+        const rank = { 'real-time': 0, 'near-real-time': 1, 'delayed': 2, 'unavailable': 3 };
+        return (rank[p.dataClass] || 3) < (rank[best] || 3) ? p.dataClass : best;
+      }, 'unavailable' as string)
+    : 'unavailable';
+
+  const upgradeHint = bestDataClass !== 'real-time'
+    ? 'Sign up for a free Alpaca paper trading account to unlock real-time market data in 60 seconds.'
+    : null;
+
+  res.json({
+    success: true,
+    data: {
+      providers,
+      activeDataClass: bestDataClass,
+      upgradeHint,
+      marketOpen: isMarketOpen(),
+      timestamp: new Date().toISOString(),
+    },
+  });
+});
+
+function isMarketOpen(): boolean {
+  const now = new Date();
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const etHour = (now.getUTCHours() - 5 + 24) % 24; // Rough EST conversion
+  return etHour >= 9 && etHour < 16;
+}
+
+// ============================================
 // Batch Quote Endpoint
 // ============================================
 
@@ -1597,17 +1832,6 @@ app.post('/v1/market/quotes', async (req: Request, res: Response) => {
     });
   }
 
-  if (!USE_POLYGON && !USE_FINNHUB) {
-    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
-      success: false,
-      error: {
-        code: 'MARKETDATA_NOT_CONFIGURED',
-        message: 'No market data providers configured. Set POLYGON_API_KEY and/or FINNHUB_API_KEY and/or ALPACA_API_KEY/ALPACA_SECRET_KEY.',
-        details: { requestedCount: symbols.length },
-      },
-    });
-  }
-
   const quotes: Quote[] = [];
   const unavailableSymbols: string[] = [];
 
@@ -1618,15 +1842,17 @@ app.post('/v1/market/quotes', async (req: Request, res: Response) => {
     let quote = quoteCache.get<Quote>(cacheKey);
 
     if (!quote) {
-      if (USE_POLYGON) {
+      if (USE_ALPACA) {
+        quote = await fetchAlpacaQuote(sym);
+      }
+      if (!quote && USE_POLYGON) {
         quote = await fetchPolygonQuote(sym);
       }
-
       if (!quote && USE_FINNHUB) {
         quote = await fetchFinnhubQuote(sym);
       }
-      if (!quote && USE_ALPACA) {
-        quote = await fetchAlpacaQuote(sym);
+      if (!quote && USE_YAHOO) {
+        quote = await fetchYahooQuote(sym);
       }
 
       if (quote) {
