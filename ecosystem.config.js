@@ -102,7 +102,6 @@ module.exports = {
       wait_ready: true,
       listen_timeout: 10000,
     },
-    // storebot removed - not part of MVP
     {
       name: 'nova-hub',
       script: './services/nova-hub/dist/index.js',
@@ -113,6 +112,32 @@ module.exports = {
         PORT: 3030,
         MARKETDATA_URL: 'http://localhost:3020',
         BILLING_URL: 'http://localhost:3006',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'socialbot',
+      script: './services/socialbot/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3012,
+        ORCHESTRATOR_URL: 'http://localhost:3002',
+      },
+      wait_ready: true,
+      listen_timeout: 10000,
+    },
+    {
+      name: 'storebot',
+      script: './services/storebot/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3011,
+        ORCHESTRATOR_URL: 'http://localhost:3002',
       },
       wait_ready: true,
       listen_timeout: 10000,

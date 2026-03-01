@@ -190,15 +190,23 @@ async function getOrCreateEntitlement(userId: string, orgId: string): Promise<En
 }
 
 function getDefaultFeatures(plan: Entitlement['plan']): string[] {
+  // Core features are available to ALL plans. The quota system in nova-hub
+  // limits daily usage (3 decision cards, 1 backtest, 10 paper trades, etc.)
+  // so the paywall should never hard-block access to core value loops.
+  const CORE_FEATURES = [
+    'scanner', 'paper_trading', 'thesis_cards', 'decisions',
+    'watchlists', 'alerts', 'basic_scanner', 'watchlist_1',
+  ];
+
   switch (plan) {
     case 'FREE':
-      return ['basic_scanner', 'watchlist_1'];
+      return [...CORE_FEATURES];
     case 'LITE':
-      return ['scanner', 'reports', 'alerts', 'watchlists', 'paper_trading', 'thesis_cards', 'csv_export', 'decisions', 'decision_replay'];
+      return [...CORE_FEATURES, 'reports', 'csv_export', 'decision_replay'];
     case 'PRO':
-      return ['scanner', 'reports', 'alerts', 'watchlists', 'paper_trading', 'thesis_cards', 'csv_export', 'pdf_export', 'api_access', 'priority_support', 'decisions', 'decision_replay'];
+      return [...CORE_FEATURES, 'reports', 'csv_export', 'pdf_export', 'api_access', 'priority_support', 'decision_replay'];
     default:
-      return [];
+      return [...CORE_FEATURES];
   }
 }
 

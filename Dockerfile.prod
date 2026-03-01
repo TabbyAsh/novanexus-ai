@@ -82,10 +82,23 @@ RUN esbuild services/nova-hub/src/index.ts \
   --external:pg-native --external:openai \
   --tsconfig=services/nova-hub/tsconfig.json || true
 
+RUN esbuild services/socialbot/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/socialbot/dist/index.js \
+  --external:pg-native --external:cors \
+  --tsconfig=services/socialbot/tsconfig.json || true
+
+RUN esbuild services/storebot/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/storebot/dist/index.js \
+  --external:pg-native --external:cors \
+  --tsconfig=services/storebot/tsconfig.json || true
+
 # Verify bundles exist (fail if any critical service missing)
 RUN ls -la services/gateway/dist/index.js services/auth/dist/index.js \
   services/eventbus/dist/index.js services/billing/dist/index.js \
-  services/nova-hub/dist/index.js
+  services/nova-hub/dist/index.js services/socialbot/dist/index.js \
+  services/storebot/dist/index.js
 
 # ─────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner
