@@ -895,8 +895,17 @@ app.all('/v1/social/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.socialbot, req, res);
 });
 
-app.all('/v1/content*', (req: Request, res: Response) => {
-  // SocialBot uses /api/content/* routes; rewrite to keep a stable public /v1/content/* contract.
+// Content Engine routes -> Nova Hub (generate/drafts are nova-hub; everything else is socialbot)
+app.post('/v1/content/generate', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.get('/v1/content/drafts', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Social Content Manager routes -> SocialBot (accounts, posts, suggestions, calendar, analytics)
+app.all('/v1/content/*', (req: Request, res: Response) => {
   proxyRequestRewrite(
     SERVICE_URLS.socialbot,
     req.originalUrl.replace('/v1/content', '/api/content'),
@@ -1055,14 +1064,10 @@ app.all('/v1/ai-screener/analyze', (req: Request, res: Response) => {
 });
 
 // ============================================
-// Value Radar + Content Engine -> Nova Hub
+// Value Radar + Marketplace -> Nova Hub
 // ============================================
 
 app.all('/v1/value-radar/*', (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.novaHub, req, res);
-});
-
-app.all('/v1/content/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
