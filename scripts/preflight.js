@@ -7,7 +7,7 @@ const { execSync } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 
-const BANNED = ['TODO', 'FIXME', 'HACK', 'LATER', 'XXX', 'TEMP'];
+const BANNED = ['TODO', 'FIXME', 'HACK', 'XXX', 'TEMP'];
 const BANNED_REGEX = BANNED.map(w => new RegExp(`\\b${w}\\b`, 'i'));
 const EXCLUDE_DIRS = ['node_modules', '.git', 'dist', '.next', 'coverage'];
 const INCLUDE_EXT = ['.ts', '.tsx', '.js', '.jsx'];

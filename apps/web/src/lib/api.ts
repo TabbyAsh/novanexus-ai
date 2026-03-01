@@ -1444,6 +1444,60 @@ class ApiClient {
       lastCheck: string;
     }>('GET', '/v1/reality');
   }
+
+  // ==========================================================================
+  // Value Radar — Cross-market opportunity aggregator
+  // ==========================================================================
+  async getValueRadarOpportunities(category?: string) {
+    const qs = category ? `?category=${category}` : '';
+    return this.request<{
+      opportunities: Array<{
+        id: string;
+        title: string;
+        category: string;
+        source: string;
+        currentPrice: number;
+        estimatedValue: number;
+        score: number;
+        tags: string[];
+        detectedAt: string;
+        url?: string;
+      }>;
+      total: number;
+      scannedAt: string;
+    }>('GET', `/v1/value-radar/opportunities${qs}`);
+  }
+
+  // ==========================================================================
+  // Content Engine — Auto-generate content from platform activity
+  // ==========================================================================
+  async generateContent(type: string) {
+    return this.request<{
+      draft: {
+        id: string;
+        type: string;
+        title: string;
+        body: string;
+        status: string;
+        generatedAt: string;
+        tags: string[];
+      };
+    }>('POST', '/v1/content/generate', { type });
+  }
+
+  async getContentDrafts() {
+    return this.request<{
+      drafts: Array<{
+        id: string;
+        type: string;
+        title: string;
+        body: string;
+        status: string;
+        generatedAt: string;
+        tags: string[];
+      }>;
+    }>('GET', '/v1/content/drafts');
+  }
 }
 
 export const api = new ApiClient();

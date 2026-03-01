@@ -1054,6 +1054,18 @@ app.all('/v1/ai-screener/analyze', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/ai-screener/analyze', req, res);
 });
 
+// ============================================
+// Value Radar + Content Engine -> Nova Hub
+// ============================================
+
+app.all('/v1/value-radar/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/content/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Catch-all for unknown routes
 app.use((_req: Request, res: Response) => {
   res.status(HTTP_STATUS.NOT_FOUND).json({

@@ -43,34 +43,72 @@ interface ActivityItem {
 }
 
 
-const quickActions: QuickAction[] = [
+// ================================================================
+// CORE LOOP — The heartbeat of Nova
+// Observe → Decide → Execute → Record → Learn → Upgrade
+// ================================================================
+const CORE_LOOP_PHASES = [
+  { id: 'observe', label: 'Observe', icon: '🔭', color: 'from-cyan-500 to-cyan-400', desc: 'Watch markets, trends, signals' },
+  { id: 'decide', label: 'Decide', icon: '🎯', color: 'from-blue-500 to-blue-400', desc: 'Score, rank, generate thesis' },
+  { id: 'execute', label: 'Execute', icon: '⚡', color: 'from-green-500 to-green-400', desc: 'Trade, list, publish' },
+  { id: 'record', label: 'Record', icon: '📝', color: 'from-purple-500 to-purple-400', desc: 'Append to event ledger' },
+  { id: 'learn', label: 'Learn', icon: '🧠', color: 'from-pink-500 to-pink-400', desc: 'Evaluate outcomes, drift' },
+  { id: 'upgrade', label: 'Upgrade', icon: '🚀', color: 'from-orange-500 to-orange-400', desc: 'Improve strategies, rules' },
+];
+
+// ================================================================
+// SECTOR NODES — The universe of Nova
+// ================================================================
+const SECTOR_NODES = [
   {
-    name: 'AI Screener',
-    description: 'Scan markets for opportunities',
+    name: 'Wall Street',
+    description: 'Trading intelligence, AI screening, backtesting, paper trading',
     href: '/dashboard/screener',
-    icon: '🧠',
-    color: 'cyan',
-  },
-  {
-    name: 'Trading',
-    description: 'Manage your portfolio',
-    href: '/dashboard/trading',
     icon: '📈',
-    color: 'green',
-  },
-  {
-    name: 'Simulator',
-    description: 'Backtest strategies',
-    href: '/dashboard/simulator',
-    icon: '🎲',
-    color: 'purple',
+    gradient: 'from-green-500/20 via-emerald-500/10 to-transparent',
+    border: 'border-green-500/30 hover:border-green-400/60',
+    glow: 'hover:shadow-[0_0_40px_rgba(34,197,94,0.15)]',
+    color: 'text-green-400',
   },
   {
     name: 'Marketplace',
-    description: 'E-commerce operations',
-    href: '/dashboard/marketplace',
-    icon: '🛒',
-    color: 'pink',
+    description: 'Cross-market opportunity radar, deal scoring, arbitrage',
+    href: '/dashboard/value-radar',
+    icon: '🏪',
+    gradient: 'from-pink-500/20 via-rose-500/10 to-transparent',
+    border: 'border-pink-500/30 hover:border-pink-400/60',
+    glow: 'hover:shadow-[0_0_40px_rgba(244,114,182,0.15)]',
+    color: 'text-pink-400',
+  },
+  {
+    name: 'Social',
+    description: 'Content engine, growth flywheel, audience intelligence',
+    href: '/dashboard/content-engine',
+    icon: '📡',
+    gradient: 'from-purple-500/20 via-violet-500/10 to-transparent',
+    border: 'border-purple-500/30 hover:border-purple-400/60',
+    glow: 'hover:shadow-[0_0_40px_rgba(139,92,246,0.15)]',
+    color: 'text-purple-400',
+  },
+  {
+    name: 'Research',
+    description: 'Knowledge base, learning proposals, intelligence mining',
+    href: '/dashboard/nexus',
+    icon: '🔬',
+    gradient: 'from-cyan-500/20 via-sky-500/10 to-transparent',
+    border: 'border-cyan-500/30 hover:border-cyan-400/60',
+    glow: 'hover:shadow-[0_0_40px_rgba(0,245,255,0.15)]',
+    color: 'text-cyan-400',
+  },
+  {
+    name: 'Ops',
+    description: 'Safety, governance, kill switch, audit, compliance',
+    href: '/dashboard/safety',
+    icon: '⚙️',
+    gradient: 'from-orange-500/20 via-amber-500/10 to-transparent',
+    border: 'border-orange-500/30 hover:border-orange-400/60',
+    glow: 'hover:shadow-[0_0_40px_rgba(249,115,22,0.15)]',
+    color: 'text-orange-400',
   },
 ];
 
@@ -100,9 +138,9 @@ export default function DashboardPage() {
         signalType: 'all',
       });
       
-      if (screenerResult.success && screenerResult.data?.signals?.length > 0) {
+      if (screenerResult.success && (screenerResult.data?.signals?.length ?? 0) > 0) {
         // Take top 5 qualified or near-qualified by confidence
-        const topSignals = screenerResult.data.signals
+        const topSignals = screenerResult.data!.signals!
           .filter((s: any) => s.qualification !== 'NOT_QUALIFIED')
           .slice(0, 5)
           .map((s: any): OpportunitySignal => ({
@@ -199,54 +237,137 @@ export default function DashboardPage() {
     return `${Math.floor(hours / 24)}d ago`;
   }
 
+  // Determine active core loop phase from recent activity
+  const activePhase = activities.length > 0
+    ? activities[0].type === 'scan' ? 'observe'
+      : activities[0].type === 'signal' ? 'decide'
+      : activities[0].type === 'simulation' ? 'execute'
+      : 'record'
+    : 'observe';
+
   return (
     <DashboardLayout>
       <div className="space-y-6">
         {/* Onboarding Stepper */}
         <OnboardingStepper showWelcome={true} />
-        
-        {/* Header */}
+
+        {/* ============================================ */}
+        {/* NOVA PULSE + HEADER                          */}
+        {/* ============================================ */}
         <motion.div
           initial={{ opacity: 0, y: -20 }}
           animate={{ opacity: 1, y: 0 }}
+          className="flex items-center gap-4"
         >
-          <h1 className="text-3xl font-bold text-white mb-2">
-            Welcome to <GradientText>NovaNexus</GradientText>
-          </h1>
-          <p className="text-gray-400">
-            Your AI-powered ecosystem for trading, commerce, and autonomous operations
-          </p>
+          {/* Nova Pulse — the living intelligence orb */}
+          <div className="relative flex-shrink-0">
+            <motion.div
+              className="w-14 h-14 rounded-full bg-gradient-to-br from-cyan-500 via-purple-500 to-pink-500"
+              animate={{
+                boxShadow: [
+                  '0 0 20px rgba(0,245,255,0.3), 0 0 60px rgba(139,92,246,0.15)',
+                  '0 0 30px rgba(0,245,255,0.5), 0 0 80px rgba(139,92,246,0.25)',
+                  '0 0 20px rgba(0,245,255,0.3), 0 0 60px rgba(139,92,246,0.15)',
+                ],
+                scale: [1, 1.05, 1],
+              }}
+              transition={{ duration: 3, repeat: Infinity, ease: 'easeInOut' }}
+            />
+            <div className="absolute inset-0 flex items-center justify-center">
+              <span className="text-white font-bold text-xl">N</span>
+            </div>
+          </div>
+          <div>
+            <h1 className="text-2xl font-bold text-white">
+              Nova <GradientText>Command Center</GradientText>
+            </h1>
+            <p className="text-gray-400 text-sm">
+              Governed intelligence — observe, decide, execute, record, learn, upgrade
+            </p>
+          </div>
         </motion.div>
-        
-        {/* Quick Actions */}
+
+        {/* ============================================ */}
+        {/* CORE LOOP STRIP                              */}
+        {/* ============================================ */}
+        <motion.div
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.15 }}
+          className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-4"
+        >
+          <div className="flex items-center gap-1 overflow-x-auto">
+            {CORE_LOOP_PHASES.map((phase, i) => {
+              const isActive = phase.id === activePhase;
+              return (
+                <div key={phase.id} className="flex items-center">
+                  <div className={`flex items-center gap-2 px-3 py-2 rounded-xl transition-all ${
+                    isActive
+                      ? 'bg-gradient-to-r ' + phase.color + ' bg-opacity-20 border border-white/20 shadow-lg'
+                      : 'bg-white/5 hover:bg-white/10'
+                  }`}>
+                    <span className="text-lg">{phase.icon}</span>
+                    <div className="hidden sm:block">
+                      <p className={`text-xs font-bold ${isActive ? 'text-white' : 'text-gray-400'}`}>
+                        {phase.label}
+                      </p>
+                      <p className="text-[10px] text-gray-500 whitespace-nowrap">{phase.desc}</p>
+                    </div>
+                    {isActive && (
+                      <motion.div
+                        className="w-2 h-2 rounded-full bg-white"
+                        animate={{ opacity: [1, 0.3, 1] }}
+                        transition={{ duration: 1.5, repeat: Infinity }}
+                      />
+                    )}
+                  </div>
+                  {i < CORE_LOOP_PHASES.length - 1 && (
+                    <svg className="w-4 h-4 text-gray-600 flex-shrink-0 mx-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                    </svg>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        </motion.div>
+
+        {/* ============================================ */}
+        {/* SECTOR GRID — The Nova Universe               */}
+        {/* ============================================ */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.2 }}
+          transition={{ delay: 0.25 }}
         >
-          <h2 className="text-xl font-semibold text-white mb-4">Quick Actions</h2>
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-            {quickActions.map((action, i) => (
-              <Link key={action.name} href={action.href}>
-                <GlassCard glowColor={action.color} delay={0.1 * i} className="h-full">
-                  <div className="flex flex-col items-center text-center">
-                    <span className="text-4xl mb-3">{action.icon}</span>
-                    <h3 className="font-semibold text-white mb-1">{action.name}</h3>
-                    <p className="text-gray-400 text-sm">{action.description}</p>
-                  </div>
-                </GlassCard>
+          <div className="grid grid-cols-2 lg:grid-cols-5 gap-3">
+            {SECTOR_NODES.map((sector, i) => (
+              <Link key={sector.name} href={sector.href}>
+                <motion.div
+                  initial={{ opacity: 0, y: 20 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ delay: 0.3 + i * 0.08 }}
+                  whileHover={{ scale: 1.03, y: -3 }}
+                  className={`relative overflow-hidden backdrop-blur-xl bg-gradient-to-br ${sector.gradient} border ${sector.border} rounded-2xl p-4 transition-all duration-300 ${sector.glow} cursor-pointer`}
+                >
+                  <span className="text-3xl block mb-2">{sector.icon}</span>
+                  <h3 className={`font-bold text-sm ${sector.color}`}>{sector.name}</h3>
+                  <p className="text-gray-500 text-[11px] mt-1 leading-tight">{sector.description}</p>
+                </motion.div>
               </Link>
             ))}
           </div>
         </motion.div>
-        
-        {/* Two Column Layout */}
+
+        {/* ============================================ */}
+        {/* INTELLIGENCE FEED — Opportunities + Activity  */}
+        {/* ============================================ */}
         <div className="grid lg:grid-cols-2 gap-6">
-          {/* Market Overview */}
+          {/* Top Opportunities */}
           <motion.div
             initial={{ opacity: 0, x: -20 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.3 }}
+            transition={{ delay: 0.4 }}
           >
             <GlassCard hover={false} glowColor="cyan">
               <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
@@ -261,8 +382,8 @@ export default function DashboardPage() {
                   </div>
                 ) : opportunities.length > 0 ? (
                   opportunities.map((opp, idx) => (
-                    <Link 
-                      key={opp.symbol} 
+                    <Link
+                      key={opp.symbol}
                       href={`/dashboard/screener?symbol=${opp.symbol}`}
                       className="block"
                     >
@@ -274,9 +395,6 @@ export default function DashboardPage() {
                             <div className="flex items-center gap-2 mt-0.5">
                               <span className={`text-xs px-1.5 py-0.5 rounded ${opp.type === 'bullish' ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'}`}>
                                 {opp.type === 'bullish' ? '▲' : '▼'} {opp.pattern}
-                              </span>
-                              <span className={`text-xs px-1.5 py-0.5 rounded ${opp.qualification === 'QUALIFIED' ? 'bg-cyan-500/20 text-cyan-400' : 'bg-yellow-500/20 text-yellow-400'}`}>
-                                {opp.qualification === 'QUALIFIED' ? '✓' : '~'}
                               </span>
                             </div>
                           </div>
@@ -299,15 +417,7 @@ export default function DashboardPage() {
                               ? `$${item.price.toLocaleString()}`
                               : '—'}
                           </p>
-                          <p
-                            className={`text-sm ${
-                              typeof item.change === 'number' && Number.isFinite(item.change)
-                                ? item.change >= 0
-                                  ? 'text-green-400'
-                                  : 'text-red-400'
-                                : 'text-gray-400'
-                            }`}
-                          >
+                          <p className={`text-sm ${typeof item.change === 'number' && Number.isFinite(item.change) ? item.change >= 0 ? 'text-green-400' : 'text-red-400' : 'text-gray-400'}`}>
                             {typeof item.change === 'number' && Number.isFinite(item.change)
                               ? `${item.change >= 0 ? '+' : ''}${item.change.toFixed(2)}%`
                               : '—'}
@@ -326,21 +436,22 @@ export default function DashboardPage() {
               </Link>
             </GlassCard>
           </motion.div>
-          
-          {/* Recent Activity */}
+
+          {/* Recent Activity (Event Ledger) */}
           <motion.div
             initial={{ opacity: 0, x: 20 }}
             animate={{ opacity: 1, x: 0 }}
-            transition={{ delay: 0.4 }}
+            transition={{ delay: 0.45 }}
           >
             <GlassCard hover={false} glowColor="purple">
               <h3 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-                <span className="text-purple-400">⚡</span> Recent Activity
+                <span className="text-purple-400">⚡</span> Event Ledger
+                <span className="text-xs bg-purple-500/20 text-purple-400 px-2 py-0.5 rounded-full">Live</span>
               </h3>
               <div className="space-y-3">
                 {activities.length === 0 ? (
                   <div className="p-4 rounded-xl bg-white/5 text-sm text-gray-400">
-                    No recent activity.
+                    No recent events. Start scanning to populate the ledger.
                   </div>
                 ) : (
                   activities.map((item, i) => (
@@ -367,40 +478,9 @@ export default function DashboardPage() {
             </GlassCard>
           </motion.div>
         </div>
-        
-        {/* Upgrade CTA (shows after completing steps) */}
+
+        {/* Upgrade CTA */}
         <UpgradeCTA visible={true} />
-        
-        {/* Welcome Banner */}
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ delay: 0.5 }}
-        >
-          <GlassCard hover={false} className="text-center !p-8">
-            <h2 className="text-2xl font-bold text-white mb-2">
-              Power to the <GradientText>User</GradientText>
-            </h2>
-            <p className="text-gray-400 max-w-2xl mx-auto mb-6">
-              NovaNexus AI brings together the tools that were once exclusive to institutions. 
-              Use AI-powered market intelligence, algorithmic trading, and autonomous commerce to build your empire.
-            </p>
-            <div className="flex items-center justify-center gap-4">
-              <Link 
-                href="/dashboard/screener"
-                className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-medium hover:shadow-lg hover:shadow-cyan-500/25 transition-all"
-              >
-                Start Scanning →
-              </Link>
-              <Link 
-                href="/dashboard/simulator"
-                className="px-6 py-3 rounded-xl border border-white/20 text-white font-medium hover:bg-white/10 transition-all"
-              >
-                Try Simulator
-              </Link>
-            </div>
-          </GlassCard>
-        </motion.div>
       </div>
     </DashboardLayout>
   );

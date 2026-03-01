@@ -7534,6 +7534,149 @@ app.get('/v1/reality', async (_req: Request, res: Response) => {
 });
 
 // ============================================
+// Value Radar — Cross-market opportunity aggregator
+// ============================================
+
+app.get('/v1/value-radar/opportunities', async (req: Request, res: Response) => {
+  const category = (req.query.category as string) || undefined;
+  try {
+    // Aggregate opportunities from multiple sources
+    const opportunities: any[] = [];
+
+    // Source 1: Pull top screener signals
+    try {
+      const screenerRows = await query<{
+        id: string; symbol: string; pattern: string; type: string;
+        confidence: number; risk_reward: number; created_at: string;
+      }>(
+        `SELECT id, symbol, pattern, type, confidence, risk_reward, created_at
+         FROM scan_results
+         WHERE created_at > NOW() - INTERVAL '7 days'
+         ORDER BY confidence DESC
+         LIMIT 10`
+      );
+      for (const row of screenerRows) {
+        if (!category || category === 'stocks') {
+          opportunities.push({
+            id: `sr-${row.id}`,
+            title: `${row.symbol} — ${row.pattern} (${row.type})`,
+            category: 'stocks',
+            source: 'AI Screener',
+            currentPrice: 0,
+            estimatedValue: 0,
+            score: Math.round(row.confidence),
+            tags: [row.type, row.pattern.toLowerCase().replace(/\s+/g, '-')],
+            detectedAt: row.created_at,
+          });
+        }
+      }
+    } catch {
+      // Screener data not available
+    }
+
+    // Sort by score desc
+    opportunities.sort((a, b) => b.score - a.score);
+
+    res.json({
+      success: true,
+      data: {
+        opportunities: opportunities.slice(0, 20),
+        total: opportunities.length,
+        scannedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    logger.error('Value radar failed', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'RADAR_ERROR', message: 'Failed to aggregate opportunities' },
+    });
+  }
+});
+
+// ============================================
+// Content Engine — Auto-generate content from activity
+// ============================================
+
+app.post('/v1/content/generate', async (req: Request, res: Response) => {
+  const { type } = req.body || {};
+  const contentType = type || 'market-insight';
+
+  try {
+    // Pull recent activity data to seed content generation
+    const recentScans = await query<{ symbol: string; pattern: string; confidence: number }>(
+      `SELECT symbol, pattern, confidence FROM scan_results
+       WHERE created_at > NOW() - INTERVAL '24 hours'
+       ORDER BY confidence DESC LIMIT 5`
+    ).catch(() => [] as any[]);
+
+    const symbols = recentScans.map((s: any) => s.symbol).join(', ') || 'SPY, AAPL, TSLA';
+    const topPattern = recentScans[0]?.pattern || 'momentum breakout';
+
+    // Generate content based on type
+    let title = '';
+    let body = '';
+    const tags: string[] = [];
+
+    switch (contentType) {
+      case 'trade-recap':
+        title = `Trading Recap — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        body = `Today's scan highlighted ${symbols} with the strongest signal being a ${topPattern} pattern. AI confidence scores ranged from ${recentScans[recentScans.length - 1]?.confidence || 50}% to ${recentScans[0]?.confidence || 85}%.`;
+        tags.push('recap', 'daily');
+        break;
+      case 'market-insight':
+        title = `Market Insight — ${topPattern} signals detected`;
+        body = `The AI screener identified ${recentScans.length || 0} high-confidence setups across ${symbols}. The dominant pattern is ${topPattern}, suggesting directional conviction in the current market regime.`;
+        tags.push('insight', 'analysis');
+        break;
+      case 'performance':
+        title = `Performance Snapshot — ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+        body = `Screening performance summary: ${recentScans.length} signals generated in the last 24h. Top symbols: ${symbols}.`;
+        tags.push('performance', 'metrics');
+        break;
+      case 'social':
+        title = `🧵 AI just flagged ${recentScans.length} setups`;
+        body = `The Nova AI screener found ${recentScans.length} high-probability setups today. Leading signal: ${symbols.split(',')[0]} showing a ${topPattern} pattern. More details inside.`;
+        tags.push('social', 'thread');
+        break;
+      default:
+        title = `Nova Intelligence Brief — ${new Date().toISOString().split('T')[0]}`;
+        body = `Automated intelligence brief generated from platform activity.`;
+        tags.push('brief');
+    }
+
+    const draft = {
+      id: `cd-${generateId()}`,
+      type: contentType,
+      title,
+      body,
+      status: 'draft',
+      generatedAt: new Date().toISOString(),
+      tags,
+    };
+
+    res.json({
+      success: true,
+      data: { draft },
+    });
+  } catch (error) {
+    logger.error('Content generation failed', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'CONTENT_ERROR', message: 'Failed to generate content' },
+    });
+  }
+});
+
+app.get('/v1/content/drafts', async (_req: Request, res: Response) => {
+  // For now return empty — frontend falls back to seed data
+  res.json({
+    success: true,
+    data: { drafts: [] },
+  });
+});
+
+// ============================================
 // Start Server
 // ============================================
 
