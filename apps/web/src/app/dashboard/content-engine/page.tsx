@@ -38,49 +38,10 @@ const STATUS_COLORS: Record<DraftStatus, string> = {
   published: 'bg-cyan-500/20 text-cyan-400',
 };
 
-// Seed drafts shown before backend responds
-const SEED_DRAFTS: ContentDraft[] = [
-  {
-    id: 'cd-1',
-    type: 'trade-recap',
-    title: 'Weekly Trading Recap — Top Movers & Key Setups',
-    body: 'This week\'s standout: AAPL bounced off its 200-day SMA with volume confirmation. Three AI screener picks hit their take-profit levels. Portfolio beta remained below 0.8 despite market volatility...',
-    status: 'ready',
-    generatedAt: new Date().toISOString(),
-    tags: ['weekly', 'portfolio', 'highlights'],
-  },
-  {
-    id: 'cd-2',
-    type: 'market-insight',
-    title: 'Sector Rotation Signal — Tech → Energy Shift',
-    body: 'Relative strength analysis shows capital flowing from technology to energy over the past 5 sessions. The XLE/XLK ratio broke above its 50-day moving average for the first time in 3 months...',
-    status: 'draft',
-    generatedAt: new Date().toISOString(),
-    tags: ['macro', 'sector-rotation'],
-  },
-  {
-    id: 'cd-3',
-    type: 'performance',
-    title: 'Monthly Performance Report — January 2025',
-    body: 'Win rate: 67% across 24 trades. Average R:R achieved: 2.4:1. Maximum drawdown: 3.2%. Sharpe ratio (30d rolling): 1.8. AI confidence score correlation with outcome: 0.74...',
-    status: 'ready',
-    generatedAt: new Date().toISOString(),
-    tags: ['monthly', 'metrics', 'analytics'],
-  },
-  {
-    id: 'cd-4',
-    type: 'social',
-    title: 'Thread: How AI Changed My Trading Process',
-    body: '🧵 1/ A year ago I was manually scanning charts for 4+ hours/day. Now AI does the heavy lifting while I focus on risk management and thesis validation. Here\'s what changed...',
-    status: 'draft',
-    generatedAt: new Date().toISOString(),
-    tags: ['thread', 'personal', 'engagement'],
-  },
-];
 
 export default function ContentEnginePage() {
   const [activeType, setActiveType] = useState<ContentType>('all');
-  const [drafts, setDrafts] = useState<ContentDraft[]>(SEED_DRAFTS);
+  const [drafts, setDrafts] = useState<ContentDraft[]>([]);
   const [isGenerating, setIsGenerating] = useState(false);
   const [generatingType, setGeneratingType] = useState<ContentType | null>(null);
 

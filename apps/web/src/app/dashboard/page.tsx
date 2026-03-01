@@ -117,6 +117,7 @@ export default function DashboardPage() {
   const [opportunities, setOpportunities] = useState<OpportunitySignal[]>([]);
   const [activities, setActivities] = useState<ActivityItem[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [sectorStats, setSectorStats] = useState<Record<string, string>>({});
   
   // Onboarding state
   const { state: onboardingState, completeStep } = useOnboarding();
@@ -213,6 +214,20 @@ export default function DashboardPage() {
           setActivities(mappedActivities);
         }
       }
+      // Fetch dashboard sector stats
+      try {
+        const statsResult = await api.getDashboardStats();
+        if (statsResult.success && statsResult.data?.sectors) {
+          const s = statsResult.data.sectors;
+          const stats: Record<string, string> = {};
+          if (s.wallStreet) stats['Wall Street'] = `${s.wallStreet.activeSignals} signals · ${s.wallStreet.openTrades} trades`;
+          if (s.marketplace) stats['Marketplace'] = `${s.marketplace.trendingCategories} categories`;
+          if (s.social) stats['Social'] = `${s.social.contentDrafts} drafts · ${s.social.scheduledPosts} scheduled`;
+          if (s.research) stats['Research'] = `${s.research.eventsToday} events today`;
+          if (s.ops) stats['Ops'] = s.ops.systemHealthy ? '✓ All systems healthy' : '⚠ Needs attention';
+          setSectorStats(stats);
+        }
+      } catch {}
     } catch (error) {
       console.error('Dashboard data fetch error:', error);
     } finally {
@@ -353,6 +368,9 @@ export default function DashboardPage() {
                   <span className="text-3xl block mb-2">{sector.icon}</span>
                   <h3 className={`font-bold text-sm ${sector.color}`}>{sector.name}</h3>
                   <p className="text-gray-500 text-[11px] mt-1 leading-tight">{sector.description}</p>
+                  {sectorStats[sector.name] && (
+                    <p className="text-[10px] mt-2 font-medium text-white/50 truncate">{sectorStats[sector.name]}</p>
+                  )}
                 </motion.div>
               </Link>
             ))}

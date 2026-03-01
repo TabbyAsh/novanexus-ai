@@ -2,6 +2,7 @@
 
 import { useEffect, useState, useCallback } from 'react';
 import { api } from '@/lib/api';
+import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import {
   Twitter,
   Linkedin,
@@ -187,7 +188,8 @@ export default function SocialHubDashboard() {
     : null;
 
   return (
-    <div className="p-8 bg-gray-950 min-h-screen">
+    <DashboardLayout>
+      <div className="space-y-6">
       {/* Header */}
       <div className="flex items-center justify-between mb-8">
         <div>
@@ -633,6 +635,7 @@ export default function SocialHubDashboard() {
           </div>
         )}
       </div>
-    </div>
+      </div>
+    </DashboardLayout>
   );
 }

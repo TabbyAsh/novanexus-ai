@@ -1066,6 +1066,22 @@ app.all('/v1/content/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+app.all('/v1/marketplace/search', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/marketplace/appraise', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/marketplace/trending', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/dashboard/stats', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Catch-all for unknown routes
 app.use((_req: Request, res: Response) => {
   res.status(HTTP_STATUS.NOT_FOUND).json({

@@ -85,14 +85,21 @@ export default function MarketplaceDashboard() {
   const [isLoading, setIsLoading] = useState(true);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
 
-  type MarketplaceTab = 'products' | 'pricing' | 'appraisal' | 'inventory';
-  const [activeTab, setActiveTab] = useState<MarketplaceTab>('products');
+  type MarketplaceTab = 'search' | 'products' | 'pricing' | 'appraisal' | 'inventory';
+  const [activeTab, setActiveTab] = useState<MarketplaceTab>('search');
 
   const [applyingPrice, setApplyingPrice] = useState<string | null>(null);
   const [appraisalQuery, setAppraisalQuery] = useState('');
   const [appraisal, setAppraisal] = useState<ProductAppraisal | null>(null);
   const [appraisalError, setAppraisalError] = useState<string | null>(null);
   const [isAppraising, setIsAppraising] = useState(false);
+
+  // Live search + trending state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{ title: string; price: number; currency: string; source: string; url: string; rating?: number; condition?: string; scrapedAt: string }>>([]);
+  const [isSearching, setIsSearching] = useState(false);
+  const [trendingData, setTrendingData] = useState<Array<{ category: string; icon: string; avgPrice: number; demand: string; examples: string[] }>>([]);
+  const [isTrendingLoading, setIsTrendingLoading] = useState(true);
 
   const loadData = useCallback(async () => {
     setIsLoading(true);
@@ -188,6 +195,40 @@ export default function MarketplaceDashboard() {
   useEffect(() => {
     loadData();
   }, [loadData]);
+
+  // Load trending categories on mount
+  useEffect(() => {
+    (async () => {
+      setIsTrendingLoading(true);
+      try {
+        const res = await api.getMarketplaceTrending();
+        if (res.success && res.data?.categories) {
+          setTrendingData(res.data.categories);
+        }
+      } catch (e) {
+        console.error('Trending load error:', e);
+      } finally {
+        setIsTrendingLoading(false);
+      }
+    })();
+  }, []);
+
+  const searchProducts = async (overrideQuery?: string) => {
+    const q = overrideQuery || searchQuery;
+    if (!q.trim()) return;
+    if (overrideQuery) setSearchQuery(overrideQuery);
+    setIsSearching(true);
+    try {
+      const res = await api.searchMarketplace(q);
+      if (res.success && res.data?.products) {
+        setSearchResults(res.data.products);
+      }
+    } catch (e) {
+      console.error('Search error:', e);
+    } finally {
+      setIsSearching(false);
+    }
+  };
 
   const formatCurrency = (value: number) => {
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
@@ -314,9 +355,10 @@ export default function MarketplaceDashboard() {
       <div className="flex gap-2 mb-6">
         {(
           [
+            { id: 'search', label: 'Live Search', icon: Search },
             { id: 'products', label: 'Products', icon: Package },
             { id: 'pricing', label: 'Pricing AI', icon: TrendingUp },
-            { id: 'appraisal', label: 'Appraise Item', icon: Search },
+            { id: 'appraisal', label: 'Appraise Item', icon: Target },
             { id: 'inventory', label: 'Inventory', icon: Boxes },
           ] as const satisfies ReadonlyArray<{ id: MarketplaceTab; label: string; icon: typeof Package }>
         ).map((tab) => (
@@ -336,6 +378,93 @@ export default function MarketplaceDashboard() {
       </div>
 
       {/* Tab Content */}
+      {activeTab === 'search' && (
+        <div className="space-y-6">
+          {/* Search Bar */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+              <Search className="w-5 h-5 text-cyan-400" />
+              Live Marketplace Search
+            </h2>
+            <p className="text-gray-400 text-sm mb-4">Search real-time listings from eBay and other marketplaces.</p>
+
+            <div className="flex gap-3">
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
+                placeholder="Search for anything — electronics, sneakers, collectibles..."
+                className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500"
+              />
+              <button
+                onClick={() => searchProducts()}
+                disabled={isSearching || !searchQuery.trim()}
+                className="px-6 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg transition flex items-center gap-2"
+              >
+                {isSearching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                {isSearching ? 'Searching...' : 'Search'}
+              </button>
+            </div>
+          </div>
+
+          {/* Search Results */}
+          {searchResults.length > 0 && (
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h3 className="text-white font-semibold mb-4">{searchResults.length} Results</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                {searchResults.map((product, idx) => (
+                  <a key={idx} href={product.url} target="_blank" rel="noopener noreferrer" className="block bg-gray-800 hover:bg-gray-700/80 border border-gray-700 hover:border-cyan-500/30 rounded-xl p-4 transition">
+                    <p className="text-white font-medium text-sm line-clamp-2 mb-2">{product.title}</p>
+                    <div className="flex items-center justify-between">
+                      <span className="text-green-400 font-bold text-lg">${product.price.toFixed(2)}</span>
+                      <div className="flex items-center gap-2 text-xs text-gray-500">
+                        <span className="capitalize">{product.source}</span>
+                        {product.condition && <span className="px-1.5 py-0.5 bg-gray-700 rounded">{product.condition}</span>}
+                        {product.rating && <span>★ {product.rating.toFixed(1)}</span>}
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-1 mt-2 text-xs text-cyan-400">
+                      <ExternalLink className="w-3 h-3" /> View listing
+                    </div>
+                  </a>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Trending Categories */}
+          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+            <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+              <TrendingUp className="w-5 h-5 text-purple-400" /> Trending Categories
+            </h3>
+            {isTrendingLoading ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading trending data...</div>
+            ) : trendingData.length === 0 ? (
+              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No trending data available.</div>
+            ) : (
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
+                {trendingData.map((cat) => (
+                  <button
+                    key={cat.category}
+                    onClick={() => searchProducts(cat.examples[0] || cat.category)}
+                    className="bg-gray-800 hover:bg-gray-700/80 border border-gray-700 hover:border-purple-500/30 rounded-xl p-4 text-left transition"
+                  >
+                    <div className="flex items-center gap-2 mb-2">
+                      <span className="text-2xl">{cat.icon}</span>
+                      <span className="text-white font-medium">{cat.category}</span>
+                    </div>
+                    <p className="text-green-400 font-bold">${cat.avgPrice.toFixed(0)} avg</p>
+                    <p className="text-gray-500 text-xs mt-1 capitalize">{cat.demand} demand</p>
+                    <p className="text-gray-600 text-xs mt-1">{cat.examples.slice(0, 2).join(', ')}</p>
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {activeTab === 'products' && (
         <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
           <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">

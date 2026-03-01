@@ -7534,115 +7534,209 @@ app.get('/v1/reality', async (_req: Request, res: Response) => {
 });
 
 // ============================================
-// Value Radar — Cross-market opportunity aggregator
+// Value Radar — LIVE cross-market opportunity scanner
+// Uses the same getQuote/getIndicators/buildSignal pipeline as the screener
 // ============================================
+
+const RADAR_SYMBOLS = [
+  'SPY', 'QQQ', 'AAPL', 'MSFT', 'NVDA', 'TSLA', 'AMZN', 'META', 'GOOGL', 'AMD',
+  'NFLX', 'JPM', 'V', 'UNH', 'XOM', 'LLY', 'AVGO', 'BA', 'COIN', 'PLTR',
+  'SOFI', 'NKE', 'DIS', 'PYPL', 'SQ', 'ROKU', 'SNAP', 'HOOD', 'RIVN', 'LCID',
+];
+
+let radarCache: { data: any; ts: number } | null = null;
+const RADAR_CACHE_MS = 5 * 60 * 1000; // 5 minutes
 
 app.get('/v1/value-radar/opportunities', async (req: Request, res: Response) => {
   const category = (req.query.category as string) || undefined;
+  const forceRefresh = req.query.refresh === 'true';
   try {
-    // Aggregate opportunities from multiple sources
-    const opportunities: any[] = [];
-
-    // Source 1: Pull top screener signals
-    try {
-      const screenerRows = await query<{
-        id: string; symbol: string; pattern: string; type: string;
-        confidence: number; risk_reward: number; created_at: string;
-      }>(
-        `SELECT id, symbol, pattern, type, confidence, risk_reward, created_at
-         FROM scan_results
-         WHERE created_at > NOW() - INTERVAL '7 days'
-         ORDER BY confidence DESC
-         LIMIT 10`
-      );
-      for (const row of screenerRows) {
-        if (!category || category === 'stocks') {
-          opportunities.push({
-            id: `sr-${row.id}`,
-            title: `${row.symbol} — ${row.pattern} (${row.type})`,
-            category: 'stocks',
-            source: 'AI Screener',
-            currentPrice: 0,
-            estimatedValue: 0,
-            score: Math.round(row.confidence),
-            tags: [row.type, row.pattern.toLowerCase().replace(/\s+/g, '-')],
-            detectedAt: row.created_at,
-          });
-        }
-      }
-    } catch {
-      // Screener data not available
+    // Return cache if fresh
+    if (!forceRefresh && radarCache && (Date.now() - radarCache.ts) < RADAR_CACHE_MS) {
+      const filtered = category && category !== 'all'
+        ? radarCache.data.filter((o: any) => o.category === category)
+        : radarCache.data;
+      return res.json({
+        success: true,
+        data: { opportunities: filtered, total: filtered.length, scannedAt: new Date(radarCache.ts).toISOString(), cached: true },
+      });
     }
 
-    // Sort by score desc
+    // LIVE SCAN: Use the same pipeline as the screener
+    const opportunities: any[] = [];
+    const symbolList = RADAR_SYMBOLS.slice(0, 30);
+
+    // Scan all symbols in parallel batches of 10
+    for (let i = 0; i < symbolList.length; i += 10) {
+      const batch = symbolList.slice(i, i + 10);
+      const results = await Promise.all(
+        batch.map(async (symbol) => {
+          try {
+            const [q, ind] = await Promise.all([getQuote(symbol), getIndicators(symbol)]);
+            if (!q || !ind) return null;
+            const signal = buildSignal(symbol, q, ind, 1); // min confidence 1 to get everything
+            if (!signal) return null;
+            return { symbol, signal, quote: q };
+          } catch { return null; }
+        })
+      );
+
+      for (const r of results) {
+        if (!r) continue;
+        const { symbol, signal, quote } = r;
+        opportunities.push({
+          id: `vr-${symbol}-${Date.now()}`,
+          title: `${symbol} — ${signal.pattern} (${signal.type})`,
+          category: 'stocks',
+          source: 'Live AI Scan',
+          currentPrice: quote.price,
+          estimatedValue: signal.target,
+          score: signal.confidence,
+          tags: [signal.type, signal.pattern.toLowerCase().replace(/\s+/g, '-'), signal.confidenceTag?.toLowerCase() || ''].filter(Boolean),
+          detectedAt: new Date().toISOString(),
+          riskReward: signal.riskReward,
+          entry: signal.entry,
+          stopLoss: signal.stopLoss,
+          strategyId: signal.strategyId,
+          trust: signal.trust,
+        });
+      }
+    }
+
+    // Sort by score descending
     opportunities.sort((a, b) => b.score - a.score);
+
+    // Cache the results
+    radarCache = { data: opportunities, ts: Date.now() };
+
+    const filtered = category && category !== 'all'
+      ? opportunities.filter((o: any) => o.category === category)
+      : opportunities;
 
     res.json({
       success: true,
       data: {
-        opportunities: opportunities.slice(0, 20),
-        total: opportunities.length,
+        opportunities: filtered.slice(0, 30),
+        total: filtered.length,
         scannedAt: new Date().toISOString(),
+        cached: false,
+        symbolsScanned: symbolList.length,
       },
     });
   } catch (error) {
     logger.error('Value radar failed', error as Error);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
       success: false,
-      error: { code: 'RADAR_ERROR', message: 'Failed to aggregate opportunities' },
+      error: { code: 'RADAR_ERROR', message: 'Failed to scan markets' },
     });
   }
 });
 
 // ============================================
-// Content Engine — Auto-generate content from activity
+// Content Engine — AI-powered content generation
+// Uses OpenAI when available, falls back to template
 // ============================================
+
+async function generateWithOpenAI(prompt: string): Promise<string | null> {
+  if (!OPENAI_API_KEY) return null;
+  try {
+    const response = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        messages: [{ role: 'system', content: 'You are a professional financial content writer for NovaNexus, an AI trading platform. Write concise, engaging content. No disclaimers.' }, { role: 'user', content: prompt }],
+        max_tokens: 500,
+        temperature: 0.7,
+      }),
+    });
+    if (!response.ok) return null;
+    const data = await response.json() as any;
+    return data?.choices?.[0]?.message?.content || null;
+  } catch {
+    return null;
+  }
+}
 
 app.post('/v1/content/generate', async (req: Request, res: Response) => {
   const { type } = req.body || {};
   const contentType = type || 'market-insight';
 
   try {
-    // Pull recent activity data to seed content generation
-    const recentScans = await query<{ symbol: string; pattern: string; confidence: number }>(
-      `SELECT symbol, pattern, confidence FROM scan_results
-       WHERE created_at > NOW() - INTERVAL '24 hours'
-       ORDER BY confidence DESC LIMIT 5`
+    // Gather real context from platform activity
+    const recentScans = await query<{ symbol: string; pattern: string; confidence: number; type: string }>(
+      `SELECT symbol, pattern, confidence, type FROM scan_results
+       WHERE created_at > NOW() - INTERVAL '48 hours'
+       ORDER BY confidence DESC LIMIT 10`
     ).catch(() => [] as any[]);
 
-    const symbols = recentScans.map((s: any) => s.symbol).join(', ') || 'SPY, AAPL, TSLA';
-    const topPattern = recentScans[0]?.pattern || 'momentum breakout';
+    const journalEntries = await query<{ symbol: string; direction: string; pnl: number | null; status: string }>(
+      `SELECT symbol, direction, pnl, status FROM journal_entries
+       WHERE created_at > NOW() - INTERVAL '7 days'
+       ORDER BY created_at DESC LIMIT 10`
+    ).catch(() => [] as any[]);
 
-    // Generate content based on type
-    let title = '';
-    let body = '';
+    const symbols = recentScans.map((s: any) => s.symbol).join(', ') || 'SPY, QQQ, AAPL, NVDA, TSLA';
+    const topPattern = recentScans[0]?.pattern || 'momentum breakout';
+    const bullishCount = recentScans.filter((s: any) => s.type === 'bullish').length;
+    const bearishCount = recentScans.filter((s: any) => s.type === 'bearish').length;
+    const winCount = journalEntries.filter((j: any) => j.pnl && j.pnl > 0).length;
+    const totalJournal = journalEntries.length;
+
+    // Build AI prompt based on content type
+    let aiPrompt = '';
+    let fallbackTitle = '';
+    let fallbackBody = '';
     const tags: string[] = [];
 
     switch (contentType) {
       case 'trade-recap':
-        title = `Trading Recap — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-        body = `Today's scan highlighted ${symbols} with the strongest signal being a ${topPattern} pattern. AI confidence scores ranged from ${recentScans[recentScans.length - 1]?.confidence || 50}% to ${recentScans[0]?.confidence || 85}%.`;
+        aiPrompt = `Write a 150-word trading recap for today. Recent signals: ${symbols}. Top pattern: ${topPattern}. ${bullishCount} bullish, ${bearishCount} bearish signals. Journal: ${winCount}/${totalJournal} wins this week.`;
+        fallbackTitle = `Trading Recap — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
+        fallbackBody = `Today's scan highlighted ${symbols}. The dominant pattern is ${topPattern} with ${bullishCount} bullish and ${bearishCount} bearish signals detected. Win rate this week: ${totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0}%.`;
         tags.push('recap', 'daily');
         break;
       case 'market-insight':
-        title = `Market Insight — ${topPattern} signals detected`;
-        body = `The AI screener identified ${recentScans.length || 0} high-confidence setups across ${symbols}. The dominant pattern is ${topPattern}, suggesting directional conviction in the current market regime.`;
+        aiPrompt = `Write a 150-word market insight. AI screener found ${recentScans.length} signals across ${symbols}. Dominant pattern: ${topPattern}. Sentiment: ${bullishCount > bearishCount ? 'bullish bias' : bearishCount > bullishCount ? 'bearish bias' : 'mixed'}.`;
+        fallbackTitle = `Market Insight — ${topPattern} signals detected`;
+        fallbackBody = `The AI screener identified ${recentScans.length} setups across ${symbols}. Market sentiment shows ${bullishCount > bearishCount ? 'bullish' : 'bearish'} bias with ${topPattern} as the dominant pattern.`;
         tags.push('insight', 'analysis');
         break;
       case 'performance':
-        title = `Performance Snapshot — ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
-        body = `Screening performance summary: ${recentScans.length} signals generated in the last 24h. Top symbols: ${symbols}.`;
+        aiPrompt = `Write a 150-word performance summary. ${totalJournal} trades this week, ${winCount} winners (${totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0}% win rate). ${recentScans.length} AI signals generated. Top screened: ${symbols.split(',').slice(0, 5).join(', ')}.`;
+        fallbackTitle = `Performance Snapshot — ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+        fallbackBody = `This period: ${totalJournal} trades, ${winCount} winners (${totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0}% win rate). ${recentScans.length} AI signals generated across ${symbols}.`;
         tags.push('performance', 'metrics');
         break;
       case 'social':
-        title = `🧵 AI just flagged ${recentScans.length} setups`;
-        body = `The Nova AI screener found ${recentScans.length} high-probability setups today. Leading signal: ${symbols.split(',')[0]} showing a ${topPattern} pattern. More details inside.`;
+        aiPrompt = `Write a viral Twitter/X thread opener (under 280 chars) about AI finding ${recentScans.length} trading setups today. Top picks: ${symbols.split(',').slice(0, 3).join(', ')}. Pattern: ${topPattern}. Make it engaging.`;
+        fallbackTitle = `\uD83E\uDDF5 AI just flagged ${recentScans.length} setups`;
+        fallbackBody = `Nova AI screener: ${recentScans.length} high-probability setups. Leading: ${symbols.split(',')[0]} with ${topPattern}. ${bullishCount > bearishCount ? 'Bulls in control.' : 'Bears watching closely.'}`;
         tags.push('social', 'thread');
         break;
       default:
-        title = `Nova Intelligence Brief — ${new Date().toISOString().split('T')[0]}`;
-        body = `Automated intelligence brief generated from platform activity.`;
+        fallbackTitle = `Nova Intelligence Brief — ${new Date().toISOString().split('T')[0]}`;
+        fallbackBody = `${recentScans.length} signals detected. Top: ${symbols}. Pattern: ${topPattern}.`;
         tags.push('brief');
+    }
+
+    // Try AI generation, fall back to template
+    let title = fallbackTitle;
+    let body = fallbackBody;
+
+    if (aiPrompt) {
+      const aiContent = await generateWithOpenAI(aiPrompt);
+      if (aiContent) {
+        // Split first line as title, rest as body
+        const lines = aiContent.split('\n').filter(l => l.trim());
+        if (lines.length > 1) {
+          title = lines[0].replace(/^#+\s*/, '').replace(/^\*+/, '').trim();
+          body = lines.slice(1).join('\n').trim();
+        } else {
+          body = aiContent;
+        }
+        tags.push('ai-generated');
+      }
     }
 
     const draft = {
@@ -7653,12 +7747,11 @@ app.post('/v1/content/generate', async (req: Request, res: Response) => {
       status: 'draft',
       generatedAt: new Date().toISOString(),
       tags,
+      wordCount: body.split(/\s+/).length,
+      aiPowered: tags.includes('ai-generated'),
     };
 
-    res.json({
-      success: true,
-      data: { draft },
-    });
+    res.json({ success: true, data: { draft } });
   } catch (error) {
     logger.error('Content generation failed', error as Error);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
@@ -7669,11 +7762,120 @@ app.post('/v1/content/generate', async (req: Request, res: Response) => {
 });
 
 app.get('/v1/content/drafts', async (_req: Request, res: Response) => {
-  // For now return empty — frontend falls back to seed data
-  res.json({
-    success: true,
-    data: { drafts: [] },
-  });
+  // Return empty — frontend falls back to initial load
+  res.json({ success: true, data: { drafts: [] } });
+});
+
+// ============================================
+// Marketplace — Live product search proxy + trending
+// ============================================
+
+const STOREBOT_URL = process.env.STOREBOT_URL || 'http://localhost:3011';
+
+app.get('/v1/marketplace/search', async (req: Request, res: Response) => {
+  const q = req.query.q as string;
+  if (!q) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'MISSING_QUERY', message: 'Query parameter q is required' } });
+  }
+  try {
+    const response = await fetch(`${STOREBOT_URL}/api/products/search?q=${encodeURIComponent(q)}`);
+    const data = await response.json() as any;
+    res.json(data);
+  } catch {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: { code: 'SEARCH_UNAVAILABLE', message: 'Product search unavailable' } });
+  }
+});
+
+app.post('/v1/marketplace/appraise', async (req: Request, res: Response) => {
+  try {
+    const response = await fetch(`${STOREBOT_URL}/api/products/appraise`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(req.body),
+    });
+    const data = await response.json() as any;
+    res.json(data);
+  } catch {
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: { code: 'APPRAISAL_UNAVAILABLE', message: 'Appraisal unavailable' } });
+  }
+});
+
+app.get('/v1/marketplace/trending', async (_req: Request, res: Response) => {
+  // Trending categories based on the product-scraper heuristic categories
+  const trending = [
+    { category: 'Smartphones', icon: '\uD83D\uDCF1', avgPrice: 450, demand: 'high', examples: ['iPhone 15', 'Samsung Galaxy S24', 'Google Pixel 8'] },
+    { category: 'Laptops', icon: '\uD83D\uDCBB', avgPrice: 800, demand: 'high', examples: ['MacBook Air M3', 'ThinkPad X1', 'Dell XPS 15'] },
+    { category: 'Sneakers', icon: '\uD83D\uDC5F', avgPrice: 120, demand: 'high', examples: ['Nike Air Max', 'Jordan 1 Retro', 'Adidas Ultraboost'] },
+    { category: 'Gaming', icon: '\uD83C\uDFAE', avgPrice: 350, demand: 'medium', examples: ['PS5', 'Nintendo Switch', 'Steam Deck'] },
+    { category: 'Collectibles', icon: '\uD83C\uDFB4', avgPrice: 25, demand: 'high', examples: ['Pokemon Cards', 'Sports Cards', 'Vintage Toys'] },
+    { category: 'Audio', icon: '\uD83C\uDFA7', avgPrice: 120, demand: 'medium', examples: ['AirPods Pro', 'Sony WH-1000XM5', 'JBL Speakers'] },
+    { category: 'Cameras', icon: '\uD83D\uDCF7', avgPrice: 500, demand: 'medium', examples: ['Sony A7 IV', 'Canon R6', 'GoPro Hero'] },
+    { category: 'Watches', icon: '\u231A', avgPrice: 200, demand: 'medium', examples: ['Apple Watch', 'Seiko Presage', 'Casio G-Shock'] },
+  ];
+  res.json({ success: true, data: { categories: trending, updatedAt: new Date().toISOString() } });
+});
+
+// ============================================
+// Dashboard Stats — Real aggregate intelligence
+// ============================================
+
+app.get('/v1/dashboard/stats', async (_req: Request, res: Response) => {
+  try {
+    // Aggregate real stats from across all sectors
+    const [signalCount, journalStats, paperTradeCount, recentEventCount] = await Promise.all([
+      queryOne<{ count: string }>(`SELECT COUNT(*) as count FROM scan_results WHERE created_at > NOW() - INTERVAL '24 hours'`).catch(() => ({ count: '0' })),
+      queryOne<{ total: string; wins: string }>(`SELECT COUNT(*) as total, COUNT(*) FILTER (WHERE pnl > 0) as wins FROM journal_entries WHERE created_at > NOW() - INTERVAL '30 days'`).catch(() => ({ total: '0', wins: '0' })),
+      queryOne<{ count: string }>(`SELECT COUNT(*) as count FROM paper_trades WHERE status = 'OPEN'`).catch(() => ({ count: '0' })),
+      queryOne<{ count: string }>(`SELECT COUNT(*) as count FROM events WHERE created_at > NOW() - INTERVAL '24 hours'`).catch(() => ({ count: '0' })),
+    ]);
+
+    // Check market status
+    const mktOpen = isMarketOpen();
+
+    // Check Alpaca portfolio
+    let portfolioValue: number | null = null;
+    if (SERVER_ALPACA_CONFIGURED) {
+      try {
+        const alpacaRes = await fetch(`${SERVER_ALPACA_ENDPOINT.replace('/v2', '')}/v2/account`, {
+          headers: { 'APCA-API-KEY-ID': SERVER_ALPACA_API_KEY, 'APCA-API-SECRET-KEY': SERVER_ALPACA_SECRET_KEY },
+        });
+        if (alpacaRes.ok) {
+          const acct = await alpacaRes.json() as any;
+          portfolioValue = parseFloat(acct.portfolio_value) || null;
+        }
+      } catch { /* Alpaca unavailable */ }
+    }
+
+    const total = parseInt(journalStats?.total || '0', 10);
+    const wins = parseInt(journalStats?.wins || '0', 10);
+
+    res.json({
+      success: true,
+      data: {
+        sectors: {
+          wallStreet: {
+            activeSignals: parseInt(signalCount?.count || '0', 10),
+            openTrades: parseInt(paperTradeCount?.count || '0', 10),
+            portfolioValue,
+            marketOpen: mktOpen,
+          },
+          marketplace: { appraisalsToday: 0, trendingCategories: 8 },
+          social: { contentDrafts: 0, scheduledPosts: 0 },
+          research: { eventsToday: parseInt(recentEventCount?.count || '0', 10) },
+          ops: { systemHealthy: true },
+        },
+        performance: {
+          totalTrades: total,
+          winRate: total > 0 ? Math.round((wins / total) * 100) : 0,
+          winCount: wins,
+        },
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  } catch (error) {
+    logger.error('Dashboard stats failed', error as Error);
+    res.json({ success: true, data: { sectors: {}, performance: {}, updatedAt: new Date().toISOString() } });
+  }
 });
 
 // ============================================

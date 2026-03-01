@@ -1498,6 +1498,52 @@ class ApiClient {
       }>;
     }>('GET', '/v1/content/drafts');
   }
+
+  // ==========================================================================
+  // Marketplace — Live product search + appraisal + trending
+  // ==========================================================================
+  async searchMarketplace(query: string) {
+    return this.request<{
+      products: Array<{ title: string; price: number; currency: string; source: string; url: string; rating?: number; condition?: string; scrapedAt: string }>;
+      totalFound: number;
+      searchedAt: string;
+    }>('GET', `/v1/marketplace/search?q=${encodeURIComponent(query)}`);
+  }
+
+  async appraiseProduct(query: string) {
+    return this.request<{
+      appraisal: {
+        query: string; avgPrice: number; minPrice: number; maxPrice: number; medianPrice: number;
+        priceRange: string; recommendedPrice: number; marketDemand: string; confidence: number;
+        sources: Array<{ title: string; price: number; source: string; url: string }>;
+        appraisedAt: string;
+      };
+    }>('POST', '/v1/marketplace/appraise', { query });
+  }
+
+  async getMarketplaceTrending() {
+    return this.request<{
+      categories: Array<{ category: string; icon: string; avgPrice: number; demand: string; examples: string[] }>;
+      updatedAt: string;
+    }>('GET', '/v1/marketplace/trending');
+  }
+
+  // ==========================================================================
+  // Dashboard — Aggregate stats
+  // ==========================================================================
+  async getDashboardStats() {
+    return this.request<{
+      sectors: {
+        wallStreet?: { activeSignals: number; openTrades: number; portfolioValue: number | null; marketOpen: boolean };
+        marketplace?: { appraisalsToday: number; trendingCategories: number };
+        social?: { contentDrafts: number; scheduledPosts: number };
+        research?: { eventsToday: number };
+        ops?: { systemHealthy: boolean };
+      };
+      performance: { totalTrades: number; winRate: number; winCount: number };
+      updatedAt: string;
+    }>('GET', '/v1/dashboard/stats');
+  }
 }
 
 export const api = new ApiClient();

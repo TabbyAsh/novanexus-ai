@@ -35,64 +35,6 @@ const CATEGORIES: { id: Category; label: string; icon: string; color: string }[]
   { id: 'services', label: 'Services', icon: '🔧', color: 'text-cyan-400' },
 ];
 
-// Placeholder data used when the API hasn't returned results yet
-const SEED_OPPORTUNITIES: Opportunity[] = [
-  {
-    id: 'vr-1',
-    title: 'AAPL — Oversold RSI bounce setup',
-    category: 'stocks',
-    source: 'AI Screener',
-    currentPrice: 178.5,
-    estimatedValue: 195.0,
-    score: 87,
-    tags: ['technical', 'mean-reversion'],
-    detectedAt: new Date().toISOString(),
-  },
-  {
-    id: 'vr-2',
-    title: 'ETH/BTC ratio at 3-year support',
-    category: 'crypto',
-    source: 'Market Data',
-    currentPrice: 0.052,
-    estimatedValue: 0.065,
-    score: 74,
-    tags: ['macro', 'relative-value'],
-    detectedAt: new Date().toISOString(),
-  },
-  {
-    id: 'vr-3',
-    title: 'Vintage camera lot — 40% below market',
-    category: 'retail',
-    source: 'Marketplace Scan',
-    currentPrice: 320,
-    estimatedValue: 550,
-    score: 91,
-    tags: ['arbitrage', 'collectibles'],
-    detectedAt: new Date().toISOString(),
-  },
-  {
-    id: 'vr-4',
-    title: 'SOL — breakout from descending wedge',
-    category: 'crypto',
-    source: 'AI Screener',
-    currentPrice: 142.0,
-    estimatedValue: 168.0,
-    score: 69,
-    tags: ['technical', 'breakout'],
-    detectedAt: new Date().toISOString(),
-  },
-  {
-    id: 'vr-5',
-    title: 'Graphic design service gap — high demand niche',
-    category: 'services',
-    source: 'Content Engine',
-    currentPrice: 0,
-    estimatedValue: 500,
-    score: 62,
-    tags: ['opportunity', 'services'],
-    detectedAt: new Date().toISOString(),
-  },
-];
 
 function ScoreBadge({ score }: { score: number }) {
   const color =
@@ -120,9 +62,9 @@ function UpliftBadge({ current, estimated }: { current: number; estimated: numbe
 
 export default function ValueRadarPage() {
   const [category, setCategory] = useState<Category>('all');
-  const [opportunities, setOpportunities] = useState<Opportunity[]>(SEED_OPPORTUNITIES);
+  const [opportunities, setOpportunities] = useState<Opportunity[]>([]);
   const [watchlist, setWatchlist] = useState<Set<string>>(new Set());
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [showWatchlistOnly, setShowWatchlistOnly] = useState(false);
 
   // Fetch live data from backend (falls back to seed data)
