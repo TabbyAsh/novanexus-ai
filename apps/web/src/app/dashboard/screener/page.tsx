@@ -918,9 +918,8 @@ export default function ScreenerPage() {
     }
   }, [signals, settings, lastScan]);
 
-  // Initial load
+  // Initial load — do NOT auto-scan; user clicks "Run AI Scan" explicitly
   useEffect(() => {
-    runScan();
     loadPaperStats();
     loadAlpacaStatus();
     loadUsage();
@@ -1528,24 +1527,41 @@ export default function ScreenerPage() {
           )}
           
           {signals === null ? (
-            <div className="text-center py-12 text-gray-400">
-              <p className="text-4xl mb-4">{scanStatus.scanning ? '🔎' : '⚠️'}</p>
-              <p className="mb-4">
-                {scanStatus.scanning
-                  ? 'Scanning…'
-                  : error
-                    ? 'Unavailable — unable to load signals. Please retry.'
-                    : 'Loading…'}
-              </p>
-              {error && !scanStatus.scanning && (
-                <motion.button
-                  onClick={runScan}
-                  whileHover={{ scale: 1.02 }}
-                  whileTap={{ scale: 0.98 }}
-                  className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-semibold text-sm"
-                >
-                  Retry Scan
-                </motion.button>
+            <div className="text-center py-16 text-gray-400">
+              {scanStatus.scanning ? (
+                <>
+                  <p className="text-4xl mb-4">🔎</p>
+                  <p className="mb-4">Scanning…</p>
+                </>
+              ) : error ? (
+                <>
+                  <p className="text-4xl mb-4">⚠️</p>
+                  <p className="mb-4">Scan failed — {error}</p>
+                  <motion.button
+                    onClick={runScan}
+                    whileHover={{ scale: 1.02 }}
+                    whileTap={{ scale: 0.98 }}
+                    className="px-6 py-3 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-semibold text-sm"
+                  >
+                    Retry Scan
+                  </motion.button>
+                </>
+              ) : (
+                <>
+                  <p className="text-5xl mb-4">🧠</p>
+                  <p className="text-xl font-semibold text-white mb-2">Ready to Scan</p>
+                  <p className="text-gray-400 mb-6 max-w-md mx-auto">
+                    Configure your filters above, then hit Run AI Scan to analyze {settings.maxStocks}+ stocks for trading signals.
+                  </p>
+                  <motion.button
+                    onClick={runScan}
+                    whileHover={{ scale: 1.05 }}
+                    whileTap={{ scale: 0.95 }}
+                    className="px-8 py-4 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-bold text-lg hover:shadow-lg hover:shadow-cyan-500/30 transition-all"
+                  >
+                    🧠 Run AI Scan Now
+                  </motion.button>
+                </>
               )}
             </div>
           ) : signals.length === 0 && !scanStatus.scanning ? (

@@ -1535,11 +1535,11 @@ class ApiClient {
   }
 
   // ==========================================================================
-  // Marketplace — Live product search + appraisal + trending
+  // Marketplace — Live product search + appraisal + flip analysis + trending
   // ==========================================================================
   async searchMarketplace(query: string) {
     return this.request<{
-      products: Array<{ title: string; price: number; currency: string; source: string; url: string; rating?: number; condition?: string; scrapedAt: string }>;
+      products: Array<{ title: string; price: number; currency: string; source: string; url: string; imageUrl?: string; rating?: number; condition?: string; scrapedAt: string }>;
       totalFound: number;
       searchedAt: string;
     }>('GET', `/v1/marketplace/search?q=${encodeURIComponent(query)}`);
@@ -1548,10 +1548,26 @@ class ApiClient {
   async appraiseProduct(query: string) {
     return this.request<{
       appraisal: {
-        query: string; avgPrice: number; minPrice: number; maxPrice: number; medianPrice: number;
-        priceRange: string; recommendedPrice: number; marketDemand: string; confidence: number;
-        sources: Array<{ title: string; price: number; source: string; url: string }>;
+        query: string;
+        avgPrice: number;
+        minPrice: number;
+        maxPrice: number;
+        medianPrice: number;
+        priceRange: string;
+        recommendedBuyPrice: number;
+        recommendedSellPrice: number;
+        recommendedPrice: number;
+        estimatedProfit: number;
+        estimatedProfitPercent: number;
+        platformFees: number;
+        shippingEstimate: number;
+        marketDemand: 'low' | 'medium' | 'high';
+        confidence: number;
+        flipVerdict: 'strong-buy' | 'buy' | 'hold' | 'pass';
+        flipExplanation: string;
+        sources: Array<{ title: string; price: number; source: string; url: string; condition?: string; imageUrl?: string }>;
         appraisedAt: string;
+        provenance: { method: string; sourceCount?: number; category?: string; note: string };
       };
     }>('POST', '/v1/marketplace/appraise', { query });
   }
@@ -1561,6 +1577,101 @@ class ApiClient {
       categories: Array<{ category: string; icon: string; avgPrice: number; demand: string; examples: string[] }>;
       updatedAt: string;
     }>('GET', '/v1/marketplace/trending');
+  }
+
+  // ==========================================================================
+  // Social Plans — Content plan generation + export
+  // ==========================================================================
+  async generateSocialPlan(params: { name?: string; frequency?: string; platforms?: string[]; niche?: string; days?: number }) {
+    return this.request<{
+      plan: {
+        id: string;
+        name: string;
+        frequency: string;
+        platforms: string[];
+        niche: string;
+        posts: Array<{
+          id: string;
+          platform: string;
+          contentType: string;
+          caption: string;
+          hashtags: string[];
+          imagePrompt?: string;
+          optimalTime: string;
+          dayOfWeek: string;
+          predictedEngagement: number;
+        }>;
+        createdAt: string;
+      };
+      message: string;
+    }>('POST', '/v1/social/plan/generate', params);
+  }
+
+  async getSocialPlans() {
+    return this.request<{
+      plans: Array<{ id: string; name: string; frequency: string; platforms: string[]; niche: string; postCount: number; createdAt: string }>;
+      count: number;
+    }>('GET', '/v1/social/plans');
+  }
+
+  async getSocialPlan(planId: string) {
+    return this.request<{ plan: any }>('GET', `/v1/social/plans/${planId}`);
+  }
+
+  async exportSocialPlan(planId: string) {
+    return this.request<{ csv: string; postCount: number; downloadUrl: string }>('GET', `/v1/social/plan/export/${planId}`);
+  }
+
+  // ==========================================================================
+  // Dropshipping — Listing generation + export
+  // ==========================================================================
+  async generateDropshipListing(params: { productIdea: string; niche?: string }) {
+    return this.request<{
+      draft: {
+        id: string;
+        productIdea: string;
+        title: string;
+        description: string;
+        category: string;
+        suggestedPrice: number;
+        priceRange: { min: number; max: number };
+        imageRequirements: string[];
+        keywords: string[];
+        targetMarketplace: string;
+        profitMargin: number;
+        confidence: number;
+        createdAt: string;
+      };
+      message: string;
+    }>('POST', '/v1/dropship/generate', params);
+  }
+
+  async getDropshipDrafts() {
+    return this.request<{
+      drafts: Array<{
+        id: string;
+        productIdea: string;
+        title: string;
+        category: string;
+        suggestedPrice: number;
+        profitMargin: number;
+        confidence: number;
+        createdAt: string;
+      }>;
+      count: number;
+    }>('GET', '/v1/dropship/drafts');
+  }
+
+  async getDropshipDraft(draftId: string) {
+    return this.request<{ draft: any }>('GET', `/v1/dropship/drafts/${draftId}`);
+  }
+
+  async exportDropshipDraft(draftId: string) {
+    return this.request<{ csv: string; downloadUrl: string }>('GET', `/v1/dropship/export/${draftId}`);
+  }
+
+  async exportAllDropshipDrafts() {
+    return this.request<{ csv: string; count: number }>('GET', '/v1/dropship/export');
   }
 
   // ==========================================================================

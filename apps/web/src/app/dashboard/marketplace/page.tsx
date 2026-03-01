@@ -1,924 +1,473 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { api } from '@/lib/api';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import {
-  Package,
-  DollarSign,
-  TrendingUp,
-  AlertTriangle,
-  RefreshCw,
-  CheckCircle,
-  Zap,
-  ArrowUp,
-  ArrowDown,
-  Boxes,
-  BarChart3,
-  Target,
-  Search,
-  ExternalLink,
+  Search, TrendingUp, RefreshCw, ExternalLink, DollarSign,
+  ArrowRight, CheckCircle, Package, Tag, Trash2, ChevronDown,
 } from 'lucide-react';
 
+// ================================================================
 // Types
-interface Product {
-  id: string;
-  sku: string;
-  name: string;
-  description: string;
-  category: string;
-  base_cost: number;
-  current_price: number;
-  min_price: number;
-  max_price: number;
-  stock_quantity: number;
-  reorder_point: number;
-}
+// ================================================================
 
-interface PriceRecommendation {
-  product_id: string;
-  current_price: number;
-  recommended_price: number;
-  reason: string;
-  confidence: number;
-  projected_margin: number;
-  projected_revenue_change: number;
-}
-
-interface InventoryAlert {
-  id: string;
-  productId: string;
-  sku: string;
+interface SearchResult {
   title: string;
-  alertType: string;
-  message: string;
-  severity: 'HIGH' | 'MEDIUM' | 'LOW';
+  price: number;
+  currency: string;
+  source: string;
+  url: string;
+  imageUrl?: string;
+  condition?: string;
+  scrapedAt: string;
 }
 
-interface ProductAppraisal {
+interface Appraisal {
   query: string;
   avgPrice: number;
   minPrice: number;
   maxPrice: number;
   medianPrice: number;
   priceRange: string;
-  recommendedPrice: number;
+  recommendedBuyPrice: number;
+  recommendedSellPrice: number;
+  estimatedProfit: number;
+  estimatedProfitPercent: number;
+  platformFees: number;
+  shippingEstimate: number;
   marketDemand: 'low' | 'medium' | 'high';
   confidence: number;
-  sources: Array<{
-    title: string;
-    price: number;
-    source: string;
-    url: string;
-    rating?: number;
-    condition?: string;
-  }>;
-  appraisedAt: string;
+  flipVerdict: 'strong-buy' | 'buy' | 'hold' | 'pass';
+  flipExplanation: string;
+  sources: SearchResult[];
+  provenance: { method: string; sourceCount?: number; category?: string; note: string };
 }
 
+type PipelineStage = 'candidate' | 'verified' | 'acquired' | 'listed' | 'sold';
+interface PipelineItem {
+  id: string;
+  name: string;
+  buyPrice: number;
+  sellPrice: number | null;
+  stage: PipelineStage;
+  addedAt: string;
+  notes: string;
+}
+
+type Tab = 'find' | 'appraise' | 'pipeline';
+
+const STAGES: { id: PipelineStage; label: string; icon: string; color: string }[] = [
+  { id: 'candidate', label: 'Candidate', icon: '🔍', color: 'text-blue-400 bg-blue-500/20' },
+  { id: 'verified', label: 'Verified', icon: '✅', color: 'text-green-400 bg-green-500/20' },
+  { id: 'acquired', label: 'Acquired', icon: '📦', color: 'text-yellow-400 bg-yellow-500/20' },
+  { id: 'listed', label: 'Listed', icon: '🏷️', color: 'text-purple-400 bg-purple-500/20' },
+  { id: 'sold', label: 'Sold', icon: '💰', color: 'text-emerald-400 bg-emerald-500/20' },
+];
+
+const VERDICT_STYLES: Record<string, string> = {
+  'strong-buy': 'bg-green-500/20 text-green-300 border-green-500/40',
+  buy: 'bg-emerald-500/20 text-emerald-300 border-emerald-500/40',
+  hold: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+  pass: 'bg-red-500/20 text-red-300 border-red-500/40',
+};
+
+// Pipeline localStorage helpers
+function loadPipeline(): PipelineItem[] {
+  if (typeof window === 'undefined') return [];
+  try { return JSON.parse(localStorage.getItem('nova_flip_pipeline') || '[]'); } catch { return []; }
+}
+function savePipeline(items: PipelineItem[]) {
+  if (typeof window !== 'undefined') localStorage.setItem('nova_flip_pipeline', JSON.stringify(items));
+}
+
+// ================================================================
+// Component
+// ================================================================
 
 export default function MarketplaceDashboard() {
-  const [products, setProducts] = useState<Product[] | null>(null);
-  const [recommendations, setRecommendations] = useState<PriceRecommendation[] | null>(null);
-  const [alerts, setAlerts] = useState<InventoryAlert[] | null>(null);
-  const [loadError, setLoadError] = useState<string | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [activeTab, setActiveTab] = useState<Tab>('find');
 
-  type MarketplaceTab = 'search' | 'products' | 'pricing' | 'appraisal' | 'inventory';
-  const [activeTab, setActiveTab] = useState<MarketplaceTab>('search');
+  // Search
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<SearchResult[]>([]);
+  const [isSearching, setIsSearching] = useState(false);
 
-  const [applyingPrice, setApplyingPrice] = useState<string | null>(null);
+  // Appraise
   const [appraisalQuery, setAppraisalQuery] = useState('');
-  const [appraisal, setAppraisal] = useState<ProductAppraisal | null>(null);
-  const [appraisalError, setAppraisalError] = useState<string | null>(null);
+  const [appraisal, setAppraisal] = useState<Appraisal | null>(null);
   const [isAppraising, setIsAppraising] = useState(false);
 
-  // Live search + trending state
-  const [searchQuery, setSearchQuery] = useState('');
-  const [searchResults, setSearchResults] = useState<Array<{ title: string; price: number; currency: string; source: string; url: string; rating?: number; condition?: string; scrapedAt: string }>>([]);
-  const [isSearching, setIsSearching] = useState(false);
-  const [trendingData, setTrendingData] = useState<Array<{ category: string; icon: string; avgPrice: number; demand: string; examples: string[] }>>([]);
-  const [isTrendingLoading, setIsTrendingLoading] = useState(true);
+  // Trending
+  const [trending, setTrending] = useState<Array<{ category: string; icon: string; avgPrice: number; demand: string; examples: string[] }>>([]);
 
-  const loadData = useCallback(async () => {
-    setIsLoading(true);
-    setLoadError(null);
+  // Pipeline
+  const [pipeline, setPipeline] = useState<PipelineItem[]>([]);
 
-    const [productsRes, pricingRes, alertsRes] = await Promise.all([
-      api.getStoreCatalog(),
-      api.analyzeStorePricing(),
-      api.getInventoryAlerts(),
-    ]);
-
-    const errors: string[] = [];
-
-    if (productsRes.success) {
-      setProducts(productsRes.data?.products ?? []);
-    } else {
-      setProducts(null);
-      errors.push(productsRes.error?.message ?? 'Products unavailable');
-    }
-
-    if (pricingRes.success) {
-      setRecommendations(pricingRes.data?.recommendations ?? []);
-    } else {
-      setRecommendations(null);
-      errors.push(pricingRes.error?.message ?? 'Pricing recommendations unavailable');
-    }
-
-    if (alertsRes.success) {
-      setAlerts(alertsRes.data?.alerts ?? []);
-    } else {
-      setAlerts(null);
-      errors.push(alertsRes.error?.message ?? 'Inventory alerts unavailable');
-    }
-
-    setLoadError(errors[0] ?? null);
-    setIsLoading(false);
-  }, []);
-
-  const runPricingAnalysis = async () => {
-    setIsAnalyzing(true);
-    setLoadError(null);
-
-    try {
-      const res = await api.analyzeStorePricing();
-      if (res.success) {
-        setRecommendations(res.data?.recommendations ?? []);
-      } else {
-        setRecommendations(null);
-        setLoadError(res.error?.message ?? 'Pricing analysis unavailable');
-      }
-    } finally {
-      setIsAnalyzing(false);
-    }
-  };
-
-  const applyPrice = async (productId: string, newPrice: number, reason: string) => {
-    setApplyingPrice(productId);
-    setLoadError(null);
-
-    try {
-      const res = await api.applyStorePrice({ productId, newPrice, reason });
-      if (!res.success) {
-        setLoadError(res.error?.message ?? 'Failed to apply price');
-      }
-
-      // Refresh data after applying
-      await loadData();
-    } finally {
-      setApplyingPrice(null);
-    }
-  };
-
-  const appraiseItem = async () => {
-    if (!appraisalQuery.trim()) return;
-
-    setIsAppraising(true);
-    setAppraisal(null);
-    setAppraisalError(null);
-
-    try {
-      const res = await api.appraiseStoreProduct(appraisalQuery);
-      if (res.success && res.data?.appraisal) {
-        setAppraisal(res.data.appraisal);
-        return;
-      }
-
-      setAppraisalError(res.error?.message ?? 'Appraisal unavailable');
-    } finally {
-      setIsAppraising(false);
-    }
-  };
-
+  // Load pipeline + trending on mount
   useEffect(() => {
-    loadData();
-  }, [loadData]);
-
-  // Load trending categories on mount
-  useEffect(() => {
+    setPipeline(loadPipeline());
     (async () => {
-      setIsTrendingLoading(true);
       try {
         const res = await api.getMarketplaceTrending();
-        if (res.success && res.data?.categories) {
-          setTrendingData(res.data.categories);
-        }
-      } catch (e) {
-        console.error('Trending load error:', e);
-      } finally {
-        setIsTrendingLoading(false);
-      }
+        if (res.success && res.data?.categories) setTrending(res.data.categories);
+      } catch { /* ok */ }
     })();
   }, []);
 
-  const searchProducts = async (overrideQuery?: string) => {
-    const q = overrideQuery || searchQuery;
-    if (!q.trim()) return;
-    if (overrideQuery) setSearchQuery(overrideQuery);
+  // Search handler
+  const handleSearch = useCallback(async (q?: string) => {
+    const query = q || searchQuery;
+    if (!query.trim()) return;
+    if (q) setSearchQuery(q);
     setIsSearching(true);
     try {
-      const res = await api.searchMarketplace(q);
-      if (res.success && res.data?.products) {
-        setSearchResults(res.data.products);
-      }
-    } catch (e) {
-      console.error('Search error:', e);
-    } finally {
-      setIsSearching(false);
-    }
+      const res = await api.searchMarketplace(query);
+      if (res.success && res.data?.products) setSearchResults(res.data.products);
+      else setSearchResults([]);
+    } catch { setSearchResults([]); }
+    finally { setIsSearching(false); }
+  }, [searchQuery]);
+
+  // Appraise handler
+  const handleAppraise = useCallback(async (q?: string) => {
+    const query = q || appraisalQuery;
+    if (!query.trim()) return;
+    if (q) setAppraisalQuery(q);
+    setIsAppraising(true);
+    setAppraisal(null);
+    try {
+      const res = await api.appraiseProduct(query);
+      if (res.success && res.data?.appraisal) setAppraisal(res.data.appraisal as unknown as Appraisal);
+    } catch { /* ok */ }
+    finally { setIsAppraising(false); }
+  }, [appraisalQuery]);
+
+  // Quick appraise from search result
+  const quickAppraise = (title: string) => {
+    setAppraisalQuery(title);
+    setActiveTab('appraise');
+    handleAppraise(title);
   };
 
-  const formatCurrency = (value: number) => {
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(value);
+  // Pipeline helpers
+  const addToPipeline = (name: string, buyPrice: number) => {
+    const item: PipelineItem = { id: Date.now().toString(), name, buyPrice, sellPrice: null, stage: 'candidate', addedAt: new Date().toISOString(), notes: '' };
+    const updated = [item, ...pipeline];
+    setPipeline(updated);
+    savePipeline(updated);
+  };
+  const updateStage = (id: string, stage: PipelineStage) => {
+    const updated = pipeline.map(p => p.id === id ? { ...p, stage } : p);
+    setPipeline(updated);
+    savePipeline(updated);
+  };
+  const removePipelineItem = (id: string) => {
+    const updated = pipeline.filter(p => p.id !== id);
+    setPipeline(updated);
+    savePipeline(updated);
   };
 
-  // Calculate totals
-  const totalProducts = products === null ? null : products.length;
-  const totalInventoryValue = products ? products.reduce((sum, p) => sum + (p.current_price * p.stock_quantity), 0) : null;
-  const lowStockProducts = products ? products.filter(p => p.stock_quantity <= p.reorder_point).length : null;
-  const avgMargin = products && products.length > 0
-    ? products.reduce((sum, p) => sum + ((p.current_price - p.base_cost) / p.current_price), 0) / products.length * 100
-    : null;
-
-  // Match recommendations to products
-  const productRecommendations = recommendations
-    ? recommendations.map(rec => {
-      const product = products?.find(p => p.id === rec.product_id);
-      return { ...rec, product };
-    })
-    : null;
-
-  const actionableRecommendations = productRecommendations
-    ? productRecommendations.filter(rec => Math.abs(rec.recommended_price - rec.current_price) > 1)
-    : null;
+  const pipelineTotalInvested = pipeline.filter(p => p.stage === 'acquired' || p.stage === 'listed').reduce((s, p) => s + p.buyPrice, 0);
+  const pipelineSoldProfit = pipeline.filter(p => p.stage === 'sold' && p.sellPrice).reduce((s, p) => s + ((p.sellPrice || 0) - p.buyPrice), 0);
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-      {/* Header */}
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-3xl font-bold text-white">Marketplace Hub</h1>
-          <p className="text-gray-400 mt-1">
-            AI-powered pricing optimization and inventory management
-          </p>
-        </div>
-        <div className="flex gap-3">
-          <button
-            onClick={runPricingAnalysis}
-            disabled={isAnalyzing}
-            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition flex items-center gap-2"
-          >
-            <Zap className={`w-4 h-4 ${isAnalyzing ? 'animate-pulse' : ''}`} />
-            {isAnalyzing ? 'Analyzing...' : 'Run AI Analysis'}
-          </button>
-          <button
-            onClick={loadData}
-            disabled={isLoading}
-            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-            Refresh
-          </button>
-        </div>
-      </div>
-
-      {loadError && (
-        <div className="mb-6 p-4 bg-red-500/10 border border-red-500/30 rounded-xl text-sm text-red-200 flex items-center gap-2">
-          <AlertTriangle className="w-4 h-4" />
-          <span>{loadError}</span>
-        </div>
-      )}
-
-      {/* Stats Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mb-8">
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-blue-500/20 rounded-lg">
-              <Package className="w-5 h-5 text-blue-400" />
-            </div>
-            <span className="text-gray-400 text-sm">Total Products</span>
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-3xl font-bold text-white">Marketplace <span className="bg-gradient-to-r from-pink-400 to-rose-400 bg-clip-text text-transparent">Flip Hub</span></h1>
+            <p className="text-gray-400 mt-1">Find underpriced items → Appraise → Calculate flip profit → Track your pipeline</p>
           </div>
-          <p className="text-2xl font-bold text-white">{totalProducts === null ? '—' : totalProducts}</p>
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-green-500/20 rounded-lg">
-              <DollarSign className="w-5 h-5 text-green-400" />
-            </div>
-            <span className="text-gray-400 text-sm">Inventory Value</span>
-          </div>
-          <p className="text-2xl font-bold text-green-400">
-            {typeof totalInventoryValue === 'number' ? formatCurrency(totalInventoryValue) : '—'}
-          </p>
+        {/* Tabs */}
+        <div className="flex gap-2">
+          {([
+            { id: 'find' as Tab, label: 'Find & Search', icon: Search },
+            { id: 'appraise' as Tab, label: 'Appraise & Flip', icon: DollarSign },
+            { id: 'pipeline' as Tab, label: `Pipeline (${pipeline.length})`, icon: Package },
+          ]).map(tab => (
+            <button key={tab.id} onClick={() => setActiveTab(tab.id)}
+              className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${activeTab === tab.id ? 'bg-pink-600 text-white' : 'bg-gray-800 text-gray-400 hover:bg-gray-700'}`}>
+              <tab.icon className="w-4 h-4" /> {tab.label}
+            </button>
+          ))}
         </div>
 
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-purple-500/20 rounded-lg">
-              <Target className="w-5 h-5 text-purple-400" />
-            </div>
-            <span className="text-gray-400 text-sm">Avg Margin</span>
-          </div>
-          <p className="text-2xl font-bold text-purple-400">
-            {typeof avgMargin === 'number' ? `${avgMargin.toFixed(1)}%` : '—'}
-          </p>
-        </div>
-
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className={`p-2 ${typeof lowStockProducts === 'number' && lowStockProducts > 0 ? 'bg-yellow-500/20' : 'bg-gray-500/20'} rounded-lg`}>
-              <AlertTriangle className={`w-5 h-5 ${typeof lowStockProducts === 'number' && lowStockProducts > 0 ? 'text-yellow-400' : 'text-gray-400'}`} />
-            </div>
-            <span className="text-gray-400 text-sm">Low Stock</span>
-          </div>
-          <p className={`text-2xl font-bold ${typeof lowStockProducts === 'number' && lowStockProducts > 0 ? 'text-yellow-400' : 'text-white'}`}>
-            {lowStockProducts === null ? '—' : lowStockProducts}
-          </p>
-        </div>
-
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
-          <div className="flex items-center gap-3 mb-2">
-            <div className="p-2 bg-cyan-500/20 rounded-lg">
-              <Zap className="w-5 h-5 text-cyan-400" />
-            </div>
-            <span className="text-gray-400 text-sm">Price Actions</span>
-          </div>
-          <p className="text-2xl font-bold text-cyan-400">{actionableRecommendations === null ? '—' : actionableRecommendations.length}</p>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="flex gap-2 mb-6">
-        {(
-          [
-            { id: 'search', label: 'Live Search', icon: Search },
-            { id: 'products', label: 'Products', icon: Package },
-            { id: 'pricing', label: 'Pricing AI', icon: TrendingUp },
-            { id: 'appraisal', label: 'Appraise Item', icon: Target },
-            { id: 'inventory', label: 'Inventory', icon: Boxes },
-          ] as const satisfies ReadonlyArray<{ id: MarketplaceTab; label: string; icon: typeof Package }>
-        ).map((tab) => (
-          <button
-            key={tab.id}
-            onClick={() => setActiveTab(tab.id)}
-            className={`px-4 py-2 rounded-lg font-medium transition flex items-center gap-2 ${
-              activeTab === tab.id
-                ? 'bg-blue-600 text-white'
-                : 'bg-gray-800 text-gray-400 hover:bg-gray-700'
-            }`}
-          >
-            <tab.icon className="w-4 h-4" />
-            {tab.label}
-          </button>
-        ))}
-      </div>
-
-      {/* Tab Content */}
-      {activeTab === 'search' && (
-        <div className="space-y-6">
-          {/* Search Bar */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
-              <Search className="w-5 h-5 text-cyan-400" />
-              Live Marketplace Search
-            </h2>
-            <p className="text-gray-400 text-sm mb-4">Search real-time listings from eBay and other marketplaces.</p>
-
-            <div className="flex gap-3">
-              <input
-                type="text"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && searchProducts()}
-                placeholder="Search for anything — electronics, sneakers, collectibles..."
-                className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500"
-              />
-              <button
-                onClick={() => searchProducts()}
-                disabled={isSearching || !searchQuery.trim()}
-                className="px-6 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg transition flex items-center gap-2"
-              >
-                {isSearching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
-                {isSearching ? 'Searching...' : 'Search'}
-              </button>
-            </div>
-          </div>
-
-          {/* Search Results */}
-          {searchResults.length > 0 && (
+        {/* ========== FIND TAB ========== */}
+        {activeTab === 'find' && (
+          <div className="space-y-6">
+            {/* Search Bar */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-              <h3 className="text-white font-semibold mb-4">{searchResults.length} Results</h3>
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                {searchResults.map((product, idx) => (
-                  <a key={idx} href={product.url} target="_blank" rel="noopener noreferrer" className="block bg-gray-800 hover:bg-gray-700/80 border border-gray-700 hover:border-cyan-500/30 rounded-xl p-4 transition">
-                    <p className="text-white font-medium text-sm line-clamp-2 mb-2">{product.title}</p>
-                    <div className="flex items-center justify-between">
-                      <span className="text-green-400 font-bold text-lg">${product.price.toFixed(2)}</span>
-                      <div className="flex items-center gap-2 text-xs text-gray-500">
-                        <span className="capitalize">{product.source}</span>
-                        {product.condition && <span className="px-1.5 py-0.5 bg-gray-700 rounded">{product.condition}</span>}
-                        {product.rating && <span>★ {product.rating.toFixed(1)}</span>}
-                      </div>
-                    </div>
-                    <div className="flex items-center gap-1 mt-2 text-xs text-cyan-400">
-                      <ExternalLink className="w-3 h-3" /> View listing
-                    </div>
-                  </a>
-                ))}
+              <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                <Search className="w-5 h-5 text-cyan-400" /> Live eBay Search
+              </h2>
+              <p className="text-gray-400 text-sm mb-4">Search real-time Buy It Now listings. Find underpriced items to flip.</p>
+              <div className="flex gap-3">
+                <input type="text" value={searchQuery}
+                  onChange={e => setSearchQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleSearch()}
+                  placeholder="e.g. iPhone 15 Pro Max, Nintendo Switch, Jordan 4 Retro..."
+                  className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500" />
+                <button onClick={() => handleSearch()} disabled={isSearching || !searchQuery.trim()}
+                  className="px-6 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg transition flex items-center gap-2">
+                  {isSearching ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
+                  {isSearching ? 'Searching...' : 'Search eBay'}
+                </button>
               </div>
             </div>
-          )}
 
-          {/* Trending Categories */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
-              <TrendingUp className="w-5 h-5 text-purple-400" /> Trending Categories
-            </h3>
-            {isTrendingLoading ? (
-              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading trending data...</div>
-            ) : trendingData.length === 0 ? (
-              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No trending data available.</div>
-            ) : (
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
-                {trendingData.map((cat) => (
-                  <button
-                    key={cat.category}
-                    onClick={() => searchProducts(cat.examples[0] || cat.category)}
-                    className="bg-gray-800 hover:bg-gray-700/80 border border-gray-700 hover:border-purple-500/30 rounded-xl p-4 text-left transition"
-                  >
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className="text-2xl">{cat.icon}</span>
-                      <span className="text-white font-medium">{cat.category}</span>
+            {/* Results */}
+            {searchResults.length > 0 && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <h3 className="text-white font-semibold mb-4">{searchResults.length} Listings Found</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                  {searchResults.map((product, idx) => (
+                    <div key={idx} className="bg-gray-800 border border-gray-700 rounded-xl p-4 hover:border-cyan-500/30 transition">
+                      <p className="text-white font-medium text-sm line-clamp-2 mb-2">{product.title}</p>
+                      <div className="flex items-center justify-between mb-3">
+                        <span className="text-green-400 font-bold text-lg">${product.price.toFixed(2)}</span>
+                        <div className="flex items-center gap-2 text-xs text-gray-500">
+                          <span className="capitalize">{product.source}</span>
+                          {product.condition && <span className="px-1.5 py-0.5 bg-gray-700 rounded">{product.condition}</span>}
+                        </div>
+                      </div>
+                      <div className="flex gap-2">
+                        <button onClick={() => quickAppraise(product.title)}
+                          className="flex-1 py-2 bg-pink-600/80 hover:bg-pink-600 text-white text-xs rounded-lg transition flex items-center justify-center gap-1">
+                          <DollarSign className="w-3 h-3" /> Appraise
+                        </button>
+                        <button onClick={() => addToPipeline(product.title, product.price)}
+                          className="flex-1 py-2 bg-blue-600/80 hover:bg-blue-600 text-white text-xs rounded-lg transition flex items-center justify-center gap-1">
+                          <Package className="w-3 h-3" /> Add to Pipeline
+                        </button>
+                        <a href={product.url} target="_blank" rel="noopener noreferrer"
+                          className="py-2 px-3 bg-gray-700 hover:bg-gray-600 text-white text-xs rounded-lg transition flex items-center gap-1">
+                          <ExternalLink className="w-3 h-3" />
+                        </a>
+                      </div>
                     </div>
-                    <p className="text-green-400 font-bold">${cat.avgPrice.toFixed(0)} avg</p>
-                    <p className="text-gray-500 text-xs mt-1 capitalize">{cat.demand} demand</p>
-                    <p className="text-gray-600 text-xs mt-1">{cat.examples.slice(0, 2).join(', ')}</p>
-                  </button>
-                ))}
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Trending */}
+            {trending.length > 0 && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+                <h3 className="text-white font-semibold mb-4 flex items-center gap-2">
+                  <TrendingUp className="w-5 h-5 text-purple-400" /> Trending Flip Categories
+                </h3>
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  {trending.map(cat => (
+                    <button key={cat.category} onClick={() => handleSearch(cat.examples[0] || cat.category)}
+                      className="bg-gray-800 hover:bg-gray-700/80 border border-gray-700 hover:border-purple-500/30 rounded-xl p-4 text-left transition">
+                      <div className="flex items-center gap-2 mb-2">
+                        <span className="text-2xl">{cat.icon}</span>
+                        <span className="text-white font-medium">{cat.category}</span>
+                      </div>
+                      <p className="text-green-400 font-bold">${cat.avgPrice.toFixed(0)} avg</p>
+                      <p className="text-gray-500 text-xs mt-1 capitalize">{cat.demand} demand</p>
+                    </button>
+                  ))}
+                </div>
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {activeTab === 'products' && (
-        <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-          <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-            <Package className="w-5 h-5 text-blue-400" />
-            Product Catalog
-          </h2>
-
-          {isLoading ? (
-            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading products...</div>
-          ) : products === null ? (
-            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Products unavailable.</div>
-          ) : products.length === 0 ? (
-            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No products found.</div>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full">
-                <thead>
-                  <tr className="text-left text-gray-400 text-sm border-b border-gray-800">
-                    <th className="pb-3">SKU</th>
-                    <th className="pb-3">Product</th>
-                    <th className="pb-3">Category</th>
-                    <th className="pb-3">Cost</th>
-                    <th className="pb-3">Price</th>
-                    <th className="pb-3">Margin</th>
-                    <th className="pb-3">Stock</th>
-                    <th className="pb-3">Status</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-800">
-                  {products.map((product) => {
-                    const margin = ((product.current_price - product.base_cost) / product.current_price) * 100;
-                    const isLowStock = product.stock_quantity <= product.reorder_point;
-
-                    return (
-                      <tr key={product.id} className="text-white">
-                        <td className="py-3 font-mono text-sm text-gray-400">{product.sku}</td>
-                        <td className="py-3">
-                          <div>
-                            <p className="font-medium">{product.name}</p>
-                            <p className="text-gray-500 text-xs">{product.description}</p>
-                          </div>
-                        </td>
-                        <td className="py-3">
-                          <span className="px-2 py-1 bg-gray-800 rounded text-sm">{product.category}</span>
-                        </td>
-                        <td className="py-3 text-gray-400">{formatCurrency(product.base_cost)}</td>
-                        <td className="py-3 font-medium text-green-400">{formatCurrency(product.current_price)}</td>
-                        <td className="py-3">
-                          <span className={`${margin >= 30 ? 'text-green-400' : margin >= 20 ? 'text-yellow-400' : 'text-red-400'}`}>
-                            {margin.toFixed(1)}%
-                          </span>
-                        </td>
-                        <td className="py-3">{product.stock_quantity}</td>
-                        <td className="py-3">
-                          {isLowStock ? (
-                            <span className="px-2 py-1 bg-yellow-500/20 text-yellow-400 text-xs rounded flex items-center gap-1 w-fit">
-                              <AlertTriangle className="w-3 h-3" />
-                              Low Stock
-                            </span>
-                          ) : (
-                            <span className="px-2 py-1 bg-green-500/20 text-green-400 text-xs rounded flex items-center gap-1 w-fit">
-                              <CheckCircle className="w-3 h-3" />
-                              In Stock
-                            </span>
-                          )}
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === 'pricing' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Price Recommendations */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Zap className="w-5 h-5 text-yellow-400" />
-              AI Price Recommendations
-            </h2>
-
-            <div className="space-y-4">
-              {isLoading ? (
-                <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading recommendations...</div>
-              ) : productRecommendations === null ? (
-                <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Recommendations unavailable.</div>
-              ) : productRecommendations.length === 0 ? (
-                <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No recommendations.</div>
-              ) : (
-                productRecommendations.map((rec) => {
-                  const priceDiff = rec.recommended_price - rec.current_price;
-                  const isIncrease = priceDiff > 0;
-                  const showAction = Math.abs(priceDiff) > 1;
-
-                  return (
-                    <div key={rec.product_id} className="p-4 bg-gray-800 rounded-lg">
-                      <div className="flex items-start justify-between mb-3">
-                        <div>
-                          <p className="text-white font-medium">{rec.product?.name || rec.product_id}</p>
-                          <p className="text-gray-500 text-xs">{rec.product?.sku}</p>
-                        </div>
-                        <div className={`flex items-center gap-1 px-2 py-1 rounded text-sm ${
-                          isIncrease ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
-                        }`}>
-                          {isIncrease ? <ArrowUp className="w-3 h-3" /> : <ArrowDown className="w-3 h-3" />}
-                          {Math.abs(priceDiff).toFixed(2)}
-                        </div>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4 mb-3">
-                        <div>
-                          <p className="text-gray-500 text-xs">Current</p>
-                          <p className="text-white font-medium">{formatCurrency(rec.current_price)}</p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500 text-xs">Recommended</p>
-                          <p className={`font-medium ${isIncrease ? 'text-green-400' : 'text-red-400'}`}>
-                            {formatCurrency(rec.recommended_price)}
-                          </p>
-                        </div>
-                        <div>
-                          <p className="text-gray-500 text-xs">Proj. Margin</p>
-                          <p className="text-purple-400 font-medium">{rec.projected_margin}%</p>
-                        </div>
-                      </div>
-
-                      <p className="text-gray-400 text-sm mb-3">{rec.reason}</p>
-
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <div className="w-16 bg-gray-700 rounded-full h-2">
-                            <div
-                              className="bg-blue-500 h-2 rounded-full"
-                              style={{ width: `${rec.confidence}%` }}
-                            />
-                          </div>
-                          <span className="text-gray-500 text-xs">{rec.confidence}% confidence</span>
-                        </div>
-
-                        {showAction && (
-                          <button
-                            onClick={() => applyPrice(rec.product_id, rec.recommended_price, rec.reason)}
-                            disabled={applyingPrice === rec.product_id}
-                            className="px-3 py-1.5 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-600/50 text-white text-sm rounded-lg transition flex items-center gap-1"
-                          >
-                            {applyingPrice === rec.product_id ? (
-                              <RefreshCw className="w-3 h-3 animate-spin" />
-                            ) : (
-                              <CheckCircle className="w-3 h-3" />
-                            )}
-                            Apply
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })
-              )}
-            </div>
-          </div>
-
-          {/* Pricing Rules */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <BarChart3 className="w-5 h-5 text-blue-400" />
-              Active Pricing Rules
-            </h2>
-
-            <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">
-              Pricing rules unavailable — rules engine not connected.
-            </div>
-          </div>
-        </div>
-      )}
-
-      {activeTab === 'appraisal' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Search/Appraisal Form */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Search className="w-5 h-5 text-cyan-400" />
-              Product Appraisal
-            </h2>
-            <p className="text-gray-400 text-sm mb-4">
-              Enter a product name or description to get real-time market pricing data from multiple sources.
-            </p>
-            
-            <div className="flex gap-3 mb-4">
-              <input
-                type="text"
-                value={appraisalQuery}
-                onChange={(e) => setAppraisalQuery(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && appraiseItem()}
-                placeholder="e.g., iPhone 15 Pro, Nike Air Max 90, Sony WH-1000XM5"
-                className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-cyan-500"
-              />
-              <button
-                onClick={appraiseItem}
-                disabled={isAppraising || !appraisalQuery.trim()}
-                className="px-6 py-3 bg-cyan-600 hover:bg-cyan-700 disabled:bg-cyan-600/50 text-white rounded-lg transition flex items-center gap-2"
-              >
-                {isAppraising ? (
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                ) : (
-                  <Search className="w-4 h-4" />
-                )}
-                {isAppraising ? 'Searching...' : 'Appraise'}
-              </button>
-            </div>
-
-            {/* Quick suggestions */}
-            <div className="flex flex-wrap gap-2">
-              <span className="text-gray-500 text-sm">Try:</span>
-              {['AirPods Pro', 'PS5 Console', 'Nike Dunks', 'MacBook Air'].map((item) => (
-                <button
-                  key={item}
-                  onClick={() => { setAppraisalQuery(item); }}
-                  className="px-3 py-1 bg-gray-800 hover:bg-gray-700 text-gray-300 text-sm rounded-lg transition"
-                >
-                  {item}
+        {/* ========== APPRAISE TAB ========== */}
+        {activeTab === 'appraise' && (
+          <div className="space-y-6">
+            {/* Appraisal Input */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+              <h2 className="text-lg font-semibold text-white mb-2 flex items-center gap-2">
+                <DollarSign className="w-5 h-5 text-pink-400" /> Flip Appraisal Engine
+              </h2>
+              <p className="text-gray-400 text-sm mb-4">Enter any product — get real market comps, flip profit estimate, and a buy/pass verdict.</p>
+              <div className="flex gap-3">
+                <input type="text" value={appraisalQuery}
+                  onChange={e => setAppraisalQuery(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && handleAppraise()}
+                  placeholder="e.g. PS5 Digital Edition, MacBook Air M2, Air Jordan 4..."
+                  className="flex-1 px-4 py-3 bg-gray-800 border border-gray-700 rounded-lg text-white placeholder-gray-500 focus:outline-none focus:border-pink-500" />
+                <button onClick={() => handleAppraise()} disabled={isAppraising || !appraisalQuery.trim()}
+                  className="px-6 py-3 bg-pink-600 hover:bg-pink-700 disabled:bg-pink-600/50 text-white rounded-lg transition flex items-center gap-2">
+                  {isAppraising ? <RefreshCw className="w-4 h-4 animate-spin" /> : <DollarSign className="w-4 h-4" />}
+                  {isAppraising ? 'Analyzing...' : 'Appraise'}
                 </button>
-              ))}
+              </div>
             </div>
-          </div>
 
-          {/* Appraisal Results */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <DollarSign className="w-5 h-5 text-green-400" />
-              Appraisal Results
-            </h2>
-
-            {appraisalError ? (
-              <div className="text-center py-12 text-gray-500">
-                <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p>Appraisal unavailable</p>
-                <p className="text-sm mt-1">{appraisalError}</p>
-              </div>
-            ) : !appraisal ? (
-              <div className="text-center py-12 text-gray-500">
-                <Search className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p>Enter a product to see market pricing</p>
-              </div>
-            ) : (
+            {/* Appraisal Results */}
+            {appraisal && (
               <div className="space-y-4">
-                {/* Price Summary */}
-                <div className="grid grid-cols-3 gap-4">
-                  <div className="p-4 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-400 text-xs mb-1">Recommended Price</p>
-                    <p className="text-2xl font-bold text-green-400">{formatCurrency(appraisal.recommendedPrice)}</p>
-                  </div>
-                  <div className="p-4 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-400 text-xs mb-1">Market Range</p>
-                    <p className="text-lg font-medium text-white">{appraisal.priceRange}</p>
-                  </div>
-                  <div className="p-4 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-400 text-xs mb-1">Market Demand</p>
-                    <p className={`text-lg font-medium capitalize ${
-                      appraisal.marketDemand === 'high' ? 'text-green-400' :
-                      appraisal.marketDemand === 'medium' ? 'text-yellow-400' : 'text-red-400'
-                    }`}>{appraisal.marketDemand}</p>
+                {/* Verdict Banner */}
+                <div className={`p-5 rounded-xl border ${VERDICT_STYLES[appraisal.flipVerdict] || VERDICT_STYLES.hold}`}>
+                  <div className="flex items-center justify-between">
+                    <div>
+                      <h3 className="text-xl font-bold text-white">{appraisal.query}</h3>
+                      <p className="text-sm mt-1 opacity-80">{appraisal.provenance.note}</p>
+                    </div>
+                    <div className="text-right">
+                      <span className={`text-2xl font-bold px-4 py-2 rounded-xl border ${VERDICT_STYLES[appraisal.flipVerdict]}`}>
+                        {appraisal.flipVerdict.toUpperCase().replace('-', ' ')}
+                      </span>
+                      <p className="text-xs mt-2 text-gray-400">{appraisal.confidence}% confidence</p>
+                    </div>
                   </div>
                 </div>
 
-                {/* Confidence Meter */}
-                <div className="p-4 bg-gray-800 rounded-lg">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-gray-400 text-sm">Confidence</span>
-                    <span className="text-white font-medium">{appraisal.confidence}%</span>
-                  </div>
-                  <div className="w-full bg-gray-700 rounded-full h-2">
-                    <div
-                      className={`h-2 rounded-full ${
-                        appraisal.confidence >= 70 ? 'bg-green-500' :
-                        appraisal.confidence >= 40 ? 'bg-yellow-500' : 'bg-red-500'
-                      }`}
-                      style={{ width: `${appraisal.confidence}%` }}
-                    />
+                {/* Flip Economics */}
+                <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+                  {[
+                    { label: 'Buy At', value: `$${appraisal.recommendedBuyPrice.toFixed(2)}`, color: 'text-cyan-400', sub: '25th percentile' },
+                    { label: 'Sell At', value: `$${appraisal.recommendedSellPrice.toFixed(2)}`, color: 'text-green-400', sub: '75th percentile' },
+                    { label: 'Est. Profit', value: `$${appraisal.estimatedProfit.toFixed(2)}`, color: appraisal.estimatedProfit > 0 ? 'text-green-400' : 'text-red-400', sub: `${appraisal.estimatedProfitPercent}% ROI` },
+                    { label: 'eBay Fees', value: `$${appraisal.platformFees.toFixed(2)}`, color: 'text-orange-400', sub: '~13% FVF' },
+                    { label: 'Shipping', value: `$${appraisal.shippingEstimate.toFixed(2)}`, color: 'text-gray-400', sub: 'estimated' },
+                  ].map(s => (
+                    <div key={s.label} className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+                      <p className="text-gray-500 text-xs mb-1">{s.label}</p>
+                      <p className={`text-xl font-bold ${s.color}`}>{s.value}</p>
+                      <p className="text-gray-600 text-xs mt-1">{s.sub}</p>
+                    </div>
+                  ))}
+                </div>
+
+                {/* Explanation */}
+                <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                  <h4 className="text-white font-medium mb-2">Flip Analysis</h4>
+                  <p className="text-gray-300 text-sm leading-relaxed">{appraisal.flipExplanation}</p>
+                  <div className="flex items-center gap-3 mt-3">
+                    <span className={`px-2 py-1 rounded text-xs ${appraisal.marketDemand === 'high' ? 'bg-green-500/20 text-green-400' : appraisal.marketDemand === 'medium' ? 'bg-yellow-500/20 text-yellow-400' : 'bg-red-500/20 text-red-400'}`}>
+                      {appraisal.marketDemand} demand
+                    </span>
+                    <span className="text-xs text-gray-500">Range: {appraisal.priceRange}</span>
+                    <span className="text-xs text-gray-500">Method: {appraisal.provenance.method}</span>
                   </div>
                 </div>
 
-                {/* Price Statistics */}
-                <div className="grid grid-cols-4 gap-2">
-                  <div className="p-3 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-500 text-xs">Min</p>
-                    <p className="text-white font-medium">{formatCurrency(appraisal.minPrice)}</p>
-                  </div>
-                  <div className="p-3 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-500 text-xs">Avg</p>
-                    <p className="text-white font-medium">{formatCurrency(appraisal.avgPrice)}</p>
-                  </div>
-                  <div className="p-3 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-500 text-xs">Median</p>
-                    <p className="text-white font-medium">{formatCurrency(appraisal.medianPrice)}</p>
-                  </div>
-                  <div className="p-3 bg-gray-800 rounded-lg text-center">
-                    <p className="text-gray-500 text-xs">Max</p>
-                    <p className="text-white font-medium">{formatCurrency(appraisal.maxPrice)}</p>
-                  </div>
-                </div>
-
-                {/* Sources */}
+                {/* Comparable Listings */}
                 {appraisal.sources.length > 0 && (
-                  <div>
-                    <p className="text-gray-400 text-sm mb-2">Market Sources ({appraisal.sources.length})</p>
-                    <div className="space-y-2 max-h-48 overflow-y-auto">
-                      {appraisal.sources.map((source, idx) => (
-                        <div key={idx} className="p-3 bg-gray-800 rounded-lg flex items-center justify-between">
-                          <div className="flex-1">
-                            <p className="text-white text-sm truncate">{source.title}</p>
-                            <div className="flex items-center gap-2 text-xs text-gray-500">
-                              <span className="capitalize">{source.source}</span>
-                              {source.condition && <span>• {source.condition}</span>}
-                              {source.rating && <span>• ★ {source.rating.toFixed(1)}</span>}
+                  <div className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+                    <h4 className="text-white font-medium mb-3">Comparable Listings ({appraisal.sources.length})</h4>
+                    <div className="space-y-2 max-h-64 overflow-y-auto">
+                      {appraisal.sources.map((src, i) => (
+                        <a key={i} href={src.url} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center justify-between p-3 bg-gray-800 rounded-lg hover:bg-gray-700/80 transition">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-white text-sm truncate">{src.title}</p>
+                            <div className="flex items-center gap-2 mt-1 text-xs text-gray-500">
+                              <span className="capitalize">{src.source}</span>
+                              {src.condition && <span className="px-1 py-0.5 bg-gray-700 rounded">{src.condition}</span>}
                             </div>
                           </div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-green-400 font-medium">{formatCurrency(source.price)}</span>
-                            <a
-                              href={source.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="p-1 hover:bg-gray-700 rounded"
-                            >
-                              <ExternalLink className="w-4 h-4 text-gray-400" />
-                            </a>
-                          </div>
-                        </div>
+                          <span className="text-green-400 font-bold ml-4">${src.price.toFixed(2)}</span>
+                        </a>
                       ))}
                     </div>
                   </div>
                 )}
+
+                {/* Add to Pipeline */}
+                <button onClick={() => addToPipeline(appraisal.query, appraisal.recommendedBuyPrice)}
+                  className="w-full py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white font-semibold rounded-xl hover:shadow-lg hover:shadow-pink-500/20 transition flex items-center justify-center gap-2">
+                  <Package className="w-5 h-5" /> Add to Flip Pipeline
+                </button>
               </div>
             )}
           </div>
-        </div>
-      )}
+        )}
 
-      {activeTab === 'inventory' && (
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          {/* Inventory Alerts */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <AlertTriangle className="w-5 h-5 text-yellow-400" />
-              Inventory Alerts
-            </h2>
-
-            {isLoading ? (
-              <div className="text-center py-8 text-gray-500">
-                Loading alerts...
+        {/* ========== PIPELINE TAB ========== */}
+        {activeTab === 'pipeline' && (
+          <div className="space-y-6">
+            {/* Pipeline Stats */}
+            <div className="grid grid-cols-3 gap-4">
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+                <p className="text-gray-500 text-xs">Active Items</p>
+                <p className="text-2xl font-bold text-white">{pipeline.length}</p>
               </div>
-            ) : alerts === null ? (
-              <div className="text-center py-8 text-gray-500">
-                <AlertTriangle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p>Inventory alerts unavailable</p>
-                <button
-                  onClick={loadData}
-                  className="mt-4 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg transition"
-                >
-                  Retry
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+                <p className="text-gray-500 text-xs">Total Invested</p>
+                <p className="text-2xl font-bold text-yellow-400">${pipelineTotalInvested.toFixed(0)}</p>
+              </div>
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-4 text-center">
+                <p className="text-gray-500 text-xs">Realized Profit</p>
+                <p className={`text-2xl font-bold ${pipelineSoldProfit >= 0 ? 'text-green-400' : 'text-red-400'}`}>${pipelineSoldProfit.toFixed(0)}</p>
+              </div>
+            </div>
+
+            {/* Pipeline Items */}
+            {pipeline.length === 0 ? (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+                <Package className="w-12 h-12 mx-auto mb-4 text-gray-600" />
+                <p className="text-gray-400">No items in your flip pipeline yet.</p>
+                <p className="text-gray-500 text-sm mt-1">Search for products and add them to start tracking your flips.</p>
+                <button onClick={() => setActiveTab('find')} className="mt-4 px-4 py-2 bg-pink-600 text-white rounded-lg hover:bg-pink-700 transition">
+                  Start Finding Items
                 </button>
-              </div>
-            ) : alerts.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <CheckCircle className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                <p>No inventory alerts</p>
               </div>
             ) : (
               <div className="space-y-3">
-                {alerts.map((alert) => (
-                  <div key={alert.id} className={`p-4 rounded-lg border ${
-                    alert.severity === 'HIGH' 
-                      ? 'bg-red-500/10 border-red-500/30' 
-                      : alert.severity === 'MEDIUM'
-                      ? 'bg-yellow-500/10 border-yellow-500/30'
-                      : 'bg-blue-500/10 border-blue-500/30'
-                  }`}>
-                    <div className="flex items-center gap-2 mb-2">
-                      <span className={`px-2 py-0.5 rounded text-xs ${
-                        alert.severity === 'HIGH' 
-                          ? 'bg-red-500/20 text-red-400' 
-                          : alert.severity === 'MEDIUM'
-                          ? 'bg-yellow-500/20 text-yellow-400'
-                          : 'bg-blue-500/20 text-blue-400'
-                      }`}>
-                        {alert.severity}
-                      </span>
-                      <span className="text-gray-400 text-xs">{alert.alertType}</span>
+                {pipeline.map(item => (
+                  <div key={item.id} className="bg-gray-900 border border-gray-800 rounded-xl p-4">
+                    <div className="flex items-center justify-between">
+                      <div className="flex-1">
+                        <h4 className="text-white font-medium">{item.name}</h4>
+                        <div className="flex items-center gap-3 mt-1 text-sm">
+                          <span className="text-cyan-400">Buy: ${item.buyPrice.toFixed(2)}</span>
+                          {item.sellPrice && <span className="text-green-400">Sell: ${item.sellPrice.toFixed(2)}</span>}
+                          <span className="text-gray-500">{new Date(item.addedAt).toLocaleDateString()}</span>
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        {/* Stage selector */}
+                        <div className="relative">
+                          <select
+                            value={item.stage}
+                            onChange={e => updateStage(item.id, e.target.value as PipelineStage)}
+                            className="appearance-none pl-3 pr-8 py-2 bg-gray-800 border border-gray-700 rounded-lg text-white text-sm cursor-pointer focus:outline-none focus:border-pink-500"
+                          >
+                            {STAGES.map(s => (
+                              <option key={s.id} value={s.id}>{s.icon} {s.label}</option>
+                            ))}
+                          </select>
+                          <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-500 pointer-events-none" />
+                        </div>
+                        {/* Appraise button */}
+                        <button onClick={() => quickAppraise(item.name)}
+                          className="p-2 bg-pink-600/50 hover:bg-pink-600 text-white rounded-lg transition" title="Appraise">
+                          <DollarSign className="w-4 h-4" />
+                        </button>
+                        {/* Remove */}
+                        <button onClick={() => removePipelineItem(item.id)}
+                          className="p-2 bg-red-600/30 hover:bg-red-600/60 text-red-400 rounded-lg transition" title="Remove">
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </div>
-                    <p className="text-white font-medium">{alert.title}</p>
-                    <p className="text-gray-400 text-sm mt-1">{alert.message}</p>
+                    {/* Stage progress bar */}
+                    <div className="flex items-center gap-1 mt-3">
+                      {STAGES.map((s, i) => {
+                        const stageIdx = STAGES.findIndex(st => st.id === item.stage);
+                        const isActive = i <= stageIdx;
+                        return (
+                          <div key={s.id} className="flex-1 flex items-center gap-1">
+                            <div className={`h-1.5 flex-1 rounded-full ${isActive ? 'bg-pink-500' : 'bg-gray-800'}`} />
+                          </div>
+                        );
+                      })}
+                    </div>
                   </div>
                 ))}
               </div>
             )}
           </div>
-
-          {/* Stock Overview */}
-          <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
-            <h2 className="text-lg font-semibold text-white mb-4 flex items-center gap-2">
-              <Boxes className="w-5 h-5 text-purple-400" />
-              Stock Overview
-            </h2>
-
-            {isLoading ? (
-              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Loading stock...</div>
-            ) : products === null ? (
-              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">Stock unavailable.</div>
-            ) : products.length === 0 ? (
-              <div className="p-4 bg-gray-800 rounded-lg text-sm text-gray-400">No products found.</div>
-            ) : (
-              <div className="space-y-4">
-                {products.map((product) => {
-                  const stockPercent = Math.min((product.stock_quantity / (product.reorder_point * 3)) * 100, 100);
-                  const isLow = product.stock_quantity <= product.reorder_point;
-                  const isOut = product.stock_quantity === 0;
-
-                  return (
-                    <div key={product.id} className="p-3 bg-gray-800 rounded-lg">
-                      <div className="flex items-center justify-between mb-2">
-                        <div>
-                          <p className="text-white font-medium text-sm">{product.name}</p>
-                          <p className="text-gray-500 text-xs">{product.sku}</p>
-                        </div>
-                        <span className={`text-sm font-medium ${
-                          isOut ? 'text-red-400' : isLow ? 'text-yellow-400' : 'text-green-400'
-                        }`}>
-                          {product.stock_quantity} units
-                        </span>
-                      </div>
-                      <div className="w-full bg-gray-700 rounded-full h-2">
-                        <div
-                          className={`h-2 rounded-full ${
-                            isOut ? 'bg-red-500' : isLow ? 'bg-yellow-500' : 'bg-green-500'
-                          }`}
-                          style={{ width: `${stockPercent}%` }}
-                        />
-                      </div>
-                      <div className="flex justify-between mt-1 text-xs text-gray-500">
-                        <span>Reorder at: {product.reorder_point}</span>
-                        <span>Range: {formatCurrency(product.min_price)} - {formatCurrency(product.max_price)}</span>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
+        )}
       </div>
     </DashboardLayout>
   );
