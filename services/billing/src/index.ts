@@ -151,10 +151,17 @@ async function getEntitlement(userId: string): Promise<Entitlement | null> {
     features = result.features_json ? JSON.parse(result.features_json) : getDefaultFeatures(result.plan as Entitlement['plan']);
     if (!Array.isArray(features)) features = getDefaultFeatures(result.plan as Entitlement['plan']);
   } catch {
-    logger.warn('Corrupt features_json, using defaults', { userId, plan: result.plan });
     features = getDefaultFeatures(result.plan as Entitlement['plan']);
-    // Auto-repair: update the row with valid JSON
-    query('UPDATE entitlements SET features_json = $1 WHERE user_id = $2', [JSON.stringify(features), userId]).catch(() => {});
+  }
+
+  // Auto-upgrade: ensure all core features are present (handles old entitlements
+  // that were created before core features were added to FREE plan)
+  const expected = getDefaultFeatures(result.plan as Entitlement['plan']);
+  const missing = expected.filter(f => !features.includes(f));
+  if (missing.length > 0) {
+    features = [...new Set([...features, ...expected])];
+    query('UPDATE entitlements SET features_json = $1 WHERE user_id = $2',
+      [JSON.stringify(features), userId]).catch(() => {});
   }
 
   return {
