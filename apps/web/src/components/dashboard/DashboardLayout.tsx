@@ -243,7 +243,15 @@ function UserProfile({ collapsed, isMobile }: { collapsed: boolean; isMobile: bo
   
   // Extract display name from email (before @)
   const displayName = user?.email?.split('@')[0] || 'User';
-  const displayRole = user?.role || 'Member';
+  // Map raw DB roles to user-friendly labels
+  const ROLE_LABELS: Record<string, string> = {
+    OWNER: 'Admin',
+    ADMIN: 'Admin',
+    MANAGER: 'Manager',
+    MEMBER: 'Member',
+    VIEWER: 'Viewer',
+  };
+  const displayRole = user?.orgName || ROLE_LABELS[user?.role || ''] || user?.role || 'Member';
   const initials = displayName.charAt(0).toUpperCase();
   
   return (

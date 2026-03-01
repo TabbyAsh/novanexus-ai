@@ -126,7 +126,7 @@ export default function TradingDashboard() {
         message: statusRes.data.message,
         canTradeLive: statusRes.data.canTradeLive,
       });
-      setAlpacaEnabled(statusRes.data.enabled);
+      setAlpacaEnabled(statusRes.data.enabled ?? null);
 
       if (!statusRes.data.connected) {
         setAccount(null);

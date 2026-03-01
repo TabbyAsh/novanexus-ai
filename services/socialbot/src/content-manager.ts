@@ -409,15 +409,15 @@ export class ContentManager {
   private generatePlatformSuggestion(platform: string): ContentSuggestion {
     const templates: Record<string, { content: string; type: string }> = {
       twitter: {
-        content: "🚀 Big news from Nova Enterprises! We're pushing the boundaries of AI-powered commerce. Stay tuned for exciting updates! #Innovation #AI",
+        content: "🚀 Big news! We're pushing the boundaries of AI-powered commerce. Stay tuned for exciting updates! #Innovation #AI",
         type: 'text',
       },
       linkedin: {
-        content: "At Nova Enterprises, we believe in the power of autonomous systems to transform business operations. Our latest developments in AI-orchestrated commerce are setting new standards for efficiency and scalability. What challenges are you solving with AI in your organization?",
+        content: "We believe in the power of autonomous systems to transform business operations. Our latest developments in AI-orchestrated commerce are setting new standards for efficiency and scalability. What challenges are you solving with AI in your organization?",
         type: 'text',
       },
       instagram: {
-        content: "Innovation in action ✨ Behind the scenes at Nova HQ. Our team is building the future of intelligent commerce.",
+        content: "Innovation in action ✨ Behind the scenes at HQ. Our team is building the future of intelligent commerce.",
         type: 'image',
       },
     };
@@ -459,8 +459,8 @@ export class ContentManager {
       {
         id: 'acc1',
         platform: 'twitter',
-        account_name: '@NovaEnterprises',
-        account_id: 'nova_twitter',
+        account_name: '@YourBrand',
+        account_id: 'user_twitter',
         is_active: true,
         follower_count: 15420,
         engagement_rate: 4.2,
@@ -468,8 +468,8 @@ export class ContentManager {
       {
         id: 'acc2',
         platform: 'linkedin',
-        account_name: 'Nova Enterprises',
-        account_id: 'nova_linkedin',
+        account_name: 'Your Organization',
+        account_id: 'user_linkedin',
         is_active: true,
         follower_count: 8750,
         engagement_rate: 5.8,
@@ -477,8 +477,8 @@ export class ContentManager {
       {
         id: 'acc3',
         platform: 'instagram',
-        account_name: '@nova.enterprises',
-        account_id: 'nova_instagram',
+        account_name: '@yourbrand',
+        account_id: 'user_instagram',
         is_active: true,
         follower_count: 22100,
         engagement_rate: 6.4,
@@ -486,8 +486,8 @@ export class ContentManager {
       {
         id: 'acc4',
         platform: 'facebook',
-        account_name: 'Nova Enterprises',
-        account_id: 'nova_facebook',
+        account_name: 'Your Organization',
+        account_id: 'user_facebook',
         is_active: true,
         follower_count: 12300,
         engagement_rate: 3.1,
@@ -503,7 +503,7 @@ export class ContentManager {
         account_id: 'acc1',
         platform: 'twitter',
         content_type: 'text',
-        content: '🎉 Exciting news! Nova Enterprises just hit a major milestone. Our AI-powered trading system processed 10,000 autonomous decisions today! #AI #Trading #Innovation',
+        content: '🎉 Exciting news! Our AI-powered trading system just hit a major milestone — 10,000 autonomous decisions processed today! #AI #Trading #Innovation',
         media_urls: [],
         hashtags: ['#AI', '#Trading', '#Innovation'],
         scheduled_for: null,
@@ -516,7 +516,7 @@ export class ContentManager {
         account_id: 'acc2',
         platform: 'linkedin',
         content_type: 'text',
-        content: 'The future of enterprise software is autonomous. At Nova Enterprises, we\'re building systems that think, adapt, and optimize in real-time. Interested in learning more about our approach to AI-orchestrated business operations?',
+        content: 'The future of enterprise software is autonomous. We\'re building systems that think, adapt, and optimize in real-time. Interested in learning more about AI-orchestrated business operations?',
         media_urls: [],
         hashtags: ['#Enterprise', '#AI', '#Automation'],
         scheduled_for: null,
@@ -529,7 +529,7 @@ export class ContentManager {
         account_id: 'acc3',
         platform: 'instagram',
         content_type: 'image',
-        content: 'Behind the scenes at Nova HQ 🏢✨ Our team is working on something big. Can you guess what\'s next?',
+        content: 'Behind the scenes at HQ 🏢✨ Our team is working on something big. Can you guess what\'s next?',
         media_urls: ['https://example.com/hq-photo.jpg'],
         hashtags: ['#Tech', '#StartupLife', '#Innovation', '#BTS'],
         scheduled_for: new Date(now.getTime() + 4 * 60 * 60 * 1000),

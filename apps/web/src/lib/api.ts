@@ -800,6 +800,8 @@ class ApiClient {
       entry: number;
       target: number;
       stopLoss: number;
+      confidence?: number;
+      reasoning?: string | string[];
     },
     quantity: number = 10
   ) {
@@ -1208,6 +1210,10 @@ class ApiClient {
       lastVerifiedAt?: string | null;
       liveTradingEnabled?: boolean;
       enabled?: boolean;
+      mode?: 'server' | 'user' | 'none';
+      message?: string;
+      reason?: string;
+      canTradeLive?: boolean;
     }>('GET', '/v1/alpaca/status');
   }
 

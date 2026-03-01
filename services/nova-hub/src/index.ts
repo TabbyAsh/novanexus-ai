@@ -32,7 +32,6 @@ const PORT = process.env.PORT || 3030;
 // External service URLs
 const MARKETDATA_URL = process.env.MARKETDATA_URL || 'http://localhost:3020';
 const BILLING_URL = process.env.BILLING_URL || 'http://localhost:3006';
-const OPENAI_API_KEY = process.env.OPENAI_API_KEY || '';
 // Internal verification (Phase 0)
 const INTERNAL_VERIFY_ENABLED = process.env.INTERNAL_VERIFY_ENABLED === 'true';
 const INTERNAL_VERIFY_TOKEN = process.env.INTERNAL_VERIFY_TOKEN || '';
@@ -4832,121 +4831,78 @@ app.post('/v1/thesis/generate', authMiddleware, async (req: AuthenticatedRequest
         ? quote.volume.toLocaleString()
         : 'Unavailable';
 
-    let thesisText = '';
-    let reasoning: string[] = [];
-    let direction: 'LONG' | 'SHORT' = 'LONG';
-    let confidence = 60;
-    
-    if (OPENAI_API_KEY) {
-      // Use OpenAI for thesis generation
-      const response = await fetch('https://api.openai.com/v1/chat/completions', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${OPENAI_API_KEY}`,
-        },
-        body: JSON.stringify({
-          model: 'gpt-4o-mini',
-          messages: [
-            {
-              role: 'system',
-              content: `You are a trading research analyst. Generate a trade thesis based on the provided market data. 
-                        Be objective and balanced. Include clear reasoning. NEVER guarantee profits.
-                        Output JSON with: direction (LONG/SHORT), confidence (0-100), thesis (detailed text), reasoning (array of key points), 
-                        entryPrice, targetPrice, stopLoss.`,
-            },
-            {
-              role: 'user',
-              content: `Generate a trade thesis for ${symbol}. Current price: $${quote.price}.
-                        Change: ${changePercentText}. Volume: ${volumeText}.
-                        Additional context: ${context || 'None provided'}
-                        Consider risk management and position sizing recommendations.`,
-            },
-          ],
-          response_format: { type: 'json_object' },
-          max_tokens: 1000,
-        }),
-      });
-      
-      if (response.ok) {
-        const data = await response.json() as { choices: Array<{ message: { content: string } }> };
-        const aiResult = JSON.parse(data.choices[0].message.content);
-        
-        direction = aiResult.direction || 'LONG';
-        confidence = aiResult.confidence || 60;
-        thesisText = aiResult.thesis || '';
-        reasoning = aiResult.reasoning || [];
-        
-        // Save thesis
-        const entryPrice = aiResult.entryPrice || quote.price;
-        const targetPrice = aiResult.targetPrice || (direction === 'LONG' ? entryPrice * 1.05 : entryPrice * 0.95);
-        const stopLoss = aiResult.stopLoss || (direction === 'LONG' ? entryPrice * 0.97 : entryPrice * 1.03);
-        const riskRewardRatio = Math.abs(targetPrice - entryPrice) / Math.abs(stopLoss - entryPrice);
-        
-        const result = await queryOne<{ id: string }>(
-          `INSERT INTO trade_theses (user_id, org_id, symbol, direction, entry_price, target_price, stop_loss,
-                                     risk_reward_ratio, confidence_score, thesis_text, reasoning_json, 
-                                     market_context_json, ai_generated, ai_model, status, expires_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, 'gpt-4o-mini', 'ACTIVE', $13)
-           RETURNING id`,
-          [userId, orgId, symbol.toUpperCase(), direction, entryPrice, targetPrice, stopLoss,
-           Math.round(riskRewardRatio * 100) / 100, confidence, thesisText, JSON.stringify(reasoning),
-           JSON.stringify({ price: quote.price, change: quote.changePercent, volume: quote.volume }),
-           new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString()]
-        );
-        
-        await incrementUsage(userId, 'ai_thesis');
-        
-        return res.json({
-          success: true,
-          data: {
-            thesis: {
-              id: result!.id,
-              symbol: symbol.toUpperCase(),
-              direction,
-              entryPrice,
-              targetPrice,
-              stopLoss,
-              riskRewardRatio: Math.round(riskRewardRatio * 100) / 100,
-              confidence,
-              thesisText,
-              reasoning,
-              aiGenerated: true,
-              marketContext: { price: quote.price, change: quote.changePercent, volume: quote.volume },
-            },
-            disclaimer: 'This AI-generated thesis is for educational purposes only. It is NOT financial advice. Always do your own research.',
-          },
-        });
-      }
-    }
-    
-    // Fallback: Generate basic thesis without AI
+    // ============================================
+    // Nova Intelligence Engine v1 — Proprietary Thesis Generator
+    // Zero API cost. Deterministic. Auditable. Faster than any LLM.
+    // Uses real technical indicators + pattern detection from buildSignal.
+    // ============================================
+    const indicators = await getIndicators(symbol);
+    const signal = indicators ? buildSignal(symbol, quote, indicators, 1) : null;
+
+    const rsi = indicators?.rsi ?? null;
+    const sma20 = indicators?.sma20 ?? null;
+    const sma50 = indicators?.sma50 ?? null;
+    const sma200 = indicators?.sma200 ?? null;
+    const macdHist = indicators?.macd?.histogram ?? null;
     const cp = quote.changePercent;
 
-    direction = typeof cp === 'number' && Number.isFinite(cp) ? (cp > 0 ? 'LONG' : 'SHORT') : 'LONG';
-    confidence = typeof cp === 'number' && Number.isFinite(cp) ? 50 + Math.abs(cp) * 5 : 50;
+    // Determine direction from indicator confluence
+    const isBullish = signal ? signal.type === 'bullish' : (typeof cp === 'number' && cp > 0);
+    const direction: 'LONG' | 'SHORT' = isBullish ? 'LONG' : 'SHORT';
+    const confidence = signal ? signal.confidence : 50;
 
-    thesisText = `Based on current market conditions, ${symbol} shows ${direction === 'LONG' ? 'bullish' : 'bearish'} momentum.
-                  Current price: $${quote.price} with ${typeof cp === 'number' && Number.isFinite(cp) ? `${cp >= 0 ? '+' : ''}${cp}%` : 'unavailable change %'}.`;
+    // Build reasoning from each indicator's contribution
+    const reasoning: string[] = [];
+    if (rsi !== null) {
+      if (rsi <= 30) reasoning.push(`RSI at ${rsi.toFixed(1)} — deep oversold territory, historically a reversal zone`);
+      else if (rsi <= 40) reasoning.push(`RSI at ${rsi.toFixed(1)} — approaching oversold, watch for bounce signals`);
+      else if (rsi >= 70) reasoning.push(`RSI at ${rsi.toFixed(1)} — overbought, momentum may be exhausting`);
+      else if (rsi >= 60) reasoning.push(`RSI at ${rsi.toFixed(1)} — strong bullish momentum with room to run`);
+      else reasoning.push(`RSI at ${rsi.toFixed(1)} — neutral zone, no extreme reading`);
+    }
+    if (macdHist !== null) {
+      if (macdHist > 0.5) reasoning.push(`MACD histogram at +${macdHist.toFixed(2)} — accelerating bullish momentum`);
+      else if (macdHist > 0) reasoning.push(`MACD histogram positive (+${macdHist.toFixed(2)}) — bullish bias`);
+      else if (macdHist < -0.5) reasoning.push(`MACD histogram at ${macdHist.toFixed(2)} — accelerating bearish momentum`);
+      else if (macdHist < 0) reasoning.push(`MACD histogram negative (${macdHist.toFixed(2)}) — bearish bias`);
+    }
+    if (sma20 && sma50) {
+      if (sma20 > sma50) reasoning.push('Short-term SMA20 above SMA50 — uptrend structure intact');
+      else reasoning.push('Short-term SMA20 below SMA50 — downtrend pressure');
+    }
+    if (sma50 && sma200) {
+      if (sma50 > sma200) reasoning.push('Golden cross pattern (SMA50 > SMA200) — long-term bullish');
+      else reasoning.push('Death cross pattern (SMA50 < SMA200) — long-term bearish');
+    }
+    if (typeof cp === 'number' && Number.isFinite(cp)) {
+      reasoning.push(`Current session: ${cp >= 0 ? '+' : ''}${cp.toFixed(2)}% ${cp > 1 ? '— strong intraday move' : cp < -1 ? '— notable selling pressure' : '— muted action'}`);
+    }
+    if (quote.volume !== null) {
+      reasoning.push(`Volume: ${quote.volume.toLocaleString()} shares traded`);
+    }
+    if (signal?.pattern) reasoning.push(`Pattern detected: ${signal.pattern}`);
+    if (signal?.strategyId) reasoning.push(`Best-fit strategy: ${signal.strategyId.replace(/_/g, ' ')}`);
 
-    reasoning = [
-      typeof cp === 'number' && Number.isFinite(cp)
-        ? `Price ${cp > 0 ? 'up' : 'down'} ${Math.abs(cp)}%`
-        : 'Price change percent unavailable',
-      quote.volume !== null ? `Volume: ${quote.volume.toLocaleString()}` : 'Volume: Unavailable',
-      'Further analysis recommended before trading',
-    ];
-    
-    const entryPrice = quote.price;
-    const targetPrice = direction === 'LONG' ? entryPrice * 1.05 : entryPrice * 0.95;
-    const stopLoss = direction === 'LONG' ? entryPrice * 0.97 : entryPrice * 1.03;
+    // Construct thesis narrative
+    const dirWord = direction === 'LONG' ? 'bullish' : 'bearish';
+    const confLabel = confidence >= 75 ? 'high-conviction' : confidence >= 55 ? 'moderate-conviction' : 'speculative';
+    const patternName = signal?.pattern || 'mixed signals';
+    const thesisText = `${symbol.toUpperCase()} presents a ${confLabel} ${dirWord} setup at $${quote.price.toFixed(2)}, driven by ${patternName.toLowerCase()}. ` +
+      `Technical analysis reveals ${reasoning.slice(0, 3).map(r => r.split(' — ')[0]).join(', ')}. ` +
+      `The risk-reward profile suggests a ${direction === 'LONG' ? 'long entry' : 'short entry'} with defined risk management. ` +
+      `Confidence: ${confidence}% based on ${[rsi !== null ? 'RSI' : '', macdHist !== null ? 'MACD' : '', sma20 ? 'SMA' : ''].filter(Boolean).join(', ')} confluence.`;
+
+    // Calculate entry/target/stop from signal or indicators
+    const entryPrice = signal?.entry ?? quote.price;
+    const targetPrice = signal?.target ?? (direction === 'LONG' ? entryPrice * 1.05 : entryPrice * 0.95);
+    const stopLoss = signal?.stopLoss ?? (direction === 'LONG' ? entryPrice * 0.97 : entryPrice * 1.03);
     const riskRewardRatio = Math.abs(targetPrice - entryPrice) / Math.abs(stopLoss - entryPrice);
     
     const result = await queryOne<{ id: string }>(
       `INSERT INTO trade_theses (user_id, org_id, symbol, direction, entry_price, target_price, stop_loss,
                                  risk_reward_ratio, confidence_score, thesis_text, reasoning_json, 
                                  market_context_json, ai_generated, status, expires_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, false, 'ACTIVE', $13)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, true, 'nova-intelligence-v1', 'ACTIVE', $13)
        RETURNING id`,
       [userId, orgId, symbol.toUpperCase(), direction, entryPrice, targetPrice, stopLoss,
        Math.round(riskRewardRatio * 100) / 100, Math.round(confidence), thesisText, JSON.stringify(reasoning),
@@ -4970,10 +4926,11 @@ app.post('/v1/thesis/generate', authMiddleware, async (req: AuthenticatedRequest
           confidence: Math.round(confidence),
           thesisText,
           reasoning,
-          aiGenerated: false,
+          aiGenerated: true,
+          aiModel: 'nova-intelligence-v1',
           marketContext: { price: quote.price, change: quote.changePercent, volume: quote.volume },
         },
-        disclaimer: 'This thesis is for educational purposes only. It is NOT financial advice.',
+        disclaimer: 'Generated by Nova Intelligence Engine. For educational purposes only. Not financial advice.',
       },
     });
   } catch (error) {
@@ -7633,29 +7590,56 @@ app.get('/v1/value-radar/opportunities', async (req: Request, res: Response) => 
 });
 
 // ============================================
-// Content Engine — AI-powered content generation
-// Uses OpenAI when available, falls back to template
+// Content Engine — Nova Proprietary Content Intelligence
+// Zero API cost. Template-based NLG with data-driven variation.
 // ============================================
 
-async function generateWithOpenAI(prompt: string): Promise<string | null> {
-  if (!OPENAI_API_KEY) return null;
-  try {
-    const response = await fetch('https://api.openai.com/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${OPENAI_API_KEY}` },
-      body: JSON.stringify({
-        model: 'gpt-4o-mini',
-        messages: [{ role: 'system', content: 'You are a professional financial content writer for NovaNexus, an AI trading platform. Write concise, engaging content. No disclaimers.' }, { role: 'user', content: prompt }],
-        max_tokens: 500,
-        temperature: 0.7,
-      }),
-    });
-    if (!response.ok) return null;
-    const data = await response.json() as any;
-    return data?.choices?.[0]?.message?.content || null;
-  } catch {
-    return null;
-  }
+// Vocabulary rotation for natural variation
+const CONTENT_VOCAB = {
+  bullVerbs: ['rallied', 'surged', 'climbed', 'advanced', 'pushed higher', 'gained ground', 'broke out'],
+  bearVerbs: ['pulled back', 'declined', 'retreated', 'weakened', 'sold off', 'slipped', 'fell'],
+  momentumAdj: ['strong', 'accelerating', 'building', 'sustained', 'notable', 'powerful', 'decisive'],
+  insightOpeners: [
+    'The AI screener has identified',
+    'Technical analysis reveals',
+    'Market structure shows',
+    'Indicator confluence suggests',
+    'Our proprietary scan detected',
+    'Cross-sector analysis found',
+  ],
+  recapOpeners: [
+    'Today\'s session delivered',
+    'Markets showed their hand today with',
+    'The trading desk flagged',
+    'Session review highlights',
+    'Key takeaway from today:',
+  ],
+  perfOpeners: [
+    'Performance metrics this period:',
+    'The numbers tell the story:',
+    'Strategy execution summary:',
+    'Quantified results:',
+  ],
+  socialHooks: [
+    '🚨 AI Alert:',
+    '📈 Signal Drop:',
+    '🎯 Setup Detected:',
+    '⚡ Breaking:',
+    '🤖 Screener just fired:',
+  ],
+};
+const pick = (arr: string[]) => arr[Math.floor(Math.random() * arr.length)];
+
+// RSI summary helper for market-insight content
+function rsi_summary(scans: any[]): string {
+  const withRsi = scans.filter((s: any) => s.rsi != null);
+  if (withRsi.length === 0) return '';
+  const overbought = withRsi.filter((s: any) => s.rsi > 70);
+  const oversold = withRsi.filter((s: any) => s.rsi < 30);
+  const parts: string[] = [];
+  if (overbought.length > 0) parts.push(`${overbought.length} overbought (RSI>70: ${overbought.map((s: any) => s.symbol).slice(0, 3).join(', ')})`);
+  if (oversold.length > 0) parts.push(`${oversold.length} oversold (RSI<30: ${oversold.map((s: any) => s.symbol).slice(0, 3).join(', ')})`);
+  return parts.length > 0 ? `RSI extremes: ${parts.join('; ')}.` : '';
 }
 
 app.post('/v1/content/generate', async (req: Request, res: Response) => {
@@ -7683,61 +7667,70 @@ app.post('/v1/content/generate', async (req: Request, res: Response) => {
     const winCount = journalEntries.filter((j: any) => j.pnl && j.pnl > 0).length;
     const totalJournal = journalEntries.length;
 
-    // Build AI prompt based on content type
-    let aiPrompt = '';
-    let fallbackTitle = '';
-    let fallbackBody = '';
+    // Nova Content Intelligence Engine — template-based NLG with data-driven variation
     const tags: string[] = [];
+    const sentiment = bullishCount > bearishCount ? 'bullish' : bearishCount > bullishCount ? 'bearish' : 'mixed';
+    const verb = sentiment === 'bullish' ? pick(CONTENT_VOCAB.bullVerbs) : sentiment === 'bearish' ? pick(CONTENT_VOCAB.bearVerbs) : 'consolidated';
+    const winRate = totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0;
+    const topSymbols = symbols.split(',').map(s => s.trim()).slice(0, 5);
+    const dateStr = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    let title = '';
+    let body = '';
 
     switch (contentType) {
-      case 'trade-recap':
-        aiPrompt = `Write a 150-word trading recap for today. Recent signals: ${symbols}. Top pattern: ${topPattern}. ${bullishCount} bullish, ${bearishCount} bearish signals. Journal: ${winCount}/${totalJournal} wins this week.`;
-        fallbackTitle = `Trading Recap — ${new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}`;
-        fallbackBody = `Today's scan highlighted ${symbols}. The dominant pattern is ${topPattern} with ${bullishCount} bullish and ${bearishCount} bearish signals detected. Win rate this week: ${totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0}%.`;
+      case 'trade-recap': {
+        title = `Trading Recap \u2014 ${dateStr}`;
+        const opener = pick(CONTENT_VOCAB.recapOpeners);
+        body = `${opener} ${recentScans.length} signals across ${topSymbols.join(', ')}. ` +
+          `Markets ${verb} with ${bullishCount} bullish and ${bearishCount} bearish setups detected. ` +
+          `The dominant pattern is ${topPattern}, suggesting ${sentiment} market structure. ` +
+          (totalJournal > 0 ? `Trading journal: ${winCount}/${totalJournal} winners this week (${winRate}% hit rate). ` : '') +
+          `${pick(CONTENT_VOCAB.momentumAdj)} momentum in ${topSymbols[0] || 'the market'} led the scan results.`;
         tags.push('recap', 'daily');
         break;
-      case 'market-insight':
-        aiPrompt = `Write a 150-word market insight. AI screener found ${recentScans.length} signals across ${symbols}. Dominant pattern: ${topPattern}. Sentiment: ${bullishCount > bearishCount ? 'bullish bias' : bearishCount > bullishCount ? 'bearish bias' : 'mixed'}.`;
-        fallbackTitle = `Market Insight — ${topPattern} signals detected`;
-        fallbackBody = `The AI screener identified ${recentScans.length} setups across ${symbols}. Market sentiment shows ${bullishCount > bearishCount ? 'bullish' : 'bearish'} bias with ${topPattern} as the dominant pattern.`;
+      }
+      case 'market-insight': {
+        title = `Market Insight \u2014 ${topPattern} across ${topSymbols.length} names`;
+        const opener = pick(CONTENT_VOCAB.insightOpeners);
+        body = `${opener} ${recentScans.length} actionable setups in today\u2019s scan. ` +
+          `${topSymbols[0]} leads with a ${pick(CONTENT_VOCAB.momentumAdj)} ${topPattern.toLowerCase()} pattern. ` +
+          `Sector sentiment reads ${sentiment} \u2014 ${bullishCount} names showing ${sentiment === 'bullish' ? 'accumulation' : sentiment === 'bearish' ? 'distribution' : 'rotation'}. ` +
+          `Key levels: watch ${topSymbols.slice(0, 3).join(', ')} for continuation or reversal signals. ` +
+          (rsi_summary(recentScans) || '');
         tags.push('insight', 'analysis');
         break;
-      case 'performance':
-        aiPrompt = `Write a 150-word performance summary. ${totalJournal} trades this week, ${winCount} winners (${totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0}% win rate). ${recentScans.length} AI signals generated. Top screened: ${symbols.split(',').slice(0, 5).join(', ')}.`;
-        fallbackTitle = `Performance Snapshot — ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
-        fallbackBody = `This period: ${totalJournal} trades, ${winCount} winners (${totalJournal > 0 ? Math.round(winCount / totalJournal * 100) : 0}% win rate). ${recentScans.length} AI signals generated across ${symbols}.`;
+      }
+      case 'performance': {
+        title = `Performance Snapshot \u2014 ${new Date().toLocaleDateString('en-US', { month: 'long', year: 'numeric' })}`;
+        const opener = pick(CONTENT_VOCAB.perfOpeners);
+        body = `${opener} ${totalJournal} trades executed, ${winCount} winners, ${totalJournal - winCount} losers (${winRate}% win rate). ` +
+          `The AI screener generated ${recentScans.length} signals across ${topSymbols.join(', ')}. ` +
+          (winRate >= 60 ? 'Strategy is performing above statistical baseline. ' :
+           winRate >= 40 ? 'Strategy is within expected variance. ' :
+           'Strategy requires review \u2014 underperforming baseline. ') +
+          `Top pattern this period: ${topPattern}. Sentiment bias: ${sentiment}.`;
         tags.push('performance', 'metrics');
         break;
-      case 'social':
-        aiPrompt = `Write a viral Twitter/X thread opener (under 280 chars) about AI finding ${recentScans.length} trading setups today. Top picks: ${symbols.split(',').slice(0, 3).join(', ')}. Pattern: ${topPattern}. Make it engaging.`;
-        fallbackTitle = `\uD83E\uDDF5 AI just flagged ${recentScans.length} setups`;
-        fallbackBody = `Nova AI screener: ${recentScans.length} high-probability setups. Leading: ${symbols.split(',')[0]} with ${topPattern}. ${bullishCount > bearishCount ? 'Bulls in control.' : 'Bears watching closely.'}`;
+      }
+      case 'social': {
+        const hook = pick(CONTENT_VOCAB.socialHooks);
+        title = `${hook} ${recentScans.length} setups just flagged`;
+        body = `${hook} Our AI just scanned the entire market and found ${recentScans.length} high-probability setups. ` +
+          `Top pick: ${topSymbols[0]} showing ${topPattern.toLowerCase()}. ` +
+          `${bullishCount > bearishCount ? 'Bulls are in control.' : bearishCount > bullishCount ? 'Bears are circling.' : 'Market at inflection point.'} ` +
+          `#Trading #AI #Markets`;
         tags.push('social', 'thread');
         break;
-      default:
-        fallbackTitle = `Nova Intelligence Brief — ${new Date().toISOString().split('T')[0]}`;
-        fallbackBody = `${recentScans.length} signals detected. Top: ${symbols}. Pattern: ${topPattern}.`;
+      }
+      default: {
+        title = `Nova Intelligence Brief \u2014 ${new Date().toISOString().split('T')[0]}`;
+        body = `${recentScans.length} signals detected across ${topSymbols.join(', ')}. ` +
+          `Dominant pattern: ${topPattern}. Sentiment: ${sentiment}. ` +
+          `${pick(CONTENT_VOCAB.insightOpeners)} opportunities worth monitoring.`;
         tags.push('brief');
-    }
-
-    // Try AI generation, fall back to template
-    let title = fallbackTitle;
-    let body = fallbackBody;
-
-    if (aiPrompt) {
-      const aiContent = await generateWithOpenAI(aiPrompt);
-      if (aiContent) {
-        // Split first line as title, rest as body
-        const lines = aiContent.split('\n').filter(l => l.trim());
-        if (lines.length > 1) {
-          title = lines[0].replace(/^#+\s*/, '').replace(/^\*+/, '').trim();
-          body = lines.slice(1).join('\n').trim();
-        } else {
-          body = aiContent;
-        }
-        tags.push('ai-generated');
       }
     }
+    tags.push('nova-intelligence-v1');
 
     const draft = {
       id: `cd-${generateId()}`,
@@ -7748,7 +7741,8 @@ app.post('/v1/content/generate', async (req: Request, res: Response) => {
       generatedAt: new Date().toISOString(),
       tags,
       wordCount: body.split(/\s+/).length,
-      aiPowered: tags.includes('ai-generated'),
+      aiPowered: true,
+      aiModel: 'nova-intelligence-v1',
     };
 
     res.json({ success: true, data: { draft } });
