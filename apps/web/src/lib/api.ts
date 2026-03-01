@@ -403,6 +403,15 @@ class ApiClient {
     }>('GET', '/v1/events/chain/verify');
   }
 
+  async repairEventChain() {
+    return this.request<{
+      repaired: number;
+      eventCount: number;
+      lastHash: string;
+      message: string;
+    }>('POST', '/v1/events/chain/repair');
+  }
+
   async queryEvents(params: {
     limit?: number;
     offset?: number;

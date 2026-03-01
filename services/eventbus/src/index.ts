@@ -452,6 +452,88 @@ app.get('/v1/events/chain/verify', async (req: Request, res: Response) => {
   }
 });
 
+// POST /v1/events/chain/repair - Rebuild event chain hashes from genesis
+app.post('/v1/events/chain/repair', async (req: Request, res: Response) => {
+  try {
+    const auth = extractAuth(req);
+    if (!auth) {
+      return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+        success: false,
+        error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+      });
+    }
+
+    // Get all events for this org in chronological order
+    const result = await query<{
+      id: string;
+      actor_type: string;
+      actor_id: string;
+      type: string;
+      ts: string;
+      payload_json: string;
+      prev_hash: string;
+      hash: string;
+    }>(
+      `SELECT id, actor_type, actor_id, type, ts, payload_json, prev_hash, hash
+       FROM events WHERE org_id = $1 ORDER BY ts ASC`,
+      [auth.orgId]
+    );
+
+    if (result.rows.length === 0) {
+      return res.json({
+        success: true,
+        data: { repaired: 0, eventCount: 0, message: 'No events to repair' },
+      });
+    }
+
+    let repaired = 0;
+    let expectedPrevHash = GENESIS_HASH;
+
+    await transaction(async (client) => {
+      for (let i = 0; i < result.rows.length; i++) {
+        const event = result.rows[i];
+        const payload = parseJsonValue<Record<string, unknown>>(event.payload_json, {});
+        const correctHash = computeEventHash(
+          expectedPrevHash,
+          payload,
+          event.type,
+          event.ts,
+          event.actor_type,
+          event.actor_id
+        );
+
+        if (event.prev_hash !== expectedPrevHash || event.hash !== correctHash) {
+          await client.query(
+            'UPDATE events SET prev_hash = $1, hash = $2 WHERE id = $3',
+            [expectedPrevHash, correctHash, event.id]
+          );
+          repaired++;
+        }
+
+        expectedPrevHash = correctHash;
+      }
+    });
+
+    logger.info('Event chain repaired', { orgId: auth.orgId, repaired, total: result.rows.length });
+
+    res.json({
+      success: true,
+      data: {
+        repaired,
+        eventCount: result.rows.length,
+        lastHash: expectedPrevHash,
+        message: repaired > 0 ? `Repaired ${repaired} events` : 'Chain was already valid',
+      },
+    });
+  } catch (error) {
+    logger.error('Chain repair failed', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'REPAIR_FAILED', message: 'Failed to repair chain' },
+    });
+  }
+});
+
 // GET /v1/events/stats - Get event statistics
 app.get('/v1/events/stats', async (req: Request, res: Response) => {
   try {

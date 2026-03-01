@@ -26,6 +26,7 @@ export default function SafetyPage() {
   const { status, isLoading, loadStatus, toggle } = useKillSwitchStore();
   const [chainStatus, setChainStatus] = useState<ChainStatus | null>(null);
   const [isVerifying, setIsVerifying] = useState(false);
+  const [isRepairing, setIsRepairing] = useState(false);
   const [isToggling, setIsToggling] = useState(false);
   const [reason, setReason] = useState('');
   const [showConfirm, setShowConfirm] = useState(false);
@@ -44,6 +45,15 @@ export default function SafetyPage() {
       setChainStatus(result.data);
     }
     setIsVerifying(false);
+  };
+
+  const repairChain = async () => {
+    setIsRepairing(true);
+    const result = await api.repairEventChain();
+    if (result.success) {
+      await verifyChain();
+    }
+    setIsRepairing(false);
   };
 
   const handleToggle = async () => {
@@ -171,14 +181,26 @@ export default function SafetyPage() {
               </p>
             </div>
           </div>
-          <button
-            onClick={verifyChain}
-            disabled={isVerifying}
-            className="px-4 py-2 bg-gray-800 hover:bg-gray-700 text-white rounded-lg transition flex items-center gap-2"
-          >
-            <RefreshCw className={`w-4 h-4 ${isVerifying ? 'animate-spin' : ''}`} />
-            Verify
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={verifyChain}
+              disabled={isVerifying || isRepairing}
+              className="px-4 py-2 bg-gray-800 hover:bg-gray-700 disabled:opacity-50 text-white rounded-lg transition flex items-center gap-2"
+            >
+              <RefreshCw className={`w-4 h-4 ${isVerifying ? 'animate-spin' : ''}`} />
+              Verify
+            </button>
+            {chainStatus && !chainStatus.valid && (
+              <button
+                onClick={repairChain}
+                disabled={isRepairing || isVerifying}
+                className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white rounded-lg transition flex items-center gap-2"
+              >
+                <Activity className={`w-4 h-4 ${isRepairing ? 'animate-pulse' : ''}`} />
+                {isRepairing ? 'Repairing...' : 'Repair Chain'}
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="p-6">
