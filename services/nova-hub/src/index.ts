@@ -411,11 +411,18 @@ type HubIndicators = {
   computedAt: string;
 };
 
-async function getQuote(symbol: string): Promise<HubQuote | null> {
+type AlpacaUserCreds = { key: string; secret: string } | null;
+
+async function getQuote(symbol: string, creds?: AlpacaUserCreds): Promise<HubQuote | null> {
   const sym = symbol.toUpperCase();
+  const headers: Record<string, string> = {};
+  if (creds) {
+    headers['X-Alpaca-Key'] = creds.key;
+    headers['X-Alpaca-Secret'] = creds.secret;
+  }
 
   try {
-    const res = await fetch(`${MARKETDATA_URL}/v1/market/quote/${encodeURIComponent(sym)}`);
+    const res = await fetch(`${MARKETDATA_URL}/v1/market/quote/${encodeURIComponent(sym)}`, { headers });
     const data = (await res.json().catch(() => null)) as any;
 
     const quote = data?.data?.quote;
@@ -445,14 +452,20 @@ async function getQuote(symbol: string): Promise<HubQuote | null> {
 }
 
 // Batch quote fetcher: uses the marketdata batch endpoint (Alpaca snapshots under the hood)
-async function getBatchQuotes(symbols: string[]): Promise<Map<string, HubQuote>> {
+async function getBatchQuotes(symbols: string[], creds?: AlpacaUserCreds): Promise<Map<string, HubQuote>> {
   const result = new Map<string, HubQuote>();
   if (symbols.length === 0) return result;
+
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  if (creds) {
+    headers['X-Alpaca-Key'] = creds.key;
+    headers['X-Alpaca-Secret'] = creds.secret;
+  }
 
   try {
     const res = await fetch(`${MARKETDATA_URL}/v1/market/quotes`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers,
       body: JSON.stringify({ symbols }),
     });
     const data = (await res.json().catch(() => null)) as any;
@@ -476,11 +489,16 @@ async function getBatchQuotes(symbols: string[]): Promise<Map<string, HubQuote>>
   return result;
 }
 
-async function getIndicators(symbol: string): Promise<HubIndicators | null> {
+async function getIndicators(symbol: string, creds?: AlpacaUserCreds): Promise<HubIndicators | null> {
   const sym = symbol.toUpperCase();
+  const headers: Record<string, string> = {};
+  if (creds) {
+    headers['X-Alpaca-Key'] = creds.key;
+    headers['X-Alpaca-Secret'] = creds.secret;
+  }
 
   try {
-    const res = await fetch(`${MARKETDATA_URL}/v1/market/indicators/${encodeURIComponent(sym)}`);
+    const res = await fetch(`${MARKETDATA_URL}/v1/market/indicators/${encodeURIComponent(sym)}`, { headers });
     const data = (await res.json().catch(() => null)) as any;
 
     const indicators = data?.data?.indicators;
@@ -3475,12 +3493,28 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   const allSignals: ScreenerSignal[] = [];
   const missingDataSymbols: string[] = [];
 
+  // Resolve user's Alpaca credentials for data fetching (their own bridge)
+  let userCreds: AlpacaUserCreds = null;
+  try {
+    const conn = await getActiveAlpacaConnection(userId);
+    if (conn) {
+      const apiKey = decryptSecret(conn.api_key_enc);
+      const apiSecret = decryptSecret(conn.api_secret_enc);
+      if (apiKey && apiSecret) {
+        userCreds = { key: apiKey, secret: apiSecret };
+        logger.info('Screener using user Alpaca credentials', { userId, keyLast4: conn.key_last4 });
+      }
+    }
+  } catch (err) {
+    logger.warn('Failed to resolve user Alpaca creds for screener', { userId, error: (err as Error).message });
+  }
+
   // Phase 1: Batch-fetch all quotes using the efficient batch endpoint
   const QUOTE_BATCH_SIZE = 100;
   const allQuotes = new Map<string, HubQuote>();
   for (let i = 0; i < list.length; i += QUOTE_BATCH_SIZE) {
     const batch = list.slice(i, i + QUOTE_BATCH_SIZE);
-    const batchQuotes = await getBatchQuotes(batch);
+    const batchQuotes = await getBatchQuotes(batch, userCreds);
     for (const [sym, q] of batchQuotes) {
       allQuotes.set(sym, q);
     }
@@ -3498,7 +3532,7 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
     const batch = symbolsWithQuotes.slice(i, i + INDICATOR_BATCH_SIZE);
     const results = await Promise.all(
       batch.map(async (symbol) => {
-        const ind = await getIndicators(symbol);
+        const ind = await getIndicators(symbol, userCreds);
         return { symbol, indicators: ind };
       })
     );

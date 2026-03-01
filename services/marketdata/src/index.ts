@@ -927,8 +927,24 @@ const ALPACA_TIMEFRAME_MAP: Record<string, string> = {
   '1d': '1Day',
 };
 
-async function alpacaRequest<T>(path: string, params: Record<string, string>): Promise<T | null> {
-  if (!USE_ALPACA) return null;
+// Per-request Alpaca credential context — set from incoming request headers
+type AlpacaCreds = { key: string; secret: string } | null;
+
+function getAlpacaCreds(req?: Request): AlpacaCreds {
+  if (!req) return null;
+  const key = req.headers['x-alpaca-key'] as string;
+  const secret = req.headers['x-alpaca-secret'] as string;
+  return key && secret ? { key, secret } : null;
+}
+
+function hasAlpacaAccess(creds: AlpacaCreds): boolean {
+  return USE_ALPACA || !!(creds?.key && creds?.secret);
+}
+
+async function alpacaRequest<T>(path: string, params: Record<string, string>, creds?: AlpacaCreds): Promise<T | null> {
+  const apiKey = creds?.key || ALPACA_API_KEY;
+  const apiSecret = creds?.secret || ALPACA_SECRET_KEY;
+  if (!apiKey || !apiSecret) return null;
 
   const canProceed = await alpacaRateLimiter.acquire();
   if (!canProceed) {
@@ -942,8 +958,8 @@ async function alpacaRequest<T>(path: string, params: Record<string, string>): P
   try {
     const response = await fetchWithRetry(url, {
       headers: {
-        'APCA-API-KEY-ID': ALPACA_API_KEY,
-        'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY,
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': apiSecret,
       },
     });
 
@@ -960,7 +976,7 @@ async function alpacaRequest<T>(path: string, params: Record<string, string>): P
   }
 }
 
-async function fetchAlpacaQuote(symbol: string): Promise<Quote | null> {
+async function fetchAlpacaQuote(symbol: string, creds?: AlpacaCreds): Promise<Quote | null> {
   const sym = symbol.toUpperCase();
   type AlpacaSnapshot = {
     latestTrade?: { p: number; t: string };
@@ -968,7 +984,7 @@ async function fetchAlpacaQuote(symbol: string): Promise<Quote | null> {
     prevDailyBar?: { c: number };
   };
 
-  const data = await alpacaRequest<AlpacaSnapshot>(`/v2/stocks/${sym}/snapshot`, {});
+  const data = await alpacaRequest<AlpacaSnapshot>(`/v2/stocks/${sym}/snapshot`, {}, creds);
   if (!data) return null;
 
   const price =
@@ -1000,7 +1016,7 @@ async function fetchAlpacaQuote(symbol: string): Promise<Quote | null> {
   };
 }
 
-async function fetchAlpacaCandles(symbol: string, intervalKey: string, limit: number): Promise<Candle[] | null> {
+async function fetchAlpacaCandles(symbol: string, intervalKey: string, limit: number, creds?: AlpacaCreds): Promise<Candle[] | null> {
   const timeframe = ALPACA_TIMEFRAME_MAP[intervalKey];
   if (!timeframe) return null;
 
@@ -1012,7 +1028,7 @@ async function fetchAlpacaCandles(symbol: string, intervalKey: string, limit: nu
     timeframe,
     limit: String(limit),
     adjustment: 'raw',
-  });
+  }, creds);
 
   const bars = data?.bars;
   if (!Array.isArray(bars) || bars.length === 0) return null;
@@ -1262,11 +1278,12 @@ async function fetchProviderCandles(params: {
   resolution: string;
   from: number;
   to: number;
+  creds?: AlpacaCreds;
 }): Promise<{ candles: Candle[] | null; error?: string }> {
-  const { provider, symbol, intervalKey, limit, intervalConfig, resolution, from, to } = params;
+  const { provider, symbol, intervalKey, limit, intervalConfig, resolution, from, to, creds } = params;
   try {
     if (provider === 'alpaca') {
-      const candles = await fetchAlpacaCandles(symbol, intervalKey, limit);
+      const candles = await fetchAlpacaCandles(symbol, intervalKey, limit, creds);
       return { candles: candles && candles.length > 0 ? candles : null, error: candles ? undefined : 'empty' };
     }
     if (provider === 'polygon') {
@@ -1380,10 +1397,11 @@ app.get('/v1/market/quote/:symbol', async (req: Request, res: Response) => {
     return res.json({ success: true, data: { quote: cached }, cached: true });
   }
   
+  const creds = getAlpacaCreds(req);
   let quote: Quote | null = null;
 
-  if (USE_ALPACA) {
-    quote = await fetchAlpacaQuote(symbol);
+  if (hasAlpacaAccess(creds)) {
+    quote = await fetchAlpacaQuote(symbol, creds);
   }
   if (!quote && USE_POLYGON) {
     quote = await fetchPolygonQuote(symbol);
@@ -1449,8 +1467,9 @@ async function resolveCandlesWithRouter(params: {
   symbol: string;
   intervalKey: string;
   limit: number;
+  creds?: AlpacaCreds;
 }): Promise<{ candles: Candle[]; provider: CandleProvider; integrity: CandleIntegrity }> {
-  const { symbol, intervalKey, limit } = params;
+  const { symbol, intervalKey, limit, creds } = params;
   const intervalConfig = INTERVAL_MAP[intervalKey] || INTERVAL_MAP['1d'];
 
   const resolution = FINNHUB_RESOLUTION_MAP[intervalKey] || 'D';
@@ -1462,7 +1481,12 @@ async function resolveCandlesWithRouter(params: {
   const firstProvider = priority[0];
 
   for (const provider of priority) {
-    if (!isProviderAvailable(provider)) continue;
+    // If user creds provided, treat alpaca as always available
+    if (provider === 'alpaca' && creds) {
+      // User keys override server health state
+    } else if (!isProviderAvailable(provider)) {
+      continue;
+    }
     const result = await fetchProviderCandles({
       provider,
       symbol,
@@ -1472,6 +1496,7 @@ async function resolveCandlesWithRouter(params: {
       resolution,
       from,
       to,
+      creds,
     });
 
     if (result.candles && result.candles.length > 0) {
@@ -1617,10 +1642,12 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
     });
   }
 
+  const creds = getAlpacaCreds(req);
   const { candles, provider, integrity } = await resolveCandlesWithRouter({
     symbol,
     intervalKey,
     limit: limitNum,
+    creds,
   });
 
   // Cache result
@@ -1688,8 +1715,9 @@ app.get('/v1/market/indicators/:symbol', async (req: Request, res: Response) => 
   let provider: CandleProvider | null = cachedCandles?.provider ?? null;
   let integrity: CandleIntegrity | null = cachedCandles?.integrity ?? null;
 
+  const creds = getAlpacaCreds(req);
   if (!candles || candles.length === 0 || !provider || !integrity) {
-    const resolved = await resolveCandlesWithRouter({ symbol, intervalKey: '1d', limit: 200 });
+    const resolved = await resolveCandlesWithRouter({ symbol, intervalKey: '1d', limit: 200, creds });
     candles = resolved.candles;
     provider = resolved.provider;
     integrity = resolved.integrity;
@@ -1846,9 +1874,11 @@ app.get('/v1/market/status', (_req: Request, res: Response) => {
 // ============================================
 
 // Alpaca batch snapshot: fetches up to 200 symbols in one call
-async function fetchAlpacaBatchSnapshots(syms: string[]): Promise<Map<string, Quote>> {
+async function fetchAlpacaBatchSnapshots(syms: string[], creds?: AlpacaCreds): Promise<Map<string, Quote>> {
   const result = new Map<string, Quote>();
-  if (!USE_ALPACA || syms.length === 0) return result;
+  const apiKey = creds?.key || ALPACA_API_KEY;
+  const apiSecret = creds?.secret || ALPACA_SECRET_KEY;
+  if ((!apiKey || !apiSecret) || syms.length === 0) return result;
 
   const canProceed = await alpacaRateLimiter.acquire();
   if (!canProceed) {
@@ -1862,8 +1892,8 @@ async function fetchAlpacaBatchSnapshots(syms: string[]): Promise<Map<string, Qu
   try {
     const response = await fetchWithRetry(url, {
       headers: {
-        'APCA-API-KEY-ID': ALPACA_API_KEY,
-        'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY,
+        'APCA-API-KEY-ID': apiKey,
+        'APCA-API-SECRET-KEY': apiSecret,
       },
     }, 2, 1000);
 
@@ -1936,10 +1966,11 @@ app.post('/v1/market/quotes', async (req: Request, res: Response) => {
   }
 
   // Use Alpaca batch snapshot for uncached symbols (up to ~200 per call)
-  if (uncached.length > 0 && USE_ALPACA && isProviderAvailable('alpaca')) {
+  const creds = getAlpacaCreds(req);
+  if (uncached.length > 0 && (hasAlpacaAccess(creds) || (USE_ALPACA && isProviderAvailable('alpaca')))) {
     for (let i = 0; i < uncached.length; i += 100) {
       const batch = uncached.slice(i, i + 100);
-      const batchResult = await fetchAlpacaBatchSnapshots(batch);
+      const batchResult = await fetchAlpacaBatchSnapshots(batch, creds);
       for (const [sym, quote] of batchResult) {
         quoteCache.set(`quote:${sym}`, quote, getCacheTTL('QUOTE'));
         quotes.push(quote);
