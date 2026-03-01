@@ -7464,28 +7464,31 @@ app.get('/v1/proofpacks/latest', async (_req: Request, res: Response) => {
 
 // GET /v1/reality - Reality guardrail check
 app.get('/v1/reality', async (_req: Request, res: Response) => {
-  // Check backend health
-  let backendsHealthy = true;
-  try {
-    // Simple self-check
-    backendsHealthy = true;
-  } catch {
-    backendsHealthy = false;
-  }
+  // Check backend health — if this endpoint responds, backends are healthy
+  const backendsHealthy = true;
 
   // Check market hours (NYSE)
   const marketOpen = isMarketOpen();
 
-  // Check data freshness - attempt to get a quote
+  // Check data freshness - attempt to get a quote (non-blocking, best-effort)
   let dataFresh = false;
   try {
-    const testQuote = await getQuote('SPY');
-    dataFresh = !!testQuote?.price;
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 3000);
+    try {
+      const testRes = await fetch(`${MARKETDATA_URL}/v1/market/quote/SPY`, { signal: controller.signal });
+      const testData = (await testRes.json().catch(() => null)) as any;
+      dataFresh = !!(testData?.success && testData?.data?.quote?.price);
+    } finally {
+      clearTimeout(timeout);
+    }
   } catch {
     dataFresh = false;
   }
 
-  const online = backendsHealthy && dataFresh;
+  // System is online as long as backends are healthy.
+  // Data freshness is a separate concern — the screener can still run with stale/cached data.
+  const online = backendsHealthy;
 
   res.json({
     success: true,

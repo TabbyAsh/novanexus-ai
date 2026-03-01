@@ -1082,6 +1082,27 @@ app.all('/v1/dashboard/stats', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Reality check, Decision Cards, UDM, Daily Drop, Proof Packs -> Nova Hub
+app.all('/v1/reality', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/cards/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/udm/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/daily-drop', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/proofpacks/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Catch-all for unknown routes
 app.use((_req: Request, res: Response) => {
   res.status(HTTP_STATUS.NOT_FOUND).json({

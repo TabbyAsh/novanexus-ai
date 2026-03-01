@@ -61,11 +61,11 @@ export function RealityBanner() {
     if (!reality?.backendsHealthy) {
       return { icon: '🔴', text: 'System Offline — TAKE actions disabled', severity: 'critical' };
     }
-    if (!reality?.dataFresh) {
-      return { icon: '⚠️', text: 'Data Stale — Prices may be outdated', severity: 'warning' };
-    }
     if (!reality?.marketOpen) {
       return { icon: '🌙', text: 'Market Closed — After hours mode', severity: 'info' };
+    }
+    if (!reality?.dataFresh) {
+      return { icon: '⚠️', text: 'Data Stale — Prices may be outdated', severity: 'warning' };
     }
     return null;
   };
