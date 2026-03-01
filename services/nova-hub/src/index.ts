@@ -444,6 +444,38 @@ async function getQuote(symbol: string): Promise<HubQuote | null> {
   }
 }
 
+// Batch quote fetcher: uses the marketdata batch endpoint (Alpaca snapshots under the hood)
+async function getBatchQuotes(symbols: string[]): Promise<Map<string, HubQuote>> {
+  const result = new Map<string, HubQuote>();
+  if (symbols.length === 0) return result;
+
+  try {
+    const res = await fetch(`${MARKETDATA_URL}/v1/market/quotes`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ symbols }),
+    });
+    const data = (await res.json().catch(() => null)) as any;
+
+    if (data?.success && Array.isArray(data.data?.quotes)) {
+      for (const q of data.data.quotes) {
+        if (typeof q?.price === 'number' && Number.isFinite(q.price) && q.symbol) {
+          result.set(q.symbol.toUpperCase(), {
+            price: q.price,
+            change: typeof q.change === 'number' && Number.isFinite(q.change) ? q.change : null,
+            changePercent: typeof q.changePercent === 'number' && Number.isFinite(q.changePercent) ? q.changePercent : null,
+            volume: typeof q.volume === 'number' && Number.isFinite(q.volume) ? q.volume : null,
+          });
+        }
+      }
+    }
+  } catch (err) {
+    logger.warn('Batch quotes failed', { count: symbols.length, error: (err as Error).message });
+  }
+
+  return result;
+}
+
 async function getIndicators(symbol: string): Promise<HubIndicators | null> {
   const sym = symbol.toUpperCase();
 
@@ -3443,8 +3475,46 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   const allSignals: ScreenerSignal[] = [];
   const missingDataSymbols: string[] = [];
 
+  // Phase 1: Batch-fetch all quotes using the efficient batch endpoint
+  const QUOTE_BATCH_SIZE = 100;
+  const allQuotes = new Map<string, HubQuote>();
+  for (let i = 0; i < list.length; i += QUOTE_BATCH_SIZE) {
+    const batch = list.slice(i, i + QUOTE_BATCH_SIZE);
+    const batchQuotes = await getBatchQuotes(batch);
+    for (const [sym, q] of batchQuotes) {
+      allQuotes.set(sym, q);
+    }
+    // Small delay between batches to avoid overwhelming providers
+    if (i + QUOTE_BATCH_SIZE < list.length) {
+      await new Promise(r => setTimeout(r, 200));
+    }
+  }
+
+  // Phase 2: Fetch indicators in controlled batches (these require candles, so are heavier)
+  const INDICATOR_BATCH_SIZE = 15;
+  const allIndicators = new Map<string, HubIndicators>();
+  const symbolsWithQuotes = list.filter(s => allQuotes.has(s));
+  for (let i = 0; i < symbolsWithQuotes.length; i += INDICATOR_BATCH_SIZE) {
+    const batch = symbolsWithQuotes.slice(i, i + INDICATOR_BATCH_SIZE);
+    const results = await Promise.all(
+      batch.map(async (symbol) => {
+        const ind = await getIndicators(symbol);
+        return { symbol, indicators: ind };
+      })
+    );
+    for (const { symbol, indicators } of results) {
+      if (indicators) allIndicators.set(symbol, indicators);
+    }
+    // Delay between indicator batches
+    if (i + INDICATOR_BATCH_SIZE < symbolsWithQuotes.length) {
+      await new Promise(r => setTimeout(r, 300));
+    }
+  }
+
+  // Phase 3: Build signals from pre-fetched data
   for (const symbol of list) {
-    const [quote, indicators] = await Promise.all([getQuote(symbol), getIndicators(symbol)]);
+    const quote = allQuotes.get(symbol);
+    const indicators = allIndicators.get(symbol);
     if (!quote || !indicators) {
       missingDataSymbols.push(symbol);
       continue;
@@ -7660,17 +7730,19 @@ app.post('/v1/content/generate', async (req: Request, res: Response) => {
 
   try {
     // Gather real context from platform activity
-    const recentScans = await query<{ symbol: string; pattern: string; confidence: number; type: string }>(
+    const recentScansRaw = await query<{ symbol: string; pattern: string; confidence: number; type: string }>(
       `SELECT symbol, pattern, confidence, type FROM scan_results
        WHERE created_at > NOW() - INTERVAL '48 hours'
        ORDER BY confidence DESC LIMIT 10`
     ).catch(() => [] as any[]);
+    const recentScans: any[] = Array.isArray(recentScansRaw) ? recentScansRaw : (recentScansRaw as any)?.rows ?? [];
 
-    const journalEntries = await query<{ symbol: string; direction: string; pnl: number | null; status: string }>(
+    const journalEntriesRaw = await query<{ symbol: string; direction: string; pnl: number | null; status: string }>(
       `SELECT symbol, direction, pnl, status FROM journal_entries
        WHERE created_at > NOW() - INTERVAL '7 days'
        ORDER BY created_at DESC LIMIT 10`
     ).catch(() => [] as any[]);
+    const journalEntries: any[] = Array.isArray(journalEntriesRaw) ? journalEntriesRaw : (journalEntriesRaw as any)?.rows ?? [];
 
     const symbols = recentScans.map((s: any) => s.symbol).join(', ') || 'SPY, QQQ, AAPL, NVDA, TSLA';
     const topPattern = recentScans[0]?.pattern || 'momentum breakout';

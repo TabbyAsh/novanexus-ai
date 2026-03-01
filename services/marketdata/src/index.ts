@@ -82,7 +82,7 @@ type ProviderHealth = {
 };
 
 const PROVIDER_FAILURE_THRESHOLD = Number(process.env.CANDLE_PROVIDER_FAILURE_THRESHOLD || 3);
-const PROVIDER_COOLDOWN_MS = Number(process.env.CANDLE_PROVIDER_COOLDOWN_MS || 60_000);
+const PROVIDER_COOLDOWN_MS = Number(process.env.CANDLE_PROVIDER_COOLDOWN_MS || 300_000); // 5 min cooldown (was 60s)
 
 const providerHealth: Record<CandleProvider, ProviderHealth> = {
   polygon: { provider: 'polygon', status: 'healthy', consecutiveFailures: 0 },
@@ -466,12 +466,34 @@ const candleCache = new SimpleCache();
 const indicatorCache = new SimpleCache();
 const symbolCache = new SimpleCache();
 
+function isMarketOpen(): boolean {
+  const now = new Date();
+  const day = now.getUTCDay();
+  if (day === 0 || day === 6) return false;
+  const etHour = (now.getUTCHours() - 5 + 24) % 24; // Rough EST conversion
+  return etHour >= 9 && etHour < 16;
+}
+
+// Market-hours-aware cache TTLs — aggressive caching off-hours to prevent provider spam
+function getCacheTTL(base: 'QUOTE' | 'CANDLES' | 'INDICATORS' | 'FUNDAMENTALS' | 'SYMBOLS'): number {
+  const offHoursMultiplier = isMarketOpen() ? 1 : 10; // 10x longer cache when market is closed
+  const ttls: Record<string, number> = {
+    QUOTE: 30,          // 30s open, 5min closed
+    CANDLES: 120,       // 2min open, 20min closed
+    INDICATORS: 90,     // 90s open, 15min closed
+    FUNDAMENTALS: 3600, // 1h always
+    SYMBOLS: 86400,     // 24h always
+  };
+  const baseTTL = ttls[base] ?? 60;
+  return base === 'FUNDAMENTALS' || base === 'SYMBOLS' ? baseTTL : baseTTL * offHoursMultiplier;
+}
+
 const CACHE_TTL = {
-  QUOTE: 5,        // 5 seconds for real-time quotes
-  CANDLES: 60,     // 1 minute for candles
-  INDICATORS: 30,  // 30 seconds for indicators
-  FUNDAMENTALS: 3600, // 1 hour for fundamentals
-  SYMBOLS: 86400,  // 24 hours for symbol universe
+  QUOTE: 30,
+  CANDLES: 120,
+  INDICATORS: 90,
+  FUNDAMENTALS: 3600,
+  SYMBOLS: 86400,
 };
 
 // ============================================
@@ -511,6 +533,12 @@ class RateLimiter {
 const rateLimiter = new RateLimiter(5, 60000);
 // Alpaca data (IEX) is generous but still rate-limited; keep modest guardrail.
 const alpacaRateLimiter = new RateLimiter(200, 60000);
+
+// Track whether all providers are currently exhausted (used for stale-cache fallback)
+function areAllProvidersExhausted(): boolean {
+  const priority = getProviderPriority();
+  return priority.every(p => !isProviderAvailable(p));
+}
 
 // ============================================
 // Polygon API Client
@@ -1003,7 +1031,7 @@ async function fetchAlpacaCandles(symbol: string, intervalKey: string, limit: nu
 // Yahoo Finance Data Fetchers (Zero-Config)
 // ============================================
 
-const yahooRateLimiter = new RateLimiter(30, 60000); // Conservative limit
+const yahooRateLimiter = new RateLimiter(60, 60000); // Moderate limit (Yahoo has no strict cap)
 
 const YAHOO_INTERVAL_MAP: Record<string, string> = {
   '1m': '1m',
@@ -1313,7 +1341,7 @@ app.get('/v1/market/symbols', async (_req: Request, res: Response) => {
     });
   }
 
-  symbolCache.set(cacheKey, symbols, CACHE_TTL.SYMBOLS);
+  symbolCache.set(cacheKey, symbols, getCacheTTL('SYMBOLS'));
   res.json({ success: true, data: { symbols }, cached: false });
 });
 
@@ -1382,7 +1410,7 @@ app.get('/v1/market/quote/:symbol', async (req: Request, res: Response) => {
   }
 
   // Cache the result
-  quoteCache.set(cacheKey, quote, CACHE_TTL.QUOTE);
+  quoteCache.set(cacheKey, quote, getCacheTTL('QUOTE'));
 
   res.json({ success: true, data: { quote }, cached: false });
 });
@@ -1553,11 +1581,14 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
     const isFallbackCached = integrity?.source_type && integrity.source_type !== 'primary';
     const isStaleCached = integrity?.latency_class === 'stale';
 
+    // Only bypass cache if we have a healthy primary provider AND the cache is stale/fallback.
+    // NEVER bypass cache when all providers are exhausted — serve stale data.
+    const allExhausted = areAllProvidersExhausted();
     const shouldBypassCache =
-      !hasCachedIntegrity ||
-      !cachedProviderHealthy ||
+      !allExhausted &&
+      (!hasCachedIntegrity ||
       (isFallbackCached && primaryHealthy) ||
-      isStaleCached;
+      (isStaleCached && primaryHealthy));
 
     if (!shouldBypassCache) {
       return res.json({
@@ -1593,7 +1624,7 @@ app.get('/v1/market/candles/:symbol', async (req: Request, res: Response) => {
   });
 
   // Cache result
-  candleCache.set(cacheKey, { candles, provider, integrity }, CACHE_TTL.CANDLES);
+  candleCache.set(cacheKey, { candles, provider, integrity }, getCacheTTL('CANDLES'));
 
   res.json({
     success: true,
@@ -1662,7 +1693,7 @@ app.get('/v1/market/indicators/:symbol', async (req: Request, res: Response) => 
     candles = resolved.candles;
     provider = resolved.provider;
     integrity = resolved.integrity;
-    candleCache.set(candlesCacheKey, { provider, candles, integrity }, CACHE_TTL.CANDLES);
+    candleCache.set(candlesCacheKey, { provider, candles, integrity }, getCacheTTL('CANDLES'));
   }
 
   if (!integrity || !hasIntegrity(integrity) || candles.some((c) => !hasIntegrity(c.integrity))) {
@@ -1699,7 +1730,7 @@ app.get('/v1/market/indicators/:symbol', async (req: Request, res: Response) => 
     integrity,
   };
 
-  indicatorCache.set(cacheKey, indicators, CACHE_TTL.INDICATORS);
+  indicatorCache.set(cacheKey, indicators, getCacheTTL('INDICATORS'));
 
   res.json({ success: true, data: { indicators }, cached: false });
 });
@@ -1810,17 +1841,73 @@ app.get('/v1/market/status', (_req: Request, res: Response) => {
   });
 });
 
-function isMarketOpen(): boolean {
-  const now = new Date();
-  const day = now.getUTCDay();
-  if (day === 0 || day === 6) return false;
-  const etHour = (now.getUTCHours() - 5 + 24) % 24; // Rough EST conversion
-  return etHour >= 9 && etHour < 16;
-}
-
 // ============================================
 // Batch Quote Endpoint
 // ============================================
+
+// Alpaca batch snapshot: fetches up to 200 symbols in one call
+async function fetchAlpacaBatchSnapshots(syms: string[]): Promise<Map<string, Quote>> {
+  const result = new Map<string, Quote>();
+  if (!USE_ALPACA || syms.length === 0) return result;
+
+  const canProceed = await alpacaRateLimiter.acquire();
+  if (!canProceed) {
+    logger.warn('Rate limit exceeded for Alpaca batch snapshot');
+    return result;
+  }
+
+  const query = new URLSearchParams({ symbols: syms.join(','), feed: ALPACA_DATA_FEED });
+  const url = `${ALPACA_DATA_BASE_URL}/v2/stocks/snapshots?${query.toString()}`;
+
+  try {
+    const response = await fetchWithRetry(url, {
+      headers: {
+        'APCA-API-KEY-ID': ALPACA_API_KEY,
+        'APCA-API-SECRET-KEY': ALPACA_SECRET_KEY,
+      },
+    }, 2, 1000);
+
+    if (!response.ok) {
+      logger.error(`Alpaca batch snapshot error: ${response.status}`);
+      return result;
+    }
+
+    const data = await response.json() as Record<string, any>;
+
+    for (const [sym, snap] of Object.entries(data)) {
+      const price =
+        (typeof snap?.latestTrade?.p === 'number' && Number.isFinite(snap.latestTrade.p) ? snap.latestTrade.p : null) ??
+        (typeof snap?.dailyBar?.c === 'number' && Number.isFinite(snap.dailyBar.c) ? snap.dailyBar.c : null) ??
+        (typeof snap?.prevDailyBar?.c === 'number' && Number.isFinite(snap.prevDailyBar.c) ? snap.prevDailyBar.c : null);
+
+      if (typeof price !== 'number') continue;
+
+      const prevClose = typeof snap?.prevDailyBar?.c === 'number' ? snap.prevDailyBar.c : null;
+      const change = typeof prevClose === 'number' ? price - prevClose : null;
+      const changePercent = typeof prevClose === 'number' && prevClose !== 0 ? ((price - prevClose) / prevClose) * 100 : null;
+      const volume = typeof snap?.dailyBar?.v === 'number' ? snap.dailyBar.v : null;
+
+      result.set(sym.toUpperCase(), {
+        symbol: sym.toUpperCase(),
+        price: Math.round(price * 100) / 100,
+        change: typeof change === 'number' ? Math.round(change * 100) / 100 : null,
+        changePercent: typeof changePercent === 'number' ? Math.round(changePercent * 100) / 100 : null,
+        volume,
+        bid: null,
+        ask: null,
+        timestamp: snap?.latestTrade?.t ? new Date(snap.latestTrade.t).toISOString() : new Date().toISOString(),
+        source: 'alpaca',
+      });
+    }
+
+    markProviderSuccess('alpaca');
+  } catch (error) {
+    logger.error('Alpaca batch snapshot failed', error as Error);
+    markProviderFailure('alpaca', (error as Error).message);
+  }
+
+  return result;
+}
 
 app.post('/v1/market/quotes', async (req: Request, res: Response) => {
   const { symbols } = req.body;
@@ -1832,39 +1919,60 @@ app.post('/v1/market/quotes', async (req: Request, res: Response) => {
     });
   }
 
+  // Accept up to 250 symbols for screener support
+  const allSyms = symbols.slice(0, 250).map(s => String(s).toUpperCase().trim()).filter(Boolean);
   const quotes: Quote[] = [];
   const unavailableSymbols: string[] = [];
 
-  for (const rawSymbol of symbols.slice(0, 20)) {
-    const sym = String(rawSymbol).toUpperCase();
-    const cacheKey = `quote:${sym}`;
+  // Separate cached from uncached
+  const uncached: string[] = [];
+  for (const sym of allSyms) {
+    const cached = quoteCache.get<Quote>(`quote:${sym}`);
+    if (cached) {
+      quotes.push(cached);
+    } else {
+      uncached.push(sym);
+    }
+  }
 
-    let quote = quoteCache.get<Quote>(cacheKey);
-
-    if (!quote) {
-      if (USE_ALPACA) {
-        quote = await fetchAlpacaQuote(sym);
+  // Use Alpaca batch snapshot for uncached symbols (up to ~200 per call)
+  if (uncached.length > 0 && USE_ALPACA && isProviderAvailable('alpaca')) {
+    for (let i = 0; i < uncached.length; i += 100) {
+      const batch = uncached.slice(i, i + 100);
+      const batchResult = await fetchAlpacaBatchSnapshots(batch);
+      for (const [sym, quote] of batchResult) {
+        quoteCache.set(`quote:${sym}`, quote, getCacheTTL('QUOTE'));
+        quotes.push(quote);
       }
-      if (!quote && USE_POLYGON) {
-        quote = await fetchPolygonQuote(sym);
-      }
-      if (!quote && USE_FINNHUB) {
-        quote = await fetchFinnhubQuote(sym);
-      }
-      if (!quote && USE_YAHOO) {
-        quote = await fetchYahooQuote(sym);
-      }
-
-      if (quote) {
-        quoteCache.set(cacheKey, quote, CACHE_TTL.QUOTE);
+      // Remove fetched from uncached list
+      for (const sym of batchResult.keys()) {
+        const idx = uncached.indexOf(sym);
+        if (idx !== -1) uncached.splice(idx, 1);
       }
     }
+  }
+
+  // Remaining uncached: try other providers individually (with limit to avoid rate storms)
+  const fallbackLimit = Math.min(uncached.length, 30);
+  for (let i = 0; i < fallbackLimit; i++) {
+    const sym = uncached[i];
+    let quote: Quote | null = null;
+
+    if (!quote && USE_YAHOO) quote = await fetchYahooQuote(sym);
+    if (!quote && USE_FINNHUB) quote = await fetchFinnhubQuote(sym);
+    if (!quote && USE_POLYGON) quote = await fetchPolygonQuote(sym);
 
     if (quote) {
+      quoteCache.set(`quote:${sym}`, quote, getCacheTTL('QUOTE'));
       quotes.push(quote);
     } else {
       unavailableSymbols.push(sym);
     }
+  }
+
+  // Mark remaining as unavailable
+  for (let i = fallbackLimit; i < uncached.length; i++) {
+    unavailableSymbols.push(uncached[i]);
   }
 
   if (quotes.length === 0) {
