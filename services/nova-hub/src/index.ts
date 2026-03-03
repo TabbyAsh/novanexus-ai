@@ -3538,58 +3538,116 @@ async function directAlpacaBars(
 ): Promise<number[] | null> {
   if (!apiKey || !apiSecret) return null;
   try {
-    const params = new URLSearchParams({ timeframe: '1Day', limit: String(limit), adjustment: 'raw', feed: ALPACA_DATA_FEED_HUB });
-    const url = `${ALPACA_DATA_BASE}/v2/stocks/${symbol.toUpperCase()}/bars?${params}`;
-    const resp = await fetch(url, {
-      headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
-      signal: AbortSignal.timeout(10000),
+    // Alpaca bars API defaults start to beginning-of-day without an explicit start param.
+    // We need ~300 calendar days to cover 210 trading days.
+    const startDate = new Date(Date.now() - 365 * 86400000).toISOString().split('T')[0];
+    const params = new URLSearchParams({
+      timeframe: '1Day',
+      start: startDate,
+      limit: String(limit),
+      adjustment: 'raw',
+      feed: ALPACA_DATA_FEED_HUB,
     });
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as any;
-    const bars = data?.bars;
-    if (!Array.isArray(bars) || bars.length === 0) return null;
-    return bars.map((b: any) => Math.round(b.c * 100) / 100).filter((c: number) => Number.isFinite(c));
+    const allCloses: number[] = [];
+    let pageToken: string | undefined;
+    // Paginate if needed (Alpaca caps at 10000 per page, but we only need ~210)
+    do {
+      const p = new URLSearchParams(params);
+      if (pageToken) p.set('page_token', pageToken);
+      const url = `${ALPACA_DATA_BASE}/v2/stocks/${symbol.toUpperCase()}/bars?${p}`;
+      const resp = await fetch(url, {
+        headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!resp.ok) return allCloses.length >= 20 ? allCloses : null;
+      const data = (await resp.json()) as any;
+      const bars = data?.bars;
+      if (Array.isArray(bars)) {
+        for (const b of bars) {
+          const c = Math.round(b.c * 100) / 100;
+          if (Number.isFinite(c)) allCloses.push(c);
+        }
+      }
+      pageToken = data?.next_page_token || undefined;
+    } while (pageToken && allCloses.length < limit);
+    return allCloses.length >= 20 ? allCloses : null;
   } catch {
     return null;
   }
 }
 
 async function directYahooQuote(symbol: string): Promise<HubQuote | null> {
-  try {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1d&range=2d`;
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36' },
-      signal: AbortSignal.timeout(8000),
-    });
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as any;
-    const meta = data?.chart?.result?.[0]?.meta;
-    if (!meta || typeof meta.regularMarketPrice !== 'number') return null;
-    const price = meta.regularMarketPrice;
-    const prevClose = meta.chartPreviousClose ?? meta.previousClose;
-    return {
-      price: Math.round(price * 100) / 100,
-      change: typeof prevClose === 'number' ? Math.round((price - prevClose) * 100) / 100 : null,
-      changePercent: typeof prevClose === 'number' && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : null,
-      volume: typeof meta.regularMarketVolume === 'number' ? meta.regularMarketVolume : null,
-    };
-  } catch { return null; }
+  const sym = symbol.toUpperCase();
+  // Try multiple Yahoo Finance endpoints for resilience
+  const endpoints = [
+    // v8 chart API (primary)
+    `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=2d`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=2d`,
+    // Fallback: quoteSummary
+    `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${sym}?modules=price`,
+  ];
+  const hdrs = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+  for (const url of endpoints) {
+    try {
+      const resp = await fetch(url, { headers: hdrs, signal: AbortSignal.timeout(8000) });
+      if (!resp.ok) continue;
+      const data = (await resp.json()) as any;
+      // v8 chart response
+      const meta = data?.chart?.result?.[0]?.meta;
+      if (meta && typeof meta.regularMarketPrice === 'number') {
+        const price = meta.regularMarketPrice;
+        const prevClose = meta.chartPreviousClose ?? meta.previousClose;
+        return {
+          price: Math.round(price * 100) / 100,
+          change: typeof prevClose === 'number' ? Math.round((price - prevClose) * 100) / 100 : null,
+          changePercent: typeof prevClose === 'number' && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : null,
+          volume: typeof meta.regularMarketVolume === 'number' ? meta.regularMarketVolume : null,
+        };
+      }
+      // v10 quoteSummary response
+      const priceData = data?.quoteSummary?.result?.[0]?.price;
+      if (priceData && typeof priceData.regularMarketPrice?.raw === 'number') {
+        const price = priceData.regularMarketPrice.raw;
+        const prevClose = priceData.regularMarketPreviousClose?.raw;
+        return {
+          price: Math.round(price * 100) / 100,
+          change: typeof prevClose === 'number' ? Math.round((price - prevClose) * 100) / 100 : null,
+          changePercent: typeof prevClose === 'number' && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : null,
+          volume: typeof priceData.regularMarketVolume?.raw === 'number' ? priceData.regularMarketVolume.raw : null,
+        };
+      }
+    } catch { /* try next endpoint */ }
+  }
+  return null;
 }
 
 async function directYahooCandles(symbol: string): Promise<number[] | null> {
-  try {
-    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1d&range=1y`;
-    const resp = await fetch(url, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36' },
-      signal: AbortSignal.timeout(10000),
-    });
-    if (!resp.ok) return null;
-    const data = (await resp.json()) as any;
-    const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
-    if (!quote) return null;
-    const closes: number[] = (quote.close || []).filter((c: any) => typeof c === 'number' && Number.isFinite(c));
-    return closes.length >= 20 ? closes : null;
-  } catch { return null; }
+  const sym = symbol.toUpperCase();
+  const urls = [
+    `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1y`,
+    `https://query2.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&range=1y`,
+  ];
+  const hdrs = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+    'Accept': 'application/json',
+    'Accept-Language': 'en-US,en;q=0.9',
+  };
+  for (const url of urls) {
+    try {
+      const resp = await fetch(url, { headers: hdrs, signal: AbortSignal.timeout(10000) });
+      if (!resp.ok) continue;
+      const data = (await resp.json()) as any;
+      const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
+      if (!quote) continue;
+      const closes: number[] = (quote.close || []).filter((c: any) => typeof c === 'number' && Number.isFinite(c));
+      if (closes.length >= 20) return closes;
+    } catch { /* try next */ }
+  }
+  return null;
 }
 
 // Local indicator computation (avoids dependency on marketdata service)
@@ -9310,9 +9368,10 @@ app.get('/v1/diagnostic/live', async (_req: Request, res: Response) => {
       results.alpaca.snapshots = { status: 'FAIL', error: (err as Error).message };
     }
 
-    // Alpaca bars (historical)
+    // Alpaca bars (historical — use proper start date)
     try {
-      const barsParams = new URLSearchParams({ timeframe: '1Day', limit: '5', feed: ALPACA_DATA_FEED_HUB });
+      const barsStart = new Date(Date.now() - 14 * 86400000).toISOString().split('T')[0];
+      const barsParams = new URLSearchParams({ timeframe: '1Day', start: barsStart, limit: '10', feed: ALPACA_DATA_FEED_HUB });
       const barsResp = await fetch(`${ALPACA_DATA_BASE}/v2/stocks/${testSymbol}/bars?${barsParams}`, {
         headers: { 'APCA-API-KEY-ID': SERVER_ALPACA_API_KEY, 'APCA-API-SECRET-KEY': SERVER_ALPACA_SECRET_KEY },
         signal: AbortSignal.timeout(10000),
@@ -9364,23 +9423,36 @@ app.get('/v1/diagnostic/live', async (_req: Request, res: Response) => {
   // 4. EBAY SCRAPING (tests from Railway IP)
   try {
     const encodedQuery = encodeURIComponent('iphone 15 pro');
-    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&LH_BIN=1&_ipg=10`;
+    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&LH_BIN=1&_ipg=60`;
     const ebayResp = await fetch(ebayUrl, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
-        'Accept': 'text/html,application/xhtml+xml',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
       },
       signal: AbortSignal.timeout(15000),
     });
     const ebayHtml = await ebayResp.text();
-    const hasListings = ebayHtml.includes('s-item__price') || ebayHtml.includes('ldp-merch-item');
-    const blocked = ebayHtml.includes('captcha') || ebayHtml.includes('Security Measure') || ebayHtml.includes('robot');
+    // Check multiple selector variants (eBay changes markup frequently)
+    const hasListings = ebayHtml.includes('s-item__price')
+      || ebayHtml.includes('s-item__info')
+      || ebayHtml.includes('ldp-merch-item')
+      || ebayHtml.includes('bsig__title')  // new browse-style items
+      || ebayHtml.includes('srp-results');
+    const blocked = ebayHtml.includes('captcha') || ebayHtml.includes('Security Measure') || ebayHtml.includes('robot') || ebayHtml.includes('Access Denied');
+    // Try to count items for diagnostic
+    const itemCountMatch = ebayHtml.match(/class="s-item\s/g);
+    const itemCount = itemCountMatch ? itemCountMatch.length : 0;
     results.ebay = {
       status: ebayResp.ok ? (hasListings ? 'OK' : (blocked ? 'BLOCKED' : 'NO_LISTINGS')) : 'FAIL',
       httpStatus: ebayResp.status,
       htmlLength: ebayHtml.length,
       hasListings,
       blocked,
+      itemsFound: itemCount,
     };
   } catch (err) {
     results.ebay = { status: 'FAIL', error: (err as Error).message };
