@@ -9267,6 +9267,190 @@ app.get('/v1/intelligence/weekly', authMiddleware, async (req: AuthenticatedRequ
   res.json({ success: true, data: digest });
 });
 
+// ============================================
+// DIAGNOSTIC: Tests every external service with real calls
+// No auth required — this is for debugging production.
+// ============================================
+app.get('/v1/diagnostic/live', async (_req: Request, res: Response) => {
+  const results: Record<string, any> = {};
+  const testSymbol = 'AAPL';
+
+  // 1. DATABASE
+  try {
+    const dbTest = await queryOne<{ now: string }>(`SELECT NOW() as now`);
+    results.database = { status: 'OK', serverTime: dbTest?.now };
+  } catch (err) {
+    results.database = { status: 'FAIL', error: (err as Error).message };
+  }
+
+  // 2. ALPACA MARKET DATA (real stock prices)
+  results.alpaca = { configured: SERVER_ALPACA_CONFIGURED, keyPrefix: SERVER_ALPACA_API_KEY?.slice(0, 6) || 'NONE' };
+  if (SERVER_ALPACA_CONFIGURED) {
+    try {
+      const params = new URLSearchParams({ symbols: `${testSymbol},TSLA,MSFT`, feed: ALPACA_DATA_FEED_HUB });
+      const url = `${ALPACA_DATA_BASE}/v2/stocks/snapshots?${params}`;
+      const resp = await fetch(url, {
+        headers: { 'APCA-API-KEY-ID': SERVER_ALPACA_API_KEY, 'APCA-API-SECRET-KEY': SERVER_ALPACA_SECRET_KEY },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (resp.ok) {
+        const data = (await resp.json()) as any;
+        const symbols = Object.keys(data);
+        const samplePrices: Record<string, number> = {};
+        for (const sym of symbols) {
+          const price = data[sym]?.latestTrade?.p || data[sym]?.dailyBar?.c;
+          if (typeof price === 'number') samplePrices[sym] = Math.round(price * 100) / 100;
+        }
+        results.alpaca.snapshots = { status: 'OK', symbolsReturned: symbols.length, prices: samplePrices };
+      } else {
+        const body = await resp.text().catch(() => '');
+        results.alpaca.snapshots = { status: 'FAIL', httpStatus: resp.status, body: body.slice(0, 200) };
+      }
+    } catch (err) {
+      results.alpaca.snapshots = { status: 'FAIL', error: (err as Error).message };
+    }
+
+    // Alpaca bars (historical)
+    try {
+      const barsParams = new URLSearchParams({ timeframe: '1Day', limit: '5', feed: ALPACA_DATA_FEED_HUB });
+      const barsResp = await fetch(`${ALPACA_DATA_BASE}/v2/stocks/${testSymbol}/bars?${barsParams}`, {
+        headers: { 'APCA-API-KEY-ID': SERVER_ALPACA_API_KEY, 'APCA-API-SECRET-KEY': SERVER_ALPACA_SECRET_KEY },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (barsResp.ok) {
+        const barsData = (await barsResp.json()) as any;
+        const barCount = Array.isArray(barsData?.bars) ? barsData.bars.length : 0;
+        const lastBar = barsData?.bars?.[barCount - 1];
+        results.alpaca.bars = { status: 'OK', barsReturned: barCount, lastClose: lastBar?.c, lastDate: lastBar?.t };
+      } else {
+        results.alpaca.bars = { status: 'FAIL', httpStatus: barsResp.status };
+      }
+    } catch (err) {
+      results.alpaca.bars = { status: 'FAIL', error: (err as Error).message };
+    }
+
+    // Alpaca account (paper trading)
+    try {
+      const acctResp = await fetch(`${SERVER_ALPACA_ENDPOINT.replace('/v2', '')}/v2/account`, {
+        headers: { 'APCA-API-KEY-ID': SERVER_ALPACA_API_KEY, 'APCA-API-SECRET-KEY': SERVER_ALPACA_SECRET_KEY },
+        signal: AbortSignal.timeout(10000),
+      });
+      if (acctResp.ok) {
+        const acct = (await acctResp.json()) as any;
+        results.alpaca.account = { status: 'OK', equity: acct.equity, buyingPower: acct.buying_power, paperOrLive: acct.account_number?.startsWith('PA') ? 'PAPER' : 'LIVE' };
+      } else {
+        results.alpaca.account = { status: 'FAIL', httpStatus: acctResp.status };
+      }
+    } catch (err) {
+      results.alpaca.account = { status: 'FAIL', error: (err as Error).message };
+    }
+  }
+
+  // 3. YAHOO FINANCE (no API key needed)
+  try {
+    const yahooQuote = await directYahooQuote(testSymbol);
+    results.yahoo = { quote: yahooQuote ? { status: 'OK', price: yahooQuote.price, change: yahooQuote.changePercent } : { status: 'FAIL', reason: 'null response' } };
+  } catch (err) {
+    results.yahoo = { quote: { status: 'FAIL', error: (err as Error).message } };
+  }
+
+  try {
+    const yahooCandles = await directYahooCandles(testSymbol);
+    results.yahoo.candles = yahooCandles ? { status: 'OK', candleCount: yahooCandles.length, lastClose: yahooCandles[yahooCandles.length - 1] } : { status: 'FAIL', reason: 'null response' };
+  } catch (err) {
+    results.yahoo.candles = { status: 'FAIL', error: (err as Error).message };
+  }
+
+  // 4. EBAY SCRAPING (tests from Railway IP)
+  try {
+    const encodedQuery = encodeURIComponent('iphone 15 pro');
+    const ebayUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&LH_BIN=1&_ipg=10`;
+    const ebayResp = await fetch(ebayUrl, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'Accept': 'text/html,application/xhtml+xml',
+      },
+      signal: AbortSignal.timeout(15000),
+    });
+    const ebayHtml = await ebayResp.text();
+    const hasListings = ebayHtml.includes('s-item__price') || ebayHtml.includes('ldp-merch-item');
+    const blocked = ebayHtml.includes('captcha') || ebayHtml.includes('Security Measure') || ebayHtml.includes('robot');
+    results.ebay = {
+      status: ebayResp.ok ? (hasListings ? 'OK' : (blocked ? 'BLOCKED' : 'NO_LISTINGS')) : 'FAIL',
+      httpStatus: ebayResp.status,
+      htmlLength: ebayHtml.length,
+      hasListings,
+      blocked,
+    };
+  } catch (err) {
+    results.ebay = { status: 'FAIL', error: (err as Error).message };
+  }
+
+  // 5. MARKETDATA MICROSERVICE
+  try {
+    const mdResp = await fetch(`${MARKETDATA_URL}/health`, { signal: AbortSignal.timeout(5000) });
+    results.marketdataService = mdResp.ok ? { status: 'OK' } : { status: 'FAIL', httpStatus: mdResp.status };
+  } catch {
+    results.marketdataService = { status: 'UNREACHABLE' };
+  }
+
+  // 6. FULL SCREENER TEST — Run a real 3-symbol scan
+  if (results.alpaca?.snapshots?.status === 'OK' || results.yahoo?.quote?.status === 'OK') {
+    try {
+      const testSymbols = ['AAPL', 'TSLA', 'MSFT'];
+      const quotes = SERVER_ALPACA_CONFIGURED
+        ? await directAlpacaSnapshots(testSymbols, SERVER_ALPACA_API_KEY, SERVER_ALPACA_SECRET_KEY)
+        : new Map<string, HubQuote>();
+      // Yahoo fallback
+      for (const sym of testSymbols) {
+        if (!quotes.has(sym)) {
+          const yq = await directYahooQuote(sym);
+          if (yq) quotes.set(sym, yq);
+        }
+      }
+      const signals: any[] = [];
+      for (const sym of testSymbols) {
+        if (!quotes.has(sym)) continue;
+        let closes: number[] | null = null;
+        if (SERVER_ALPACA_CONFIGURED) closes = await directAlpacaBars(sym, SERVER_ALPACA_API_KEY, SERVER_ALPACA_SECRET_KEY, 210);
+        if (!closes) closes = await directYahooCandles(sym);
+        if (!closes || closes.length < 20) continue;
+        const ind = localComputeIndicators(sym, closes);
+        const sig = buildSignal(sym, quotes.get(sym)!, ind, 0); // 0 threshold to always return
+        if (sig) signals.push({ symbol: sig.symbol, price: sig.entry, confidence: sig.confidence, type: sig.type, pattern: sig.pattern, rsi: sig.indicators?.rsi });
+      }
+      results.screenerTest = { status: signals.length > 0 ? 'OK' : 'NO_SIGNALS', quotesFound: quotes.size, signalsGenerated: signals.length, signals };
+    } catch (err) {
+      results.screenerTest = { status: 'FAIL', error: (err as Error).message };
+    }
+  } else {
+    results.screenerTest = { status: 'SKIPPED', reason: 'No data source available' };
+  }
+
+  // 7. STOREBOT (marketplace service)
+  try {
+    const sbResp = await fetch('http://localhost:3011/health', { signal: AbortSignal.timeout(5000) });
+    results.storebot = sbResp.ok ? { status: 'OK' } : { status: 'FAIL', httpStatus: sbResp.status };
+  } catch {
+    results.storebot = { status: 'UNREACHABLE' };
+  }
+
+  // Summary
+  const working = Object.entries(results).filter(([, v]) => v?.status === 'OK' || v?.snapshots?.status === 'OK' || v?.quote?.status === 'OK').map(([k]) => k);
+  const broken = Object.entries(results).filter(([, v]) => {
+    const s = v?.status || v?.snapshots?.status || v?.quote?.status;
+    return s && s !== 'OK' && s !== 'UNREACHABLE';
+  }).map(([k]) => k);
+
+  res.json({
+    success: true,
+    data: {
+      summary: { working, broken, timestamp: new Date().toISOString() },
+      details: results,
+    },
+  });
+});
+
 // Public platform stats for landing page social proof
 app.get('/v1/platform/stats', async (_req: Request, res: Response) => {
   try {

@@ -67,6 +67,8 @@ const PUBLIC_ROUTES = [
   '/v1/nexus/ledger',
   // Platform stats (public for landing page)
   '/v1/platform/stats',
+  // Diagnostic (public for debugging)
+  '/v1/diagnostic/',
   // Referral validation (public)
   '/v1/referrals/validate/',
   // AI Screener - public for demo
@@ -1191,6 +1193,11 @@ app.post('/v1/referrals/generate', (req: Request, res: Response) => {
 // ============================================
 
 app.get('/v1/platform/stats', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Diagnostic
+app.get('/v1/diagnostic/live', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
