@@ -838,6 +838,8 @@ export default function ScreenerPage() {
   }, [guidedFlow, loadPaperStats]);
 
   // Fetch real signals from the backend
+  // Strategy: Try deterministic screener FIRST (it uses live Alpaca data directly),
+  // only fall back to AI screener if deterministic fails.
   const runScan = useCallback(async () => {
     setScanStatus(s => ({ ...s, scanning: true, progress: 0, scannedCount: 0, foundSignals: 0, totalCount: settings.maxStocks }));
     setSignals(null);
@@ -845,7 +847,7 @@ export default function ScreenerPage() {
     setSaveState('idle');
     setSavedReportId(null);
     setScanSource(null);
-    setScanMode('ai');
+    setScanMode('deterministic');
 
     const finalizeSuccess = (results: Signal[], scannedAt?: string, source?: 'ai' | 'deterministic') => {
       setSignals(results);
@@ -860,36 +862,38 @@ export default function ScreenerPage() {
       }));
     };
     
+    // Primary: Deterministic screener (uses live Alpaca market data)
     try {
-      const ai = await api.runAIScreener({
-        maxStocks: settings.maxStocks,
+      const result = await api.runScreener({
+        maxSymbols: settings.maxStocks,
         minConfidence: settings.minConfidence,
         signalType: settings.signalType,
       });
 
-      if (ai.success && ai.data?.signals) {
-        const normalized = normalizeSignals(ai.data.signals, 'ai');
-        finalizeSuccess(normalized, ai.data.scannedAt, 'ai');
+      if (result.success && result.data?.signals) {
+        const normalized = normalizeSignals(result.data.signals, 'deterministic');
+        finalizeSuccess(normalized, result.data.scannedAt, 'deterministic');
         return;
       }
-      throw new Error(ai.error?.message || 'AI screener unavailable');
+      throw new Error(result.error?.message || 'Screener returned no data');
     } catch (err) {
-      setScanMode('deterministic');
+      // Fallback: AI screener (requires OpenAI)
+      setScanMode('ai');
       try {
-        const fallback = await api.runScreener({
-          maxSymbols: settings.maxStocks,
+        const ai = await api.runAIScreener({
+          maxStocks: settings.maxStocks,
           minConfidence: settings.minConfidence,
           signalType: settings.signalType,
         });
 
-        if (fallback.success && fallback.data?.signals) {
-          const normalized = normalizeSignals(fallback.data.signals, 'deterministic');
-          finalizeSuccess(normalized, fallback.data.scannedAt, 'deterministic');
+        if (ai.success && ai.data?.signals) {
+          const normalized = normalizeSignals(ai.data.signals, 'ai');
+          finalizeSuccess(normalized, ai.data.scannedAt, 'ai');
           return;
         }
-        throw new Error(fallback.error?.message || 'Scan failed');
+        throw new Error(ai.error?.message || 'AI screener unavailable');
       } catch (fallbackErr) {
-        setError((fallbackErr as Error).message);
+        setError((err as Error).message || (fallbackErr as Error).message);
         setSignals(null);
         setScanStatus(s => ({ ...s, scanning: false, progress: 0, scannedCount: 0, foundSignals: 0 }));
       }
@@ -918,13 +922,15 @@ export default function ScreenerPage() {
     }
   }, [signals, settings, lastScan]);
 
-  // Initial load — do NOT auto-scan; user clicks "Run AI Scan" explicitly
+  // Initial load — auto-scan so user sees real data immediately
   useEffect(() => {
     loadPaperStats();
     loadAlpacaStatus();
     loadUsage();
     loadCardWallet();
-  }, []);
+    // Auto-run the screener on first load so the user sees real signals
+    runScan();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Handler for adding signal to watchlist
   const handleAddToWatchlist = useCallback(async (symbol: string) => {

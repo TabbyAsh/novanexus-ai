@@ -67,6 +67,8 @@ const PUBLIC_ROUTES = [
   '/v1/nexus/ledger',
   // Platform stats (public for landing page)
   '/v1/platform/stats',
+  // System health/reality check (must be public for banner)
+  '/v1/reality',
   // Diagnostic (public for debugging)
   '/v1/diagnostic/',
   // Referral validation (public)
@@ -81,20 +83,25 @@ const PUBLIC_ROUTES = [
   '/v1/marketplace/health',
   '/v1/marketplace/appraise',
   '/v1/marketplace/ingest/',
+  // Value Radar - public for landing page
+  '/v1/value-radar/',
+  // Dashboard stats
+  '/v1/dashboard/',
 ];
 
 // Premium features that require paid plan (LITE or higher)
+// NOTE: Core features (screener, scanner) are now accessible to ALL logged-in users.
+// Paywall only blocks truly premium features that have meaningful compute cost.
 const PREMIUM_FEATURES: Record<string, string> = {
-  '/v1/trade/scan': 'scanner',
+  // Core product — accessible to all logged-in users (no paywall)
+  // '/v1/trade/scan': 'scanner',        // Removed: core product must work
+  // '/v1/screener': 'scanner',           // Removed: core product must work
+  // '/v1/market/indicators': 'scanner',  // Removed: needed for screener
+  // Paywalled premium features
   '/v1/trade/theses': 'thesis_cards',
   '/v1/trade/paper-trades': 'paper_trading',
-  '/v1/watchlists': 'watchlists',
   '/v1/signals': 'alerts',
   '/v1/decisions': 'decisions',
-  '/v1/screener': 'scanner',
-  // NOTE: Basic market data (quotes/candles) must remain available after login.
-  // Paywall specific advanced features instead of the entire /v1/market/* surface.
-  '/v1/market/indicators': 'scanner',
 };
 
 // Routes that don't require Stripe webhook auth
