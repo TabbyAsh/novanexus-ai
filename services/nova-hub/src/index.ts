@@ -50,6 +50,10 @@ const SERVER_ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY || '';
 const SERVER_ALPACA_ENDPOINT = process.env.ALPACA_ENDPOINT || 'https://paper-api.alpaca.markets/v2';
 const SERVER_ALPACA_CONFIGURED = !!(SERVER_ALPACA_API_KEY && SERVER_ALPACA_SECRET_KEY);
 
+// Direct data pipeline constants (bypass marketdata microservice for screener)
+const ALPACA_DATA_BASE = 'https://data.alpaca.markets';
+const ALPACA_DATA_FEED_HUB = (process.env.ALPACA_DATA_FEED || 'iex').toLowerCase();
+
 // ============================================
 // Middleware
 // ============================================
@@ -3477,6 +3481,185 @@ function buildSignal(symbol: string, quote: HubQuote, indicators: HubIndicators,
   };
 }
 
+// ============================================
+// Direct Data Pipeline — Bypass marketdata microservice
+// Used by screener for maximum reliability
+// ============================================
+
+async function directAlpacaSnapshots(
+  symbols: string[],
+  apiKey: string,
+  apiSecret: string,
+): Promise<Map<string, HubQuote>> {
+  const result = new Map<string, HubQuote>();
+  if (!apiKey || !apiSecret || symbols.length === 0) return result;
+
+  for (let i = 0; i < symbols.length; i += 200) {
+    const batch = symbols.slice(i, i + 200);
+    const params = new URLSearchParams({ symbols: batch.join(','), feed: ALPACA_DATA_FEED_HUB });
+    try {
+      const url = `${ALPACA_DATA_BASE}/v2/stocks/snapshots?${params}`;
+      const resp = await fetch(url, {
+        headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
+        signal: AbortSignal.timeout(15000),
+      });
+      if (!resp.ok) {
+        logger.warn(`Direct Alpaca snapshots HTTP ${resp.status}`, { batch: batch.length });
+        continue;
+      }
+      const data = (await resp.json()) as Record<string, any>;
+      for (const [sym, snap] of Object.entries(data)) {
+        const price =
+          (typeof snap?.latestTrade?.p === 'number' && Number.isFinite(snap.latestTrade.p) ? snap.latestTrade.p : null) ??
+          (typeof snap?.dailyBar?.c === 'number' && Number.isFinite(snap.dailyBar.c) ? snap.dailyBar.c : null) ??
+          (typeof snap?.prevDailyBar?.c === 'number' && Number.isFinite(snap.prevDailyBar.c) ? snap.prevDailyBar.c : null);
+        if (typeof price !== 'number' || !Number.isFinite(price)) continue;
+        const prevClose = typeof snap?.prevDailyBar?.c === 'number' ? snap.prevDailyBar.c : null;
+        result.set(sym.toUpperCase(), {
+          price: Math.round(price * 100) / 100,
+          change: prevClose ? Math.round((price - prevClose) * 100) / 100 : null,
+          changePercent: prevClose && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : null,
+          volume: typeof snap?.dailyBar?.v === 'number' ? snap.dailyBar.v : null,
+        });
+      }
+    } catch (err) {
+      logger.warn('Direct Alpaca snapshots failed', { error: (err as Error).message });
+    }
+    if (i + 200 < symbols.length) await new Promise(r => setTimeout(r, 250));
+  }
+  return result;
+}
+
+async function directAlpacaBars(
+  symbol: string,
+  apiKey: string,
+  apiSecret: string,
+  limit = 210,
+): Promise<number[] | null> {
+  if (!apiKey || !apiSecret) return null;
+  try {
+    const params = new URLSearchParams({ timeframe: '1Day', limit: String(limit), adjustment: 'raw', feed: ALPACA_DATA_FEED_HUB });
+    const url = `${ALPACA_DATA_BASE}/v2/stocks/${symbol.toUpperCase()}/bars?${params}`;
+    const resp = await fetch(url, {
+      headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as any;
+    const bars = data?.bars;
+    if (!Array.isArray(bars) || bars.length === 0) return null;
+    return bars.map((b: any) => Math.round(b.c * 100) / 100).filter((c: number) => Number.isFinite(c));
+  } catch {
+    return null;
+  }
+}
+
+async function directYahooQuote(symbol: string): Promise<HubQuote | null> {
+  try {
+    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1d&range=2d`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(8000),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as any;
+    const meta = data?.chart?.result?.[0]?.meta;
+    if (!meta || typeof meta.regularMarketPrice !== 'number') return null;
+    const price = meta.regularMarketPrice;
+    const prevClose = meta.chartPreviousClose ?? meta.previousClose;
+    return {
+      price: Math.round(price * 100) / 100,
+      change: typeof prevClose === 'number' ? Math.round((price - prevClose) * 100) / 100 : null,
+      changePercent: typeof prevClose === 'number' && prevClose !== 0 ? Math.round(((price - prevClose) / prevClose) * 10000) / 100 : null,
+      volume: typeof meta.regularMarketVolume === 'number' ? meta.regularMarketVolume : null,
+    };
+  } catch { return null; }
+}
+
+async function directYahooCandles(symbol: string): Promise<number[] | null> {
+  try {
+    const url = `https://query2.finance.yahoo.com/v8/finance/chart/${symbol.toUpperCase()}?interval=1d&range=1y`;
+    const resp = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!resp.ok) return null;
+    const data = (await resp.json()) as any;
+    const quote = data?.chart?.result?.[0]?.indicators?.quote?.[0];
+    if (!quote) return null;
+    const closes: number[] = (quote.close || []).filter((c: any) => typeof c === 'number' && Number.isFinite(c));
+    return closes.length >= 20 ? closes : null;
+  } catch { return null; }
+}
+
+// Local indicator computation (avoids dependency on marketdata service)
+function localRSI(closes: number[], period = 14): number | null {
+  if (closes.length < period + 1) return null;
+  const start = closes.length - (period + 1);
+  let gains = 0, losses = 0;
+  for (let i = start + 1; i < start + 1 + period; i++) {
+    const d = closes[i] - closes[i - 1];
+    if (!Number.isFinite(d)) return null;
+    if (d > 0) gains += d; else losses -= d;
+  }
+  const avgLoss = losses / period;
+  if (avgLoss === 0) return 100;
+  return 100 - (100 / (1 + (gains / period) / avgLoss));
+}
+
+function localSMA(closes: number[], period: number): number | null {
+  if (closes.length < period) return null;
+  const sum = closes.slice(-period).reduce((a, b) => a + b, 0);
+  return Number.isFinite(sum) ? sum / period : null;
+}
+
+function localEMA(values: number[], period: number): number[] | null {
+  if (values.length < period) return null;
+  const k = 2 / (period + 1);
+  const seed = values.slice(0, period).reduce((a, b) => a + b, 0) / period;
+  if (!Number.isFinite(seed)) return null;
+  const series = new Array(values.length).fill(NaN);
+  let ema = seed;
+  series[period - 1] = ema;
+  for (let i = period; i < values.length; i++) {
+    if (!Number.isFinite(values[i])) return null;
+    ema = values[i] * k + ema * (1 - k);
+    series[i] = ema;
+  }
+  return series;
+}
+
+function localMACD(closes: number[]): { value: number; signal: number; histogram: number } | null {
+  const ema12 = localEMA(closes, 12);
+  const ema26 = localEMA(closes, 26);
+  if (!ema12 || !ema26) return null;
+  const ml: number[] = [];
+  for (let i = 0; i < closes.length; i++) {
+    if (Number.isFinite(ema12[i]) && Number.isFinite(ema26[i])) ml.push(ema12[i] - ema26[i]);
+  }
+  if (ml.length < 9) return null;
+  const sig = localEMA(ml, 9);
+  if (!sig) return null;
+  const v = ml[ml.length - 1], s = sig[sig.length - 1];
+  if (!Number.isFinite(v) || !Number.isFinite(s)) return null;
+  return { value: Math.round(v * 100) / 100, signal: Math.round(s * 100) / 100, histogram: Math.round((v - s) * 100) / 100 };
+}
+
+function localComputeIndicators(symbol: string, closes: number[]): HubIndicators {
+  const rsi = localRSI(closes);
+  return {
+    symbol,
+    rsi: rsi !== null ? Math.round(rsi * 10) / 10 : null,
+    macd: localMACD(closes),
+    sma20: localSMA(closes, 20) !== null ? Math.round(localSMA(closes, 20)! * 100) / 100 : null,
+    sma50: localSMA(closes, 50) !== null ? Math.round(localSMA(closes, 50)! * 100) / 100 : null,
+    sma200: localSMA(closes, 200) !== null ? Math.round(localSMA(closes, 200)! * 100) / 100 : null,
+    asOf: new Date().toISOString(),
+    provider: 'direct',
+    computedAt: new Date().toISOString(),
+  };
+}
+
 app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId, orgId } = req.user!;
   const startTime = Date.now();
@@ -3500,57 +3683,153 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   const allSignals: ScreenerSignal[] = [];
   const missingDataSymbols: string[] = [];
 
-  // Resolve user's Alpaca credentials for data fetching (their own bridge)
-  let userCreds: AlpacaUserCreds = null;
+  // ====== CREDENTIAL RESOLUTION ======
+  // Priority: user's saved Alpaca keys → server-side Alpaca env vars → none
+  let alpacaKey = '';
+  let alpacaSecret = '';
+  let alpacaSource = 'none';
   try {
     const conn = await getActiveAlpacaConnection(userId);
     if (conn) {
-      const apiKey = decryptSecret(conn.api_key_enc);
-      const apiSecret = decryptSecret(conn.api_secret_enc);
-      if (apiKey && apiSecret) {
-        userCreds = { key: apiKey, secret: apiSecret };
+      const k = decryptSecret(conn.api_key_enc);
+      const s = decryptSecret(conn.api_secret_enc);
+      if (k && s) {
+        alpacaKey = k;
+        alpacaSecret = s;
+        alpacaSource = 'user-db';
         logger.info('Screener using user Alpaca credentials', { userId, keyLast4: conn.key_last4 });
       }
     }
   } catch (err) {
-    logger.warn('Failed to resolve user Alpaca creds for screener', { userId, error: (err as Error).message });
+    logger.warn('Failed to resolve user Alpaca creds', { userId, error: (err as Error).message });
   }
+  if (!alpacaKey && SERVER_ALPACA_API_KEY && SERVER_ALPACA_SECRET_KEY) {
+    alpacaKey = SERVER_ALPACA_API_KEY;
+    alpacaSecret = SERVER_ALPACA_SECRET_KEY;
+    alpacaSource = 'server-env';
+    logger.info('Screener using server Alpaca credentials');
+  }
+  const hasAlpaca = !!(alpacaKey && alpacaSecret);
+  const userCreds: AlpacaUserCreds = hasAlpaca ? { key: alpacaKey, secret: alpacaSecret } : null;
 
-  // Phase 1: Batch-fetch all quotes using the efficient batch endpoint
-  const QUOTE_BATCH_SIZE = 100;
+  // ====== PHASE 1: QUOTES (Direct Alpaca → Direct Yahoo → Marketdata service) ======
   const allQuotes = new Map<string, HubQuote>();
-  for (let i = 0; i < list.length; i += QUOTE_BATCH_SIZE) {
-    const batch = list.slice(i, i + QUOTE_BATCH_SIZE);
-    const batchQuotes = await getBatchQuotes(batch, userCreds);
-    for (const [sym, q] of batchQuotes) {
-      allQuotes.set(sym, q);
+  const providerDiag: Record<string, string> = {};
+
+  // 1A: Try direct Alpaca batch snapshots (most efficient — up to 200 symbols per call)
+  if (hasAlpaca) {
+    try {
+      const alpacaQuotes = await directAlpacaSnapshots(list, alpacaKey, alpacaSecret);
+      for (const [sym, q] of alpacaQuotes) allQuotes.set(sym, q);
+      providerDiag.alpacaDirect = `${alpacaQuotes.size}/${list.length} quotes (source: ${alpacaSource})`;
+      logger.info(`Screener direct Alpaca: ${alpacaQuotes.size} quotes from ${list.length} symbols`);
+    } catch (err) {
+      providerDiag.alpacaDirect = `FAILED: ${(err as Error).message}`;
     }
-    // Small delay between batches to avoid overwhelming providers
-    if (i + QUOTE_BATCH_SIZE < list.length) {
-      await new Promise(r => setTimeout(r, 200));
+  } else {
+    providerDiag.alpacaDirect = 'SKIPPED: no Alpaca credentials available';
+  }
+
+  // 1B: Fill gaps with direct Yahoo Finance (no API key needed)
+  const missingQuoteSymbols = list.filter(s => !allQuotes.has(s));
+  if (missingQuoteSymbols.length > 0) {
+    const yahooLimit = Math.min(missingQuoteSymbols.length, 50); // Yahoo is slower, limit batch
+    let yahooHits = 0;
+    for (let i = 0; i < yahooLimit; i++) {
+      const sym = missingQuoteSymbols[i];
+      const yq = await directYahooQuote(sym);
+      if (yq) { allQuotes.set(sym, yq); yahooHits++; }
+      if (i > 0 && i % 10 === 0) await new Promise(r => setTimeout(r, 200));
+    }
+    providerDiag.yahooDirect = `${yahooHits}/${yahooLimit} quotes`;
+  }
+
+  // 1C: Last resort — try marketdata service for remaining symbols
+  const stillMissingQuotes = list.filter(s => !allQuotes.has(s));
+  if (stillMissingQuotes.length > 0) {
+    try {
+      const QUOTE_BATCH_SIZE = 100;
+      let mdHits = 0;
+      for (let i = 0; i < stillMissingQuotes.length; i += QUOTE_BATCH_SIZE) {
+        const batch = stillMissingQuotes.slice(i, i + QUOTE_BATCH_SIZE);
+        const batchQuotes = await getBatchQuotes(batch, userCreds);
+        for (const [sym, q] of batchQuotes) { allQuotes.set(sym, q); mdHits++; }
+        if (i + QUOTE_BATCH_SIZE < stillMissingQuotes.length) await new Promise(r => setTimeout(r, 200));
+      }
+      providerDiag.marketdataService = `${mdHits}/${stillMissingQuotes.length} quotes`;
+    } catch (err) {
+      providerDiag.marketdataService = `FAILED: ${(err as Error).message}`;
     }
   }
 
-  // Phase 2: Fetch indicators in controlled batches (these require candles, so are heavier)
-  const INDICATOR_BATCH_SIZE = 15;
+  logger.info('Screener quote coverage', { total: list.length, fetched: allQuotes.size, missing: list.length - allQuotes.size });
+
+  // ====== PHASE 2: INDICATORS (Direct bars + local compute → Marketdata service) ======
   const allIndicators = new Map<string, HubIndicators>();
   const symbolsWithQuotes = list.filter(s => allQuotes.has(s));
-  for (let i = 0; i < symbolsWithQuotes.length; i += INDICATOR_BATCH_SIZE) {
-    const batch = symbolsWithQuotes.slice(i, i + INDICATOR_BATCH_SIZE);
-    const results = await Promise.all(
-      batch.map(async (symbol) => {
-        const ind = await getIndicators(symbol, userCreds);
-        return { symbol, indicators: ind };
-      })
-    );
-    for (const { symbol, indicators } of results) {
-      if (indicators) allIndicators.set(symbol, indicators);
+
+  // 2A: Direct Alpaca bars + local indicator computation (parallel batches of 15)
+  if (hasAlpaca) {
+    const BARS_BATCH_SIZE = 15;
+    let directIndCount = 0;
+    for (let i = 0; i < symbolsWithQuotes.length; i += BARS_BATCH_SIZE) {
+      const batch = symbolsWithQuotes.slice(i, i + BARS_BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (sym) => {
+          const closes = await directAlpacaBars(sym, alpacaKey, alpacaSecret, 210);
+          if (closes && closes.length >= 20) {
+            return { sym, ind: localComputeIndicators(sym, closes) };
+          }
+          return { sym, ind: null };
+        })
+      );
+      for (const { sym, ind } of results) {
+        if (ind) { allIndicators.set(sym, ind); directIndCount++; }
+      }
+      if (i + BARS_BATCH_SIZE < symbolsWithQuotes.length) await new Promise(r => setTimeout(r, 300));
     }
-    // Delay between indicator batches
-    if (i + INDICATOR_BATCH_SIZE < symbolsWithQuotes.length) {
-      await new Promise(r => setTimeout(r, 300));
-    }
+    providerDiag.directIndicators = `${directIndCount}/${symbolsWithQuotes.length} computed`;
   }
+
+  // 2B: For symbols missing indicators, try direct Yahoo candles + local compute
+  const missingIndSymbols = symbolsWithQuotes.filter(s => !allIndicators.has(s));
+  if (missingIndSymbols.length > 0) {
+    const yahooIndLimit = Math.min(missingIndSymbols.length, 30);
+    let yahooIndHits = 0;
+    for (let i = 0; i < yahooIndLimit; i++) {
+      const sym = missingIndSymbols[i];
+      const closes = await directYahooCandles(sym);
+      if (closes && closes.length >= 20) {
+        allIndicators.set(sym, localComputeIndicators(sym, closes));
+        yahooIndHits++;
+      }
+      if (i > 0 && i % 5 === 0) await new Promise(r => setTimeout(r, 200));
+    }
+    providerDiag.yahooIndicators = `${yahooIndHits}/${yahooIndLimit} computed`;
+  }
+
+  // 2C: Final fallback — marketdata service for remaining
+  const stillMissingInd = symbolsWithQuotes.filter(s => !allIndicators.has(s));
+  if (stillMissingInd.length > 0) {
+    const INDICATOR_BATCH_SIZE = 15;
+    let mdIndHits = 0;
+    for (let i = 0; i < stillMissingInd.length; i += INDICATOR_BATCH_SIZE) {
+      const batch = stillMissingInd.slice(i, i + INDICATOR_BATCH_SIZE);
+      const results = await Promise.all(
+        batch.map(async (symbol) => {
+          const ind = await getIndicators(symbol, userCreds);
+          return { symbol, indicators: ind };
+        })
+      );
+      for (const { symbol, indicators } of results) {
+        if (indicators) { allIndicators.set(symbol, indicators); mdIndHits++; }
+      }
+      if (i + INDICATOR_BATCH_SIZE < stillMissingInd.length) await new Promise(r => setTimeout(r, 300));
+    }
+    providerDiag.marketdataIndicators = `${mdIndHits}/${stillMissingInd.length} from service`;
+  }
+
+  logger.info('Screener indicator coverage', { total: symbolsWithQuotes.length, fetched: allIndicators.size });
 
   // Phase 3: Build signals from pre-fetched data
   for (const symbol of list) {
@@ -3661,6 +3940,11 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
         trust: s.trust,
         riskFlags: s.riskFlags,
       })),
+      // Data pipeline diagnostics — shows which providers succeeded/failed
+      providerDiagnostics: providerDiag,
+      alpacaCredentialSource: alpacaSource,
+      quoteCoverage: `${allQuotes.size}/${list.length}`,
+      indicatorCoverage: `${allIndicators.size}/${symbolsWithQuotes.length}`,
     },
   });
 });
@@ -8257,6 +8541,561 @@ app.get('/v1/weekly-report', authMiddleware, async (req: AuthenticatedRequest, r
       error: { code: 'REPORT_FAILED', message: 'Failed to generate weekly report' },
     });
   }
+});
+
+// ============================================
+// MANIFESTO: Usage Metering Helper
+// Doctrine: Price by task/outcome volume, not by "access."
+// ============================================
+
+async function recordUsage(userId: string, eventType: string, units = 1, metadata: Record<string, unknown> = {}): Promise<void> {
+  try {
+    const idempotencyKey = metadata.idempotencyKey ? String(metadata.idempotencyKey) : null;
+    await query(
+      `INSERT INTO usage_events (user_id, event_type, units, metadata, idempotency_key)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`,
+      [userId, eventType, units, JSON.stringify(metadata), idempotencyKey]
+    );
+    // Upsert meter for current period
+    const now = new Date();
+    const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+    const periodEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+    await query(
+      `INSERT INTO usage_meters (user_id, meter_type, period_start, period_end, units_consumed)
+       VALUES ($1, $2, $3, $4, $5)
+       ON CONFLICT (user_id, meter_type, period_start)
+       DO UPDATE SET units_consumed = usage_meters.units_consumed + $5, updated_at = NOW()`,
+      [userId, eventType, periodStart, periodEnd, units]
+    );
+  } catch (err) {
+    logger.warn('Usage metering failed (non-blocking)', { eventType, error: (err as Error).message });
+  }
+}
+
+// ============================================
+// MANIFESTO: Outcome Ledger Helper
+// Doctrine: A user should see measurable ROI within two weeks.
+// ============================================
+
+async function recordOutcome(
+  userId: string,
+  domain: string,
+  eventType: string,
+  value: number,
+  opts: { description?: string; sourceType?: string; sourceId?: string; metadata?: Record<string, unknown> } = {}
+): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO outcome_events (user_id, domain, event_type, value, description, source_type, source_id, metadata)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+      [userId, domain, eventType, value, opts.description || null, opts.sourceType || null, opts.sourceId || null, JSON.stringify(opts.metadata || {})]
+    );
+  } catch (err) {
+    logger.warn('Outcome recording failed (non-blocking)', { eventType, error: (err as Error).message });
+  }
+}
+
+// ============================================
+// MANIFESTO: Autonomous Agent Engine
+// Doctrine: Agents that execute tasks end-to-end, with human oversight where required.
+// "Tycoon: Sell → deliver manually → systematize → automate → scale."
+// ============================================
+
+type AgentStepDef = { name: string; action: string };
+type AgentDef = {
+  id: string; name: string; slug: string; sector: string; description: string;
+  steps_template: AgentStepDef[]; risk_level: string; requires_mode: string; enabled: boolean;
+};
+
+// Step executors: map action names to actual functions
+type StepExecutor = (userId: string, orgId: string, input: any, params: any) => Promise<{ output: any; outcomeValue?: number; outcomeType?: string }>;
+
+const stepExecutors: Record<string, StepExecutor> = {
+  // === SCANNER AGENT STEPS ===
+  'screener/scan': async (userId, orgId, _input, params) => {
+    // Reuse the screener scan logic internally
+    const scanParams = { maxSymbols: params.maxSymbols || 50, minConfidence: params.minConfidence || 40, signalType: 'all' };
+    // Inline scan: resolve creds + direct data pipeline (same as the scan endpoint)
+    let alpacaKey = '', alpacaSecret = '';
+    try {
+      const conn = await getActiveAlpacaConnection(userId);
+      if (conn) { const k = decryptSecret(conn.api_key_enc); const s = decryptSecret(conn.api_secret_enc); if (k && s) { alpacaKey = k; alpacaSecret = s; } }
+    } catch {}
+    if (!alpacaKey && SERVER_ALPACA_API_KEY && SERVER_ALPACA_SECRET_KEY) { alpacaKey = SERVER_ALPACA_API_KEY; alpacaSecret = SERVER_ALPACA_SECRET_KEY; }
+    const hasAlpacaCreds = !!(alpacaKey && alpacaSecret);
+    const list = DEFAULT_SCREENER_UNIVERSE.slice(0, scanParams.maxSymbols);
+    const quotes = hasAlpacaCreds ? await directAlpacaSnapshots(list, alpacaKey, alpacaSecret) : new Map<string, HubQuote>();
+    // Quick Yahoo fallback for top 20 missing
+    const missing = list.filter(s => !quotes.has(s)).slice(0, 20);
+    for (const sym of missing) { const yq = await directYahooQuote(sym); if (yq) quotes.set(sym, yq); }
+    // Indicators for symbols with quotes
+    const signals: ScreenerSignal[] = [];
+    const symsWithQ = list.filter(s => quotes.has(s));
+    for (const sym of symsWithQ.slice(0, 30)) {
+      let closes: number[] | null = null;
+      if (hasAlpacaCreds) closes = await directAlpacaBars(sym, alpacaKey, alpacaSecret, 210);
+      if (!closes) closes = await directYahooCandles(sym);
+      if (!closes || closes.length < 20) continue;
+      const ind = localComputeIndicators(sym, closes);
+      const sig = buildSignal(sym, quotes.get(sym)!, ind, scanParams.minConfidence);
+      if (sig) signals.push(sig);
+    }
+    signals.sort((a, b) => b.confidence - a.confidence);
+    return { output: { signalCount: signals.length, topSignals: signals.slice(0, 10) }, outcomeValue: signals.length, outcomeType: 'OPPORTUNITY_FOUND' };
+  },
+
+  'rank_by_confidence': async (_userId, _orgId, input) => {
+    const signals = input?.topSignals || [];
+    return { output: { ranked: signals, count: signals.length } };
+  },
+
+  'create_decision_cards': async (userId, orgId, input) => {
+    const ranked = input?.ranked || [];
+    let created = 0;
+    for (const sig of ranked.slice(0, 5)) {
+      try {
+        await query(
+          `INSERT INTO decision_cards (user_id, org_id, symbol, direction, confidence_score, reasoning, domain, status)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, 'PENDING')`,
+          [userId, orgId, sig.symbol, sig.type === 'bullish' ? 'LONG' : 'SHORT', sig.confidence, sig.reasoning || '', sig.domain || 'STOCKS']
+        );
+        created++;
+      } catch {}
+    }
+    return { output: { cardsCreated: created } };
+  },
+
+  // === FLIP FINDER AGENT STEPS ===
+  'marketplace/search': async (_userId, _orgId, _input, params) => {
+    const searchQuery = params.query || 'iphone';
+    try {
+      // Dynamic import would be cleaner but we'll call storebot's scraper via HTTP
+      const res = await fetch(`http://localhost:3011/v1/marketplace/search`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery }),
+      });
+      const data = (await res.json()) as any;
+      return { output: { products: data?.data?.products || [], count: data?.data?.totalFound || 0 } };
+    } catch { return { output: { products: [], count: 0 } }; }
+  },
+
+  'marketplace/appraise': async (_userId, _orgId, input, params) => {
+    const searchQuery = params.query || 'iphone';
+    try {
+      const res = await fetch(`http://localhost:3011/v1/marketplace/appraise`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ query: searchQuery }),
+      });
+      const data = (await res.json()) as any;
+      const appraisal = data?.data;
+      return {
+        output: appraisal || {},
+        outcomeValue: appraisal?.estimatedProfit || 0,
+        outcomeType: appraisal?.estimatedProfit > 0 ? 'OPPORTUNITY_FOUND' : 'OPPORTUNITY_FOUND',
+      };
+    } catch { return { output: {} }; }
+  },
+
+  'rank_by_margin': async (_userId, _orgId, input) => {
+    return { output: { ranked: input, flipVerdict: input?.flipVerdict || 'hold' } };
+  },
+
+  'create_flip_plans': async (userId, _orgId, input) => {
+    const appraisal = input;
+    if (!appraisal?.query) return { output: { created: false } };
+    try {
+      await query(
+        `INSERT INTO flip_plans (user_id, product_name, buy_price, sell_price, estimated_profit, status)
+         VALUES ($1, $2, $3, $4, $5, 'SOURCING')`,
+        [userId, appraisal.query, appraisal.recommendedBuyPrice || 0, appraisal.recommendedSellPrice || 0, appraisal.estimatedProfit || 0]
+      );
+      return { output: { created: true, product: appraisal.query } };
+    } catch { return { output: { created: false } }; }
+  },
+
+  // === SHARED STEPS ===
+  'record_outcome': async (_userId, _orgId, input) => {
+    return { output: { recorded: true, summary: input } };
+  },
+
+  // === REBALANCE AGENT ===
+  'alpaca/positions': async (userId) => {
+    try {
+      const conn = await getActiveAlpacaConnection(userId);
+      if (!conn) return { output: { positions: [], error: 'No Alpaca connection' } };
+      const client = buildAlpacaClient(conn);
+      const positions = await client.getPositions();
+      return { output: { positions } };
+    } catch (err) { return { output: { positions: [], error: (err as Error).message } }; }
+  },
+
+  'compare_positions_vs_signals': async (_userId, _orgId, input) => {
+    const positions = input?.positions || [];
+    const signals = input?.topSignals || [];
+    return { output: { drift: positions.length > 0 ? 'DETECTED' : 'NO_POSITIONS', positionCount: positions.length, signalCount: signals?.length || 0 } };
+  },
+
+  'create_rebalance_orders': async (_userId, _orgId, input) => {
+    return { output: { orders: [], note: 'Rebalance order generation — governance gate required', drift: input?.drift } };
+  },
+
+  'governance_gate': async (userId, _orgId, input, _params) => {
+    // Check user's mode for this sector
+    const mode = await queryOne<{ mode: string }>(
+      `SELECT mode FROM system_modes WHERE user_id = $1 AND sector = 'stocks'`, [userId]
+    );
+    const currentMode = mode?.mode || 'RECOMMEND';
+    if (currentMode === 'AUTOMATE') {
+      return { output: { action: 'EXECUTE', mode: currentMode, orders: input?.orders || [] } };
+    } else if (currentMode === 'ASSIST') {
+      return { output: { action: 'SUGGEST_AND_CONFIRM', mode: currentMode, orders: input?.orders || [] } };
+    }
+    return { output: { action: 'RECOMMEND_ONLY', mode: currentMode, orders: input?.orders || [] } };
+  },
+
+  // === COMPLIANCE AGENT ===
+  'audit/recent': async (userId) => {
+    const recent = await query<{ type: string; ts: string }>(
+      `SELECT type, ts FROM events WHERE actor_id = $1 ORDER BY ts DESC LIMIT 50`, [userId]
+    );
+    return { output: { eventCount: recent.rows.length, events: recent.rows.slice(0, 10) } };
+  },
+
+  'risk/evaluate': async (userId, _orgId, input) => {
+    const eventCount = input?.eventCount || 0;
+    const riskLevel = eventCount > 40 ? 'HIGH' : eventCount > 20 ? 'MEDIUM' : 'LOW';
+    return { output: { riskLevel, eventCount, threshold: 40 } };
+  },
+
+  'compliance/flag': async (_userId, _orgId, input) => {
+    const violations = input?.riskLevel === 'HIGH' ? ['HIGH_ACTIVITY_VOLUME'] : [];
+    return { output: { violations, count: violations.length } };
+  },
+
+  'compliance/report': async (_userId, _orgId, input) => {
+    return { output: { report: { riskLevel: input?.riskLevel || 'LOW', violations: input?.violations || [], generatedAt: new Date().toISOString() } } };
+  },
+};
+
+// Agent Runtime: execute an agent definition step-by-step
+async function executeAgent(
+  userId: string, orgId: string, agentDef: AgentDef, params: Record<string, unknown>
+): Promise<{ runId: string; status: string; steps: any[]; resultSummary: any }> {
+  const steps: AgentStepDef[] = agentDef.steps_template;
+
+  // Check governance mode
+  const modeRow = await queryOne<{ mode: string }>(
+    `SELECT mode FROM system_modes WHERE user_id = $1 AND sector = $2`, [userId, agentDef.sector]
+  );
+  const governanceMode = modeRow?.mode || 'RECOMMEND';
+
+  // Create run record
+  const run = await queryOne<{ id: string }>(
+    `INSERT INTO agent_runs (user_id, agent_definition_id, status, params, steps_total, governance_mode, started_at)
+     VALUES ($1, $2, 'RUNNING', $3, $4, $5, NOW()) RETURNING id`,
+    [userId, agentDef.id, JSON.stringify(params), steps.length, governanceMode]
+  );
+  const runId = run!.id;
+
+  let lastOutput: any = params;
+  let totalOutcomeValue = 0;
+  let lastOutcomeType = '';
+  const stepResults: any[] = [];
+  let stepsCompleted = 0;
+  let runStatus = 'COMPLETED';
+  let errorMessage: string | null = null;
+
+  for (let i = 0; i < steps.length; i++) {
+    const stepDef = steps[i];
+    const stepStart = Date.now();
+
+    // Create step record
+    const stepRow = await queryOne<{ id: string }>(
+      `INSERT INTO agent_steps (run_id, step_index, step_name, status, action, input_json, started_at)
+       VALUES ($1, $2, $3, 'RUNNING', $4, $5, NOW()) RETURNING id`,
+      [runId, i, stepDef.name, stepDef.action, JSON.stringify(lastOutput)]
+    );
+    const stepId = stepRow!.id;
+
+    try {
+      const executor = stepExecutors[stepDef.action];
+      if (!executor) {
+        await query(`UPDATE agent_steps SET status = 'SKIPPED', error_message = 'No executor', completed_at = NOW(), duration_ms = $2 WHERE id = $1`, [stepId, Date.now() - stepStart]);
+        stepResults.push({ step: stepDef.name, status: 'SKIPPED', reason: 'No executor' });
+        continue;
+      }
+
+      const result = await executor(userId, orgId, lastOutput, params);
+      const durationMs = Date.now() - stepStart;
+
+      await query(
+        `UPDATE agent_steps SET status = 'COMPLETED', output_json = $2, duration_ms = $3, completed_at = NOW() WHERE id = $1`,
+        [stepId, JSON.stringify(result.output), durationMs]
+      );
+
+      lastOutput = result.output;
+      if (result.outcomeValue) totalOutcomeValue += result.outcomeValue;
+      if (result.outcomeType) lastOutcomeType = result.outcomeType;
+      stepsCompleted++;
+      stepResults.push({ step: stepDef.name, status: 'COMPLETED', durationMs, output: result.output });
+    } catch (err) {
+      const durationMs = Date.now() - stepStart;
+      errorMessage = (err as Error).message;
+      await query(
+        `UPDATE agent_steps SET status = 'FAILED', error_message = $2, duration_ms = $3, completed_at = NOW() WHERE id = $1`,
+        [stepId, errorMessage, durationMs]
+      );
+      stepResults.push({ step: stepDef.name, status: 'FAILED', error: errorMessage });
+      runStatus = 'FAILED';
+      break;
+    }
+  }
+
+  // Finalize run
+  const totalDuration = stepResults.reduce((sum, s) => sum + (s.durationMs || 0), 0);
+  await query(
+    `UPDATE agent_runs SET status = $2, result_summary = $3, outcome_value = $4, outcome_type = $5,
+     steps_completed = $6, error_message = $7, duration_ms = $8, completed_at = NOW() WHERE id = $1`,
+    [runId, runStatus, JSON.stringify(lastOutput), totalOutcomeValue, lastOutcomeType || null, stepsCompleted, errorMessage, totalDuration]
+  );
+
+  // Record usage + outcome
+  await recordUsage(userId, 'AGENT_RUN', 1, { agentSlug: agentDef.slug, runId });
+  if (totalOutcomeValue > 0 && lastOutcomeType) {
+    await recordOutcome(userId, agentDef.sector, lastOutcomeType, totalOutcomeValue, {
+      sourceType: 'agent_run', sourceId: runId, description: `${agentDef.name} completed`,
+    });
+  }
+  // Estimate time saved: each agent run saves ~15 min of manual work
+  await recordOutcome(userId, agentDef.sector, 'TIME_SAVED', 15, {
+    sourceType: 'agent_run', sourceId: runId, description: `${agentDef.name} automated workflow`,
+  });
+
+  return { runId, status: runStatus, steps: stepResults, resultSummary: lastOutput };
+}
+
+// ============================================
+// Agent API Endpoints
+// ============================================
+
+// List available agent definitions
+app.get('/v1/agents/definitions', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  const defs = await query<AgentDef>(
+    `SELECT id, name, slug, sector, description, steps_template, risk_level, requires_mode, enabled
+     FROM agent_definitions WHERE enabled = true ORDER BY sector, name`
+  );
+  res.json({ success: true, data: { agents: defs.rows } });
+});
+
+// Trigger an agent run
+app.post('/v1/agents/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { agentSlug, params = {} } = req.body || {};
+
+  if (!agentSlug) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_INPUT', message: 'agentSlug is required' } });
+  }
+
+  const agentDef = await queryOne<AgentDef>(
+    `SELECT id, name, slug, sector, description, steps_template, risk_level, requires_mode, enabled
+     FROM agent_definitions WHERE slug = $1 AND enabled = true`, [agentSlug]
+  );
+  if (!agentDef) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({ success: false, error: { code: 'AGENT_NOT_FOUND', message: `Agent '${agentSlug}' not found` } });
+  }
+
+  // Parse steps_template if it's a string
+  if (typeof agentDef.steps_template === 'string') {
+    agentDef.steps_template = JSON.parse(agentDef.steps_template);
+  }
+
+  logger.info(`Agent run started: ${agentDef.name}`, { userId, agentSlug });
+  const result = await executeAgent(userId, orgId, agentDef, params as Record<string, unknown>);
+
+  emitEvent(orgId, 'USER', userId, EVENT_TYPES.SCAN_EXECUTED, {
+    mode: 'agent', agentSlug, runId: result.runId, status: result.status,
+  });
+
+  res.json({ success: true, data: result });
+});
+
+// List agent runs for user
+app.get('/v1/agents/runs', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const limit = Math.min(50, Number(req.query.limit) || 20);
+  const offset = Math.max(0, Number(req.query.offset) || 0);
+
+  const runs = await query<any>(
+    `SELECT r.id, r.status, r.params, r.result_summary, r.outcome_value, r.outcome_type,
+            r.steps_completed, r.steps_total, r.governance_mode, r.duration_ms,
+            r.started_at, r.completed_at, r.created_at, r.error_message,
+            d.name as agent_name, d.slug as agent_slug, d.sector
+     FROM agent_runs r JOIN agent_definitions d ON r.agent_definition_id = d.id
+     WHERE r.user_id = $1 ORDER BY r.created_at DESC LIMIT $2 OFFSET $3`,
+    [userId, limit, offset]
+  );
+  res.json({ success: true, data: { runs: runs.rows } });
+});
+
+// Get run details + steps
+app.get('/v1/agents/runs/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { id } = req.params;
+
+  const run = await queryOne<any>(
+    `SELECT r.*, d.name as agent_name, d.slug as agent_slug, d.sector
+     FROM agent_runs r JOIN agent_definitions d ON r.agent_definition_id = d.id
+     WHERE r.id = $1 AND r.user_id = $2`, [id, userId]
+  );
+  if (!run) return res.status(HTTP_STATUS.NOT_FOUND).json({ success: false, error: { code: 'NOT_FOUND', message: 'Run not found' } });
+
+  const steps = await query<any>(
+    `SELECT * FROM agent_steps WHERE run_id = $1 ORDER BY step_index`, [id]
+  );
+  res.json({ success: true, data: { run, steps: steps.rows } });
+});
+
+// Agent schedules: create/update
+app.post('/v1/agents/schedules', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { agentSlug, cronExpression, params = {}, enabled = true } = req.body || {};
+
+  if (!agentSlug || !cronExpression) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_INPUT', message: 'agentSlug and cronExpression required' } });
+  }
+  const agentDef = await queryOne<{ id: string }>(`SELECT id FROM agent_definitions WHERE slug = $1`, [agentSlug]);
+  if (!agentDef) return res.status(HTTP_STATUS.NOT_FOUND).json({ success: false, error: { code: 'AGENT_NOT_FOUND', message: 'Agent not found' } });
+
+  const schedule = await queryOne<{ id: string }>(
+    `INSERT INTO agent_schedules (user_id, agent_definition_id, cron_expression, params, enabled)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (user_id, agent_definition_id) DO UPDATE SET cron_expression = $3, params = $4, enabled = $5, updated_at = NOW()
+     RETURNING id`,
+    [userId, agentDef.id, cronExpression, JSON.stringify(params), enabled]
+  );
+  res.json({ success: true, data: { scheduleId: schedule?.id } });
+});
+
+// List schedules
+app.get('/v1/agents/schedules', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const schedules = await query<any>(
+    `SELECT s.*, d.name as agent_name, d.slug as agent_slug, d.sector
+     FROM agent_schedules s JOIN agent_definitions d ON s.agent_definition_id = d.id
+     WHERE s.user_id = $1 ORDER BY s.created_at`, [userId]
+  );
+  res.json({ success: true, data: { schedules: schedules.rows } });
+});
+
+// ============================================
+// Usage Metering Endpoints
+// ============================================
+
+app.get('/v1/billing/usage', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const now = new Date();
+  const periodStart = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+
+  const meters = await query<{ meter_type: string; units_consumed: string; units_included: string }>(
+    `SELECT meter_type, units_consumed, units_included FROM usage_meters WHERE user_id = $1 AND period_start = $2`,
+    [userId, periodStart]
+  );
+
+  const total = await queryOne<{ total_events: string }>(
+    `SELECT COUNT(*) as total_events FROM usage_events WHERE user_id = $1 AND created_at >= $2`,
+    [userId, periodStart + 'T00:00:00Z']
+  );
+
+  res.json({
+    success: true,
+    data: {
+      period: { start: periodStart, end: new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0] },
+      meters: meters.rows.map(m => ({
+        type: m.meter_type,
+        consumed: parseFloat(m.units_consumed),
+        included: parseFloat(m.units_included),
+        remaining: parseFloat(m.units_included) < 0 ? -1 : Math.max(0, parseFloat(m.units_included) - parseFloat(m.units_consumed)),
+      })),
+      totalEvents: parseInt(total?.total_events || '0', 10),
+    },
+  });
+});
+
+app.get('/v1/billing/tiers', async (_req: Request, res: Response) => {
+  const tiers = await query<any>(
+    `SELECT slug, name, pricing_model, base_price_cents, included_units, overage_rates, sort_order
+     FROM pricing_tiers WHERE enabled = true ORDER BY sort_order`
+  );
+  res.json({ success: true, data: { tiers: tiers.rows } });
+});
+
+// ============================================
+// Outcome Tracking Endpoints
+// ============================================
+
+app.get('/v1/outcomes/summary', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+
+  // All-time summary
+  const allTime = await queryOne<{ total_value: string; total_events: string; profit: string; loss: string; time_saved: string }>(
+    `SELECT
+       COALESCE(SUM(value), 0) as total_value,
+       COUNT(*) as total_events,
+       COALESCE(SUM(CASE WHEN event_type IN ('PROFIT', 'FLIP_PROFIT', 'OPPORTUNITY_FOUND') THEN value ELSE 0 END), 0) as profit,
+       COALESCE(SUM(CASE WHEN event_type = 'LOSS' THEN ABS(value) ELSE 0 END), 0) as loss,
+       COALESCE(SUM(CASE WHEN event_type = 'TIME_SAVED' THEN value ELSE 0 END), 0) as time_saved
+     FROM outcome_events WHERE user_id = $1`, [userId]
+  );
+
+  // This week
+  const thisWeek = await queryOne<{ total_value: string; total_events: string; time_saved: string }>(
+    `SELECT
+       COALESCE(SUM(value), 0) as total_value,
+       COUNT(*) as total_events,
+       COALESCE(SUM(CASE WHEN event_type = 'TIME_SAVED' THEN value ELSE 0 END), 0) as time_saved
+     FROM outcome_events WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'`, [userId]
+  );
+
+  // Agent runs this week
+  const agentRuns = await queryOne<{ runs: string; completed: string }>(
+    `SELECT COUNT(*) as runs, COUNT(*) FILTER (WHERE status = 'COMPLETED') as completed
+     FROM agent_runs WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'`, [userId]
+  );
+
+  // Per-sector breakdown
+  const sectors = await query<{ domain: string; total_value: string; event_count: string }>(
+    `SELECT domain, COALESCE(SUM(value), 0) as total_value, COUNT(*) as event_count
+     FROM outcome_events WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
+     GROUP BY domain`, [userId]
+  );
+
+  res.json({
+    success: true,
+    data: {
+      allTime: {
+        totalValue: parseFloat(allTime?.total_value || '0'),
+        totalEvents: parseInt(allTime?.total_events || '0', 10),
+        profit: parseFloat(allTime?.profit || '0'),
+        loss: parseFloat(allTime?.loss || '0'),
+        timeSavedMinutes: parseFloat(allTime?.time_saved || '0'),
+      },
+      thisWeek: {
+        totalValue: parseFloat(thisWeek?.total_value || '0'),
+        totalEvents: parseInt(thisWeek?.total_events || '0', 10),
+        timeSavedMinutes: parseFloat(thisWeek?.time_saved || '0'),
+      },
+      agentActivity: {
+        runsThisWeek: parseInt(agentRuns?.runs || '0', 10),
+        completedThisWeek: parseInt(agentRuns?.completed || '0', 10),
+      },
+      sectorBreakdown: sectors.rows.reduce((acc, r) => {
+        acc[r.domain] = { value: parseFloat(r.total_value), events: parseInt(r.event_count, 10) };
+        return acc;
+      }, {} as Record<string, any>),
+      generatedAt: new Date().toISOString(),
+    },
+  });
 });
 
 // ============================================

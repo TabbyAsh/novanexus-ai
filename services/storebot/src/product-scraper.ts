@@ -22,7 +22,18 @@ class RateLimiter {
   }
 }
 
-const rateLimiter = new RateLimiter(10, 60000); // 10 req/min
+const rateLimiter = new RateLimiter(30, 60000); // 30 req/min (we try multiple endpoints per query)
+
+// User-Agent rotation — cycle through realistic browser UAs
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+];
+let uaIndex = 0;
+function nextUA(): string { return USER_AGENTS[uaIndex++ % USER_AGENTS.length]; }
 
 // ============================================================================
 // Types
@@ -89,29 +100,85 @@ async function searchEbay(query: string): Promise<ScrapedProduct[]> {
     return [];
   }
 
+  const encodedQuery = encodeURIComponent(query);
+  const ua = nextUA();
+  const headers = {
+    'User-Agent': ua,
+    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept-Encoding': 'gzip, deflate, br',
+    'Cache-Control': 'no-cache',
+    'Sec-Fetch-Dest': 'document',
+    'Sec-Fetch-Mode': 'navigate',
+    'Sec-Fetch-Site': 'none',
+    'Sec-Fetch-User': '?1',
+  };
+
+  // Strategy 1: Desktop eBay search (Buy It Now)
+  try {
+    const url = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&_sop=12&LH_BIN=1&_ipg=60`;
+    const response = await fetch(url, { headers, signal: AbortSignal.timeout(15000) });
+    if (response.ok) {
+      const html = await response.text();
+      const products = parseEbayHtml(html, query);
+      if (products.length > 0) {
+        logger.info(`eBay desktop: ${products.length} results for "${query}"`);
+        return products;
+      }
+      logger.warn(`eBay desktop: HTML received (${html.length} bytes) but 0 products parsed for "${query}"`);
+    } else {
+      logger.warn(`eBay desktop HTTP ${response.status} for "${query}"`);
+    }
+  } catch (error) {
+    logger.warn(`eBay desktop fetch failed for "${query}": ${(error as Error).message}`);
+  }
+
+  // Strategy 2: Mobile eBay (sometimes less aggressive blocking)
+  try {
+    const mobileUrl = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&LH_BIN=1&_ipg=25`;
+    const mobileHeaders = { ...headers, 'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 17_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.5 Mobile/15E148 Safari/604.1' };
+    const response = await fetch(mobileUrl, { headers: mobileHeaders, signal: AbortSignal.timeout(15000) });
+    if (response.ok) {
+      const html = await response.text();
+      const products = parseEbayHtml(html, query);
+      if (products.length > 0) {
+        logger.info(`eBay mobile: ${products.length} results for "${query}"`);
+        return products;
+      }
+    }
+  } catch (error) {
+    logger.warn(`eBay mobile fetch failed: ${(error as Error).message}`);
+  }
+
+  logger.warn(`All eBay strategies failed for "${query}"`);
+  return [];
+}
+
+// Search eBay sold/completed listings for actual sale prices
+async function searchEbaySold(query: string): Promise<ScrapedProduct[]> {
+  const canProceed = await rateLimiter.acquire();
+  if (!canProceed) return [];
+
   try {
     const encodedQuery = encodeURIComponent(query);
-    // Buy It Now, sort by best match
-    const url = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&_sop=12&LH_BIN=1&_ipg=60`;
-
+    const url = `https://www.ebay.com/sch/i.html?_nkw=${encodedQuery}&LH_Complete=1&LH_Sold=1&_sop=12&_ipg=60`;
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36',
+        'User-Agent': nextUA(),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         'Accept-Language': 'en-US,en;q=0.9',
+        'Sec-Fetch-Dest': 'document',
+        'Sec-Fetch-Mode': 'navigate',
       },
-      signal: AbortSignal.timeout(12000),
+      signal: AbortSignal.timeout(15000),
     });
-
-    if (!response.ok) {
-      logger.warn(`eBay search HTTP ${response.status} for "${query}"`);
-      return [];
-    }
-
+    if (!response.ok) return [];
     const html = await response.text();
-    return parseEbayHtml(html, query);
+    const products = parseEbayHtml(html, query);
+    // Mark as sold/completed
+    return products.map(p => ({ ...p, condition: `${p.condition || 'unknown'} (sold)` }));
   } catch (error) {
-    logger.error('eBay HTML scrape failed', error as Error);
+    logger.warn(`eBay sold search failed: ${(error as Error).message}`);
     return [];
   }
 }
@@ -354,32 +421,50 @@ export async function searchProducts(query: string): Promise<ProductSearchResult
 export async function appraiseProduct(query: string): Promise<ProductAppraisal> {
   logger.info(`Appraising product: ${query}`);
 
-  const searchResult = await searchProducts(query);
+  // Fetch current listings AND sold listings in parallel for better analysis
+  const [searchResult, soldProducts] = await Promise.all([
+    searchProducts(query),
+    searchEbaySold(query),
+  ]);
   const products = searchResult.products;
+  const allComps = [...products, ...soldProducts];
 
-  if (products.length === 0) {
+  if (allComps.length === 0) {
     logger.warn(`No comps for "${query}", using heuristic engine`);
     return generateHeuristicAppraisal(query);
   }
 
-  const prices = products.map(p => p.price).sort((a, b) => a - b);
-  const minPrice = prices[0];
-  const maxPrice = prices[prices.length - 1];
-  const avgPrice = prices.reduce((a, b) => a + b, 0) / prices.length;
-  const medianPrice = prices[Math.floor(prices.length / 2)];
+  // Use sold prices for more accurate valuation when available
+  const activePrices = products.map(p => p.price).sort((a, b) => a - b);
+  const soldPrices = soldProducts.map(p => p.price).sort((a, b) => a - b);
+  const allPrices = allComps.map(p => p.price).sort((a, b) => a - b);
 
-  const buyPrice = Math.round(prices[Math.floor(prices.length * 0.25)] * 100) / 100;
-  const sellPrice = Math.round(prices[Math.floor(prices.length * 0.75)] * 100) / 100;
+  const minPrice = allPrices[0];
+  const maxPrice = allPrices[allPrices.length - 1];
+  const avgPrice = allPrices.reduce((a, b) => a + b, 0) / allPrices.length;
+  const medianPrice = allPrices[Math.floor(allPrices.length / 2)];
+
+  // Buy price from active listings (lower quartile = deals)
+  // Sell price from sold listings if available (what actually sells), else from active listings
+  const buySource = activePrices.length > 0 ? activePrices : allPrices;
+  const sellSource = soldPrices.length > 0 ? soldPrices : allPrices;
+  const buyPrice = Math.round(buySource[Math.floor(buySource.length * 0.25)] * 100) / 100;
+  const sellPrice = Math.round(sellSource[Math.floor(sellSource.length * 0.75)] * 100) / 100;
   const ebayFee = sellPrice * 0.13;
   const shipping = sellPrice > 100 ? 15 : sellPrice > 30 ? 10 : 5;
   const profit = Math.round((sellPrice - buyPrice - ebayFee - shipping) * 100) / 100;
   const profitPct = buyPrice > 0 ? Math.round((profit / buyPrice) * 100) : 0;
 
   const priceVariance = avgPrice > 0 ? (maxPrice - minPrice) / avgPrice : 1;
-  const demand: 'low' | 'medium' | 'high' = products.length > 15 && priceVariance < 0.3
-    ? 'high' : products.length < 5 || priceVariance > 0.5 ? 'low' : 'medium';
-  const confidence = Math.min(95, products.length * 8 + (1 - Math.min(1, priceVariance)) * 30);
+  const demand: 'low' | 'medium' | 'high' = allComps.length > 15 && priceVariance < 0.3
+    ? 'high' : allComps.length < 5 || priceVariance > 0.5 ? 'low' : 'medium';
+  const confidence = Math.min(95, allComps.length * 6 + (soldProducts.length > 0 ? 20 : 0) + (1 - Math.min(1, priceVariance)) * 25);
   const verdict = profitPct >= 30 ? 'strong-buy' : profitPct >= 15 ? 'buy' : profitPct >= 5 ? 'hold' : 'pass';
+
+  const soldNote = soldProducts.length > 0 ? ` ${soldProducts.length} recently sold.` : '';
+  const sourceNote = soldProducts.length > 0
+    ? `${products.length} active + ${soldProducts.length} sold eBay listings`
+    : `${products.length} active eBay listings`;
 
   return {
     query,
@@ -398,13 +483,13 @@ export async function appraiseProduct(query: string): Promise<ProductAppraisal> 
     marketDemand: demand,
     confidence: Math.round(confidence),
     flipVerdict: verdict,
-    flipExplanation: `Based on ${products.length} live eBay listings. Buy at ~$${buyPrice} (25th pctile), sell at ~$${sellPrice} (75th pctile). After 13% fees ($${ebayFee.toFixed(0)}) + $${shipping} shipping = ~$${profit.toFixed(0)} profit (${profitPct}%). ${demand} demand.`,
-    sources: products.slice(0, 15),
+    flipExplanation: `Based on ${sourceNote}. Buy at ~$${buyPrice} (25th pctile), sell at ~$${sellPrice} (75th pctile).${soldNote} After 13% fees ($${ebayFee.toFixed(0)}) + $${shipping} shipping = ~$${profit.toFixed(0)} profit (${profitPct}%). ${demand} demand.`,
+    sources: allComps.slice(0, 20),
     appraisedAt: new Date().toISOString(),
     provenance: {
       method: 'comps',
-      sourceCount: products.length,
-      note: `Based on ${products.length} live eBay listings`,
+      sourceCount: allComps.length,
+      note: `Based on ${sourceNote}`,
     },
   };
 }

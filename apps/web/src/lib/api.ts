@@ -1714,6 +1714,57 @@ class ApiClient {
   }
 
   // ==========================================================================
+  // Manifesto: Agent Engine
+  // ==========================================================================
+  async getAgentDefinitions() {
+    return this.request<{ agents: Array<{ id: string; name: string; slug: string; sector: string; description: string; steps_template: any[]; risk_level: string; requires_mode: string; enabled: boolean }> }>('GET', '/v1/agents/definitions');
+  }
+
+  async runAgent(agentSlug: string, params: Record<string, unknown> = {}) {
+    return this.request<{ runId: string; status: string; steps: any[]; resultSummary: any }>('POST', '/v1/agents/run', { agentSlug, params });
+  }
+
+  async getAgentRuns(limit = 20, offset = 0) {
+    return this.request<{ runs: Array<any> }>('GET', `/v1/agents/runs?limit=${limit}&offset=${offset}`);
+  }
+
+  async getAgentRun(runId: string) {
+    return this.request<{ run: any; steps: any[] }>('GET', `/v1/agents/runs/${runId}`);
+  }
+
+  async getAgentSchedules() {
+    return this.request<{ schedules: Array<any> }>('GET', '/v1/agents/schedules');
+  }
+
+  async createAgentSchedule(agentSlug: string, cronExpression: string, params: Record<string, unknown> = {}, enabled = true) {
+    return this.request<{ scheduleId: string }>('POST', '/v1/agents/schedules', { agentSlug, cronExpression, params, enabled });
+  }
+
+  // ==========================================================================
+  // Manifesto: Usage Metering
+  // ==========================================================================
+  async getBillingUsage() {
+    return this.request<{ period: { start: string; end: string }; meters: Array<{ type: string; consumed: number; included: number; remaining: number }>; totalEvents: number }>('GET', '/v1/billing/usage');
+  }
+
+  async getPricingTiers() {
+    return this.request<{ tiers: Array<any> }>('GET', '/v1/billing/tiers');
+  }
+
+  // ==========================================================================
+  // Manifesto: Outcome Tracking
+  // ==========================================================================
+  async getOutcomesSummary() {
+    return this.request<{
+      allTime: { totalValue: number; totalEvents: number; profit: number; loss: number; timeSavedMinutes: number };
+      thisWeek: { totalValue: number; totalEvents: number; timeSavedMinutes: number };
+      agentActivity: { runsThisWeek: number; completedThisWeek: number };
+      sectorBreakdown: Record<string, { value: number; events: number }>;
+      generatedAt: string;
+    }>('GET', '/v1/outcomes/summary');
+  }
+
+  // ==========================================================================
   // Dashboard — Aggregate stats
   // ==========================================================================
   async getDashboardStats() {

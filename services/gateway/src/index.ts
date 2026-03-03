@@ -58,6 +58,7 @@ const PUBLIC_ROUTES = [
   '/v1/auth/refresh',
   '/v1/billing/pricing',
   '/v1/billing/founding-seats',
+  '/v1/billing/tiers',
   '/billing/webhook',  // Stripe webhook - authenticated by signature
   // Nova Nexus AI - public status
   '/v1/nexus/status',
@@ -1130,6 +1131,34 @@ app.all('/v1/daily-drop', (req: Request, res: Response) => {
 });
 
 app.all('/v1/proofpacks/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Manifesto: Agent Engine Routes -> Nova Hub
+// ============================================
+
+app.all('/v1/agents/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Manifesto: Usage Metering Routes -> Nova Hub
+// ============================================
+
+app.get('/v1/billing/usage', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.get('/v1/billing/tiers', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Manifesto: Outcome Tracking Routes -> Nova Hub
+// ============================================
+
+app.all('/v1/outcomes/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
