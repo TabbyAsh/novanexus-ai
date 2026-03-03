@@ -9099,6 +9099,336 @@ app.get('/v1/outcomes/summary', authMiddleware, async (req: AuthenticatedRequest
 });
 
 // ============================================
+// TYCOON ENGINE: Agent Auto-Scheduler
+// "Systematize → Automate → Scale"
+// Checks agent_schedules every 60s, runs due agents.
+// ============================================
+
+function parseCronField(field: string, max: number): number[] {
+  if (field === '*') return Array.from({ length: max }, (_, i) => i);
+  if (field.includes('/')) {
+    const [, step] = field.split('/');
+    const s = parseInt(step, 10);
+    return Array.from({ length: Math.ceil(max / s) }, (_, i) => i * s).filter(v => v < max);
+  }
+  if (field.includes(',')) return field.split(',').map(Number);
+  return [parseInt(field, 10)];
+}
+
+function cronMatches(cronExpr: string, date: Date): boolean {
+  try {
+    const parts = cronExpr.trim().split(/\s+/);
+    if (parts.length < 5) return false;
+    const [minF, hourF, domF, monF, dowF] = parts;
+    const min = date.getUTCMinutes(), hour = date.getUTCHours();
+    const dom = date.getUTCDate(), mon = date.getUTCMonth() + 1, dow = date.getUTCDay();
+    return parseCronField(minF, 60).includes(min)
+      && parseCronField(hourF, 24).includes(hour)
+      && (domF === '*' || parseCronField(domF, 32).includes(dom))
+      && (monF === '*' || parseCronField(monF, 13).includes(mon))
+      && (dowF === '*' || parseCronField(dowF, 7).includes(dow));
+  } catch { return false; }
+}
+
+async function runScheduledAgents(): Promise<void> {
+  try {
+    const now = new Date();
+    const schedules = await query<{
+      id: string; user_id: string; agent_definition_id: string;
+      cron_expression: string; params: string; last_run_at: string | null;
+    }>(`SELECT s.id, s.user_id, s.agent_definition_id, s.cron_expression, s.params, s.last_run_at
+        FROM agent_schedules s WHERE s.enabled = true`);
+
+    for (const sched of schedules.rows) {
+      if (!cronMatches(sched.cron_expression, now)) continue;
+      // Skip if already ran this minute
+      if (sched.last_run_at) {
+        const lastRun = new Date(sched.last_run_at);
+        if (now.getTime() - lastRun.getTime() < 55000) continue;
+      }
+      // Fetch agent def
+      const agentDef = await queryOne<AgentDef>(
+        `SELECT id, name, slug, sector, description, steps_template, risk_level, requires_mode, enabled
+         FROM agent_definitions WHERE id = $1 AND enabled = true`, [sched.agent_definition_id]
+      );
+      if (!agentDef) continue;
+      if (typeof agentDef.steps_template === 'string') agentDef.steps_template = JSON.parse(agentDef.steps_template);
+
+      // Resolve orgId
+      const userRow = await queryOne<{ org_id: string }>(`SELECT org_id FROM users WHERE id = $1`, [sched.user_id]);
+      const orgId = userRow?.org_id || sched.user_id;
+      const params = typeof sched.params === 'string' ? JSON.parse(sched.params) : (sched.params || {});
+
+      logger.info(`Scheduled agent run: ${agentDef.name} for user ${sched.user_id}`);
+      try {
+        await executeAgent(sched.user_id, orgId, agentDef, params);
+      } catch (err) {
+        logger.warn(`Scheduled agent failed: ${agentDef.name}`, { error: (err as Error).message });
+      }
+      await query(`UPDATE agent_schedules SET last_run_at = NOW(), run_count = run_count + 1 WHERE id = $1`, [sched.id]);
+    }
+  } catch (err) {
+    logger.warn('Agent scheduler tick failed', { error: (err as Error).message });
+  }
+}
+
+// Run every 60 seconds
+setInterval(runScheduledAgents, 60_000);
+// Also run once after 10s startup delay
+setTimeout(runScheduledAgents, 10_000);
+
+// ============================================
+// TYCOON ENGINE: Premium Intelligence Digest
+// Aggregates top signals, flip opps, outcomes into a
+// shareable weekly report. Content that can be marketed.
+// ============================================
+
+app.get('/v1/intelligence/weekly', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+
+  // Top agent outcomes this week
+  const topOutcomes = await query<{ domain: string; event_type: string; value: string; description: string; created_at: string }>(
+    `SELECT domain, event_type, value, description, created_at
+     FROM outcome_events WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'
+     ORDER BY value DESC LIMIT 10`, [userId]
+  );
+
+  // Best agent runs
+  const bestRuns = await query<{ agent_name: string; outcome_value: string; status: string; duration_ms: string; created_at: string }>(
+    `SELECT d.name as agent_name, r.outcome_value, r.status, r.duration_ms, r.created_at
+     FROM agent_runs r JOIN agent_definitions d ON r.agent_definition_id = d.id
+     WHERE r.user_id = $1 AND r.created_at > NOW() - INTERVAL '7 days'
+     ORDER BY r.outcome_value DESC NULLS LAST LIMIT 10`, [userId]
+  );
+
+  // Top decision cards by confidence
+  const topCards = await query<{ symbol: string; direction: string; confidence_score: string; domain: string; created_at: string }>(
+    `SELECT symbol, direction, confidence_score, domain, created_at
+     FROM decision_cards WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'
+     ORDER BY confidence_score DESC LIMIT 10`, [userId]
+  );
+
+  // Flip pipeline summary
+  const flipSummary = await queryOne<{ active: string; total_invested: string; total_profit: string }>(
+    `SELECT COUNT(*) as active,
+       COALESCE(SUM(buy_price), 0) as total_invested,
+       COALESCE(SUM(CASE WHEN status = 'SOLD' THEN sell_price - buy_price ELSE 0 END), 0) as total_profit
+     FROM flip_plans WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'`, [userId]
+  );
+
+  // Usage this period
+  const usageCount = await queryOne<{ count: string }>(
+    `SELECT COUNT(*) as count FROM usage_events WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'`, [userId]
+  );
+
+  // Time saved
+  const timeSaved = await queryOne<{ minutes: string }>(
+    `SELECT COALESCE(SUM(value), 0) as minutes FROM outcome_events
+     WHERE user_id = $1 AND event_type = 'TIME_SAVED' AND created_at > NOW() - INTERVAL '7 days'`, [userId]
+  );
+
+  const digest = {
+    period: {
+      start: new Date(Date.now() - 7 * 86400000).toISOString().split('T')[0],
+      end: new Date().toISOString().split('T')[0],
+    },
+    highlights: {
+      topOutcomes: topOutcomes.rows.map(o => ({
+        domain: o.domain, type: o.event_type, value: parseFloat(o.value),
+        description: o.description, date: o.created_at,
+      })),
+      bestAgentRuns: bestRuns.rows.map(r => ({
+        agent: r.agent_name, outcomeValue: parseFloat(r.outcome_value || '0'),
+        status: r.status, durationMs: parseInt(r.duration_ms || '0', 10), date: r.created_at,
+      })),
+      topSignals: topCards.rows.map(c => ({
+        symbol: c.symbol, direction: c.direction, confidence: parseFloat(c.confidence_score),
+        domain: c.domain, date: c.created_at,
+      })),
+    },
+    flipPipeline: {
+      activeFlips: parseInt(flipSummary?.active || '0', 10),
+      totalInvested: parseFloat(flipSummary?.total_invested || '0'),
+      totalProfit: parseFloat(flipSummary?.total_profit || '0'),
+    },
+    productivity: {
+      agentRunsThisWeek: bestRuns.rows.length,
+      usageEventsThisWeek: parseInt(usageCount?.count || '0', 10),
+      timeSavedMinutes: parseFloat(timeSaved?.minutes || '0'),
+      estimatedValuePerHour: 50, // Conservative freelancer rate
+      timeSavedDollars: parseFloat(timeSaved?.minutes || '0') / 60 * 50,
+    },
+    generatedAt: new Date().toISOString(),
+  };
+
+  // Record that user viewed their intelligence report
+  await recordUsage(userId, 'INTELLIGENCE_DIGEST', 1);
+
+  res.json({ success: true, data: digest });
+});
+
+// Public platform stats for landing page social proof
+app.get('/v1/platform/stats', async (_req: Request, res: Response) => {
+  try {
+    const [users, runs, outcomes, flips] = await Promise.all([
+      queryOne<{ count: string }>(`SELECT COUNT(*) as count FROM users`),
+      queryOne<{ count: string; total_value: string }>(
+        `SELECT COUNT(*) as count, COALESCE(SUM(outcome_value), 0) as total_value FROM agent_runs WHERE status = 'COMPLETED'`
+      ),
+      queryOne<{ time_saved: string }>(
+        `SELECT COALESCE(SUM(value), 0) as time_saved FROM outcome_events WHERE event_type = 'TIME_SAVED'`
+      ),
+      queryOne<{ count: string }>(`SELECT COUNT(*) as count FROM flip_plans`),
+    ]);
+
+    res.json({
+      success: true,
+      data: {
+        totalUsers: parseInt(users?.count || '0', 10),
+        agentRunsCompleted: parseInt(runs?.count || '0', 10),
+        totalOutcomeValue: parseFloat(runs?.total_value || '0'),
+        timeSavedMinutes: parseFloat(outcomes?.time_saved || '0'),
+        flipsTracked: parseInt(flips?.count || '0', 10),
+        updatedAt: new Date().toISOString(),
+      },
+    });
+  } catch {
+    res.json({ success: true, data: { totalUsers: 0, agentRunsCompleted: 0, totalOutcomeValue: 0, timeSavedMinutes: 0, flipsTracked: 0 } });
+  }
+});
+
+// ============================================
+// TYCOON ENGINE: Referral System
+// Viral growth: each referral = credits for both parties
+// ============================================
+
+// Generate referral code for user
+app.post('/v1/referrals/generate', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+
+  // Check if user already has a code
+  let existing = await queryOne<{ code: string; uses: string; earnings_cents: string }>(
+    `SELECT code, uses, earnings_cents FROM referral_codes WHERE user_id = $1`, [userId]
+  );
+
+  if (!existing) {
+    // Generate unique 8-char code
+    const code = 'NOVA' + Math.random().toString(36).substring(2, 6).toUpperCase();
+    await query(
+      `INSERT INTO referral_codes (user_id, code, reward_type, reward_value_cents)
+       VALUES ($1, $2, 'CREDIT', 1000)`, // $10 credit per referral
+      [userId, code]
+    );
+    existing = { code, uses: '0', earnings_cents: '0' };
+  }
+
+  res.json({
+    success: true,
+    data: {
+      code: existing.code,
+      referralUrl: `https://novanexus-ai.com/register?ref=${existing.code}`,
+      totalReferrals: parseInt(existing.uses || '0', 10),
+      totalEarnings: parseInt(existing.earnings_cents || '0', 10) / 100,
+      rewardPerReferral: '$10 credit',
+    },
+  });
+});
+
+// Validate referral code (used during signup)
+app.get('/v1/referrals/validate/:code', async (req: Request, res: Response) => {
+  const { code } = req.params;
+  const ref = await queryOne<{ id: string; user_id: string; code: string }>(
+    `SELECT id, user_id, code FROM referral_codes WHERE code = $1 AND active = true`, [code.toUpperCase()]
+  );
+
+  if (!ref) {
+    return res.json({ success: true, data: { valid: false } });
+  }
+
+  res.json({ success: true, data: { valid: true, code: ref.code } });
+});
+
+// Redeem referral (called after successful signup)
+app.post('/v1/referrals/redeem', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { code } = req.body || {};
+
+  if (!code) return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'INVALID_INPUT', message: 'code required' } });
+
+  const ref = await queryOne<{ id: string; user_id: string; reward_value_cents: string }>(
+    `SELECT id, user_id, reward_value_cents FROM referral_codes WHERE code = $1 AND active = true`, [code.toUpperCase()]
+  );
+
+  if (!ref) return res.status(HTTP_STATUS.NOT_FOUND).json({ success: false, error: { code: 'INVALID_CODE', message: 'Referral code not found' } });
+  if (ref.user_id === userId) return res.status(HTTP_STATUS.BAD_REQUEST).json({ success: false, error: { code: 'SELF_REFERRAL', message: 'Cannot use your own referral code' } });
+
+  // Check if already redeemed
+  const alreadyRedeemed = await queryOne<{ id: string }>(
+    `SELECT id FROM referral_rewards WHERE referral_code_id = $1 AND referred_user_id = $2`, [ref.id, userId]
+  );
+  if (alreadyRedeemed) return res.json({ success: true, data: { alreadyRedeemed: true } });
+
+  const rewardCents = parseInt(ref.reward_value_cents || '1000', 10);
+
+  // Record reward for both parties
+  await query(
+    `INSERT INTO referral_rewards (referral_code_id, referred_user_id, reward_type, reward_value_cents, status)
+     VALUES ($1, $2, 'CREDIT', $3, 'GRANTED')`,
+    [ref.id, userId, rewardCents]
+  );
+
+  // Update referral code stats
+  await query(
+    `UPDATE referral_codes SET uses = uses + 1, earnings_cents = earnings_cents + $2 WHERE id = $1`,
+    [ref.id, rewardCents]
+  );
+
+  // Record outcome for referrer
+  await recordOutcome(ref.user_id, 'referral', 'REFERRAL_BONUS', rewardCents / 100, {
+    description: 'Referral reward earned', sourceType: 'referral', sourceId: ref.id,
+  });
+
+  res.json({
+    success: true,
+    data: {
+      redeemed: true,
+      creditAmount: rewardCents / 100,
+      message: `$${(rewardCents / 100).toFixed(2)} credit applied to your account!`,
+    },
+  });
+});
+
+// Get referral stats
+app.get('/v1/referrals/stats', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+
+  const refCode = await queryOne<{ code: string; uses: string; earnings_cents: string }>(
+    `SELECT code, uses, earnings_cents FROM referral_codes WHERE user_id = $1`, [userId]
+  );
+
+  const rewards = await query<{ reward_value_cents: string; status: string; created_at: string }>(
+    `SELECT rr.reward_value_cents, rr.status, rr.created_at
+     FROM referral_rewards rr JOIN referral_codes rc ON rr.referral_code_id = rc.id
+     WHERE rc.user_id = $1 ORDER BY rr.created_at DESC LIMIT 20`, [userId]
+  );
+
+  res.json({
+    success: true,
+    data: {
+      code: refCode?.code || null,
+      referralUrl: refCode ? `https://novanexus-ai.com/register?ref=${refCode.code}` : null,
+      totalReferrals: parseInt(refCode?.uses || '0', 10),
+      totalEarnings: parseInt(refCode?.earnings_cents || '0', 10) / 100,
+      recentRewards: rewards.rows.map(r => ({
+        amount: parseInt(r.reward_value_cents, 10) / 100,
+        status: r.status,
+        date: r.created_at,
+      })),
+    },
+  });
+});
+
+// ============================================
 // Start Server
 // ============================================
 

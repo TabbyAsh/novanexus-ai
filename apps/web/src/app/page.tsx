@@ -2,33 +2,33 @@
 
 import { motion, useScroll, useTransform } from 'framer-motion';
 import Link from 'next/link';
-import { useRef } from 'react';
+import { useRef, useEffect, useState } from 'react';
 import GlassCard, { GlassButton, GradientText } from '@/components/ui/GlassCard';
 import ParticleField from '@/components/three/ParticleField';
 
 const features = [
   {
-    icon: '🧠',
-    title: 'AI Trading Intelligence',
-    description: 'Advanced market screening powered by AI. Pattern recognition, anomaly detection, and predictive signals that identify opportunities before they happen.',
+    icon: '🤖',
+    title: 'Autonomous Agent Engine',
+    description: 'AI agents that execute multi-step workflows end-to-end. Scanner, FlipFinder, Rebalancer, Compliance — not chatbots, executors.',
     color: 'cyan' as const,
   },
   {
     icon: '📈',
-    title: 'Strategy Simulator',
-    description: 'Backtest strategies against years of market data. Monte Carlo simulations provide probability-weighted outcomes for informed decisions.',
+    title: 'AI Stock Screener',
+    description: 'Real-time market screening with direct Alpaca + Yahoo data. RSI, MACD, SMA crossovers — signals ranked by confidence, auto-generated decision cards.',
     color: 'purple' as const,
   },
   {
-    icon: '🛒',
-    title: 'Algorithmic Commerce',
-    description: 'Dynamic product discovery that analyzes market trends in real-time. Automated pricing optimization maximizes margins while staying competitive.',
+    icon: '💰',
+    title: 'Flip Arbitrage Engine',
+    description: 'Scrapes eBay active + sold listings, computes real flip margins, auto-generates flip plans. Find $50+ profit items while you sleep.',
     color: 'pink' as const,
   },
   {
-    icon: '🚀',
-    title: 'Autonomous Operations',
-    description: 'From dropshipping to day trading, our AI handles the heavy lifting. Set your parameters and let the system work for you 24/7.',
+    icon: '📊',
+    title: 'Outcome Ledger & ROI Tracking',
+    description: 'Every agent run produces measurable outcomes. Track profit, time saved, opportunities found — see real ROI within 2 weeks.',
     color: 'green' as const,
   },
 ];
@@ -245,6 +245,61 @@ function MissionSection() {
   );
 }
 
+function LiveStatsSection() {
+  const [stats, setStats] = useState<{
+    totalUsers: number; agentRunsCompleted: number; timeSavedMinutes: number; flipsTracked: number;
+  } | null>(null);
+
+  useEffect(() => {
+    fetch('/api/proxy/v1/platform/stats')
+      .then(r => r.json())
+      .then(d => { if (d.success && d.data) setStats(d.data); })
+      .catch(() => {});
+  }, []);
+
+  const counters = [
+    { label: 'Active Users', value: stats ? stats.totalUsers : '—', icon: '👥' },
+    { label: 'Agent Runs', value: stats ? stats.agentRunsCompleted : '—', icon: '🤖' },
+    { label: 'Hours Saved', value: stats ? `${(stats.timeSavedMinutes / 60).toFixed(0)}+` : '—', icon: '⏱️' },
+    { label: 'Flips Tracked', value: stats ? stats.flipsTracked : '—', icon: '💰' },
+  ];
+
+  return (
+    <section className="relative py-16 px-6">
+      <div className="max-w-5xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
+          viewport={{ once: true }}
+          className="text-center mb-10"
+        >
+          <h2 className="text-3xl md:text-4xl font-bold text-white mb-2">
+            The Machine is <GradientText>Running</GradientText>
+          </h2>
+          <p className="text-gray-400">Live platform activity — updated in real-time</p>
+        </motion.div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {counters.map((c, i) => (
+            <motion.div
+              key={c.label}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: i * 0.1 }}
+              viewport={{ once: true }}
+              className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-6 text-center"
+            >
+              <div className="text-3xl mb-2">{c.icon}</div>
+              <div className="text-3xl font-bold text-white mb-1">{c.value}</div>
+              <div className="text-sm text-gray-400">{c.label}</div>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 function CTASection() {
   return (
     <section className="relative py-20 px-6">
@@ -258,8 +313,11 @@ function CTASection() {
           <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
             Ready to take <GradientText>control</GradientText>?
           </h2>
-          <p className="text-xl text-gray-400 mb-4">
+          <p className="text-xl text-gray-400 mb-2">
             50 Founding Member seats. $99/month. Unlimited everything. Lock it in forever.
+          </p>
+          <p className="text-amber-400 font-medium mb-2">
+            Refer a friend → you both get $10 credit.
           </p>
           <p className="text-gray-500 mb-10">
             Or start free — no credit card required.
@@ -325,6 +383,7 @@ export default function HomePage() {
       <Navbar />
       <HeroSection />
       <FeaturesSection />
+      <LiveStatsSection />
       <MissionSection />
       <CTASection />
       <Footer />

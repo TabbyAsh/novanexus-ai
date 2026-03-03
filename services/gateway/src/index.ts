@@ -65,6 +65,10 @@ const PUBLIC_ROUTES = [
   '/v1/nexus/initialize',
   '/v1/nexus/analyze',
   '/v1/nexus/ledger',
+  // Platform stats (public for landing page)
+  '/v1/platform/stats',
+  // Referral validation (public)
+  '/v1/referrals/validate/',
   // AI Screener - public for demo
   '/v1/ai-screener/',
   // Market scanning - public for demo
@@ -1159,6 +1163,34 @@ app.get('/v1/billing/tiers', (req: Request, res: Response) => {
 // ============================================
 
 app.all('/v1/outcomes/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Tycoon: Intelligence Digest -> Nova Hub
+// ============================================
+
+app.get('/v1/intelligence/weekly', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Tycoon: Referral System -> Nova Hub
+// ============================================
+
+app.all('/v1/referrals/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.post('/v1/referrals/generate', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Tycoon: Platform Stats (public) -> Nova Hub
+// ============================================
+
+app.get('/v1/platform/stats', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
