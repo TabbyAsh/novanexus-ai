@@ -24,7 +24,9 @@ const path = require('path');
 // CONFIG
 // ============================================================================
 
-const API_BASE = process.env.NOVA_HUB_URL || process.env.GATEWAY_URL || 'http://localhost:3000';
+// Nova Hub scan endpoint is at /v1/screener/scan (requires auth)
+// Gateway proxies /v1/trade/scan to nova-hub
+const API_BASE = process.env.NOVA_HUB_URL || 'http://localhost:3030';
 const AUTH_TOKEN = process.env.NOVA_AUTH_TOKEN || '';
 const OUTPUT_DIR = path.join(__dirname, '..', 'briefs');
 const MAX_PRIORITY = 5;
@@ -36,7 +38,7 @@ const MIN_CONFIDENCE = 40;
 // ============================================================================
 
 async function fetchScan() {
-  const url = `${API_BASE}/v1/trade/scan`;
+  const url = `${API_BASE}/v1/screener/scan`;
   const headers = { 'Content-Type': 'application/json' };
   if (AUTH_TOKEN) headers['Authorization'] = `Bearer ${AUTH_TOKEN}`;
 

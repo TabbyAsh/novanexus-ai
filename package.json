@@ -47,7 +47,8 @@
     "brief": "node scripts/generate-daily-brief.js",
     "brief:send": "node scripts/send-daily-brief.js",
     "brief:send:dry": "node scripts/send-daily-brief.js --dry-run",
-    "brief:outcomes": "node scripts/log-brief-outcomes.js"
+    "brief:outcomes": "node scripts/log-brief-outcomes.js",
+    "stripe:setup": "node scripts/setup-stripe-founding.js"
   },
   "devDependencies": {
     "@next/eslint-plugin-next": "^16.1.4",
