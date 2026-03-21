@@ -24,6 +24,16 @@ import {
   type BuildThesisResult,
   type ThesisValidationError,
 } from './guided';
+import {
+  type OHLCVBar,
+  type TradeCard,
+  type SortMode,
+  computeFullIndicators,
+  detectRegime,
+  buildTradeCard,
+  sortTradeCards,
+  filterByBoard,
+} from './screener-engine';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -3535,11 +3545,9 @@ async function directAlpacaBars(
   apiKey: string,
   apiSecret: string,
   limit = 210,
-): Promise<number[] | null> {
+): Promise<OHLCVBar[] | null> {
   if (!apiKey || !apiSecret) return null;
   try {
-    // Alpaca bars API defaults start to beginning-of-day without an explicit start param.
-    // We need ~300 calendar days to cover 210 trading days.
     const startDate = new Date(Date.now() - 365 * 86400000).toISOString().split('T')[0];
     const params = new URLSearchParams({
       timeframe: '1Day',
@@ -3548,9 +3556,8 @@ async function directAlpacaBars(
       adjustment: 'raw',
       feed: ALPACA_DATA_FEED_HUB,
     });
-    const allCloses: number[] = [];
+    const allBars: OHLCVBar[] = [];
     let pageToken: string | undefined;
-    // Paginate if needed (Alpaca caps at 10000 per page, but we only need ~210)
     do {
       const p = new URLSearchParams(params);
       if (pageToken) p.set('page_token', pageToken);
@@ -3559,18 +3566,26 @@ async function directAlpacaBars(
         headers: { 'APCA-API-KEY-ID': apiKey, 'APCA-API-SECRET-KEY': apiSecret },
         signal: AbortSignal.timeout(15000),
       });
-      if (!resp.ok) return allCloses.length >= 20 ? allCloses : null;
+      if (!resp.ok) return allBars.length >= 20 ? allBars : null;
       const data = (await resp.json()) as any;
       const bars = data?.bars;
       if (Array.isArray(bars)) {
         for (const b of bars) {
-          const c = Math.round(b.c * 100) / 100;
-          if (Number.isFinite(c)) allCloses.push(c);
+          if (Number.isFinite(b.c) && Number.isFinite(b.o) && Number.isFinite(b.h) && Number.isFinite(b.l)) {
+            allBars.push({
+              o: Math.round(b.o * 100) / 100,
+              h: Math.round(b.h * 100) / 100,
+              l: Math.round(b.l * 100) / 100,
+              c: Math.round(b.c * 100) / 100,
+              v: typeof b.v === 'number' ? b.v : 0,
+              t: b.t || '',
+            });
+          }
         }
       }
       pageToken = data?.next_page_token || undefined;
-    } while (pageToken && allCloses.length < limit);
-    return allCloses.length >= 20 ? allCloses : null;
+    } while (pageToken && allBars.length < limit);
+    return allBars.length >= 20 ? allBars : null;
   } catch {
     return null;
   }
@@ -3826,7 +3841,8 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   const allIndicators = new Map<string, HubIndicators>();
   const symbolsWithQuotes = list.filter(s => allQuotes.has(s));
 
-  // 2A: Direct Alpaca bars + local indicator computation (parallel batches of 15)
+  // 2A: Direct Alpaca OHLCV bars + Trade Card engine indicator computation
+  const allOHLCV = new Map<string, OHLCVBar[]>();
   if (hasAlpaca) {
     const BARS_BATCH_SIZE = 15;
     let directIndCount = 0;
@@ -3834,9 +3850,23 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
       const batch = symbolsWithQuotes.slice(i, i + BARS_BATCH_SIZE);
       const results = await Promise.all(
         batch.map(async (sym) => {
-          const closes = await directAlpacaBars(sym, alpacaKey, alpacaSecret, 210);
-          if (closes && closes.length >= 20) {
-            return { sym, ind: localComputeIndicators(sym, closes) };
+          const bars = await directAlpacaBars(sym, alpacaKey, alpacaSecret, 210);
+          if (bars && bars.length >= 20) {
+            allOHLCV.set(sym, bars);
+            const fullInd = computeFullIndicators(bars);
+            // Bridge to HubIndicators for compat with any legacy code
+            const hubInd: HubIndicators = {
+              symbol: sym,
+              rsi: fullInd.rsi,
+              macd: fullInd.macd,
+              sma20: fullInd.sma20,
+              sma50: fullInd.sma50,
+              sma200: fullInd.sma200,
+              asOf: new Date().toISOString(),
+              provider: 'trade-card-engine',
+              computedAt: new Date().toISOString(),
+            };
+            return { sym, ind: hubInd };
           }
           return { sym, ind: null };
         })
@@ -3889,7 +3919,11 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
 
   logger.info('Screener indicator coverage', { total: symbolsWithQuotes.length, fetched: allIndicators.size });
 
-  // Phase 3: Build signals from pre-fetched data
+  // Phase 3: Build Trade Cards from OHLCV data (new engine) or legacy signals as fallback
+  const requestedSortMode = (req.body?.sortMode || 'BEST_TRADES_NOW') as SortMode;
+  const requestedBoard = req.body?.board || 'ALL';
+  const allTradeCards: TradeCard[] = [];
+
   for (const symbol of list) {
     const quote = allQuotes.get(symbol);
     const indicators = allIndicators.get(symbol);
@@ -3898,38 +3932,71 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
       continue;
     }
 
-    const signal = buildSignal(symbol, quote, indicators, Number(minConfidence));
-    if (!signal) {
-      missingDataSymbols.push(symbol);
-      continue;
+    const bars = allOHLCV.get(symbol);
+    if (bars && bars.length >= 20) {
+      // Full Trade Card engine path — OHLCV available
+      const fullInd = computeFullIndicators(bars);
+      const regime = detectRegime(fullInd, bars);
+      const card = buildTradeCard(symbol, quote.price, bars, fullInd, regime);
+      // Apply signal type filter
+      if (signalType !== 'all' && card.type !== signalType) continue;
+      allTradeCards.push(card);
+    } else {
+      // Legacy fallback for symbols without OHLCV (Yahoo-only etc.)
+      const signal = buildSignal(symbol, quote, indicators, Number(minConfidence));
+      if (!signal) { missingDataSymbols.push(symbol); continue; }
+      if (signalType !== 'all' && signal.type !== signalType) continue;
+      // Wrap legacy signal into Trade Card compat shape
+      allTradeCards.push({
+        symbol: signal.symbol,
+        name: signal.name,
+        setupType: 'MOMENTUM_CONTINUATION',
+        direction: signal.type === 'bullish' ? 'LONG' : 'SHORT',
+        durationBucket: 'SWING',
+        entryTrigger: signal.pattern,
+        entry: signal.entry,
+        stop: signal.stopLoss,
+        targets: { t1: signal.target, t2: signal.target * (signal.type === 'bullish' ? 1.02 : 0.98) },
+        timeStop: signal.timeframe,
+        riskR: Math.abs(signal.entry - signal.stopLoss),
+        rewardR_t1: signal.riskReward,
+        rewardR_t2: signal.riskReward * 1.5,
+        scenarioTree: { ifGoes: 'Trail stop to entry', ifStalls: 'Reduce at time stop', ifFails: 'Exit at stop' },
+        riskFlags: signal.riskFlags || [],
+        pWin: signal.confidence / 100 * 0.7,
+        evR: (signal.confidence / 100 * 0.7) * signal.riskReward - (1 - signal.confidence / 100 * 0.7),
+        tailRiskPenalty: 0,
+        liquidityScore: 50,
+        confidence: signal.confidence,
+        regime: { trend: 'TRANSITIONAL', vol: 'NORMAL', maAlignment: 'CHOPPY', squeeze: false },
+        indicators: {
+          rsi: signal.indicators?.rsi ?? null,
+          sma20: signal.indicators?.sma20 ?? null,
+          sma50: signal.indicators?.sma50 ?? null,
+          sma200: null,
+          macd: signal.indicators?.macdHistogram != null ? { value: 0, signal: 0, histogram: signal.indicators.macdHistogram } : null,
+          atr: null, atrPercent: null, adx: null, bollingerB: null, bollingerWidth: null,
+          zScore: null, roc20: null, rvol: null, obvSlope: null, sma20Slope: null, sma50Slope: null, maAlignmentScore: null,
+        },
+        board: 'MOMENTUM_CONTINUATION',
+        reasoning: signal.reasoning,
+        type: signal.type === 'bearish' ? 'bearish' : 'bullish',
+        pattern: signal.pattern,
+        target: signal.target,
+        stopLoss: signal.stopLoss,
+        riskReward: signal.riskReward,
+        timeframe: signal.timeframe,
+        confidenceTag: signal.confidenceTag,
+      } as TradeCard);
     }
-
-    // Filter by signal type if specified
-    if (signalType !== 'all' && signal.type !== signalType) continue;
-
-    allSignals.push(signal);
   }
 
-  // Sort ALL signals by confidence descending - ranking happens BEFORE any filtering
-  allSignals.sort((a, b) => b.confidence - a.confidence);
-  
-  // Separate into qualified/near/not categories
-  const qualified = allSignals.filter(s => s.qualification === 'QUALIFIED');
-  const nearQualified = allSignals.filter(s => s.qualification === 'NEAR_QUALIFIED');
-  const notQualified = allSignals.filter(s => s.qualification === 'NOT_QUALIFIED');
-  
-  // Phase 6.1: NEVER RETURN ZERO - always include at least top N results regardless of qualification
-  // This ensures UI always has something to display
-  const guaranteedMinResults = 5;
-  let finalSignals = allSignals;
-  if (qualified.length === 0 && allSignals.length > 0) {
-    // Mark top results as LOW_CONFIDENCE fallback when no qualified signals exist
-    finalSignals = allSignals.slice(0, Math.min(guaranteedMinResults, allSignals.length)).map(s => ({
-      ...s,
-      confidenceTag: 'LOW' as const,
-      fallbackReason: 'No high-confidence signals found; showing top candidates for review',
-    }));
-  }
+  // Apply board filter and sort mode
+  let filteredCards = filterByBoard(allTradeCards, requestedBoard);
+  filteredCards = sortTradeCards(filteredCards, requestedSortMode);
+
+  // Guarantee minimum results
+  const finalSignals = filteredCards.length > 0 ? filteredCards : allTradeCards.slice(0, 5);
 
   const scannedAt = new Date().toISOString();
   let reportId: string | null = null;
@@ -3940,65 +4007,61 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
       `INSERT INTO scanner_reports (user_id, name, results)
        VALUES ($1, $2, $3)
        RETURNING id`,
-      [userId, reportName, JSON.stringify({ signals: allSignals, settings: { maxSymbols, minConfidence, signalType }, scannedAt })]
+      [userId, reportName, JSON.stringify({ signals: finalSignals, settings: { maxSymbols, minConfidence, signalType, sortMode: requestedSortMode, board: requestedBoard }, scannedAt })]
     );
     reportId = reportResult?.id || null;
   }
 
+  // Board distribution for trace
+  const boardDistribution = allTradeCards.reduce((acc, c) => {
+    acc[c.board] = (acc[c.board] || 0) + 1;
+    return acc;
+  }, {} as Record<string, number>);
+
   emitEvent(orgId, 'USER', userId, EVENT_TYPES.SCAN_EXECUTED, {
-    mode: 'screener',
+    mode: 'trade-card-engine',
     universeCount: list.length,
-    qualifiedCount: qualified.length,
-    nearQualifiedCount: nearQualified.length,
-    notQualifiedCount: notQualified.length,
+    tradeCardCount: allTradeCards.length,
+    filteredCount: filteredCards.length,
     missingDataCount: missingDataSymbols.length,
+    sortMode: requestedSortMode,
+    boardFilter: requestedBoard,
     minConfidence,
     signalType,
     reportId,
   });
 
-  // TRACE/INTEGRITY envelope with debug metadata
-  // Phase 6.1: Always return finalSignals (guaranteed non-empty when data available)
   res.json({
     success: true,
     data: {
-      signals: finalSignals.length > 0 ? finalSignals : allSignals,
-      qualified,
-      nearQualified,
-      notQualified,
+      signals: finalSignals,
       scannedAt,
       reportId,
-      // Phase 6.1: Include metadata about fallback behavior
-      fallbackActive: qualified.length === 0 && allSignals.length > 0,
-      totalCandidates: allSignals.length,
+      totalCandidates: allTradeCards.length,
+      sortMode: requestedSortMode,
+      boardFilter: requestedBoard,
+      boardDistribution,
     },
     trace: {
-      // Phase 7.3: Enhanced trace envelope
+      engine: 'trade-card-v1',
       universeSize: list.length,
-      scannedCount: allSignals.length,
+      scannedCount: allTradeCards.length,
       fetchCoverage: ((list.length - missingDataSymbols.length) / list.length * 100).toFixed(1) + '%',
-      qualifiedCount: qualified.length,
-      nearQualifiedCount: nearQualified.length,
-      notQualifiedCount: notQualified.length,
+      ohlcvCoverage: `${allOHLCV.size}/${symbolsWithQuotes.length}`,
+      boardDistribution,
+      sortMode: requestedSortMode,
       missingDataSymbols,
       missingInputs: missingDataSymbols.length,
-      minConfidenceThreshold: minConfidence,
-      signalTypeFilter: signalType,
       timingMs: Date.now() - startTime,
-      // Phase 7.3: Strategy breakdown
-      strategyDistribution: allSignals.reduce((acc, s) => {
-        acc[s.strategyId || 'unknown'] = (acc[s.strategyId || 'unknown'] || 0) + 1;
-        return acc;
-      }, {} as Record<string, number>),
-      rankings: allSignals.slice(0, 10).map(s => ({
-        symbol: s.symbol,
-        confidence: s.confidence,
-        qualification: s.qualification,
-        strategyId: s.strategyId,
-        trust: s.trust,
-        riskFlags: s.riskFlags,
+      rankings: finalSignals.slice(0, 10).map(c => ({
+        symbol: c.symbol,
+        board: c.board,
+        direction: c.direction,
+        evR: c.evR,
+        pWin: c.pWin,
+        confidence: c.confidence,
+        riskFlags: c.riskFlags,
       })),
-      // Data pipeline diagnostics — shows which providers succeeded/failed
       providerDiagnostics: providerDiag,
       alpacaCredentialSource: alpacaSource,
       quoteCoverage: `${allQuotes.size}/${list.length}`,
@@ -7164,8 +7227,8 @@ async function getOrCreateUdmWallet(userId: string): Promise<UdmWallet> {
   };
 }
 
-// Helper: Detect market regime from indicators
-function detectRegime(indicators: HubIndicators): 'trend_up' | 'trend_down' | 'range' | 'high_vol' | 'low_vol' {
+// Helper: Detect market regime from indicators (UDM-specific, distinct from screener-engine detectRegime)
+function detectUdmRegime(indicators: HubIndicators): 'trend_up' | 'trend_down' | 'range' | 'high_vol' | 'low_vol' {
   const rsi = indicators.rsi ?? 50;
   const sma20 = indicators.sma20 ?? 0;
   const sma50 = indicators.sma50 ?? 0;
@@ -7384,7 +7447,7 @@ app.post('/v1/udm/apply', authMiddleware, async (req: AuthenticatedRequest, res:
       computedAt: new Date().toISOString(),
     };
 
-    const regime = detectRegime(defaultIndicators);
+    const regime = detectUdmRegime(defaultIndicators);
     const strategy = selectBestStrategy(quote.price, defaultIndicators);
     const resolvedStrategy = strategyHint || strategy.strategyId;
 
@@ -8359,7 +8422,7 @@ app.get('/v1/ops/modes', authMiddleware, async (req: AuthenticatedRequest, res: 
     res.json({ success: true, data: { modes } });
   } catch (error) {
     logger.error('Failed to get modes', error as Error);
-    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'MODES_FAILED', message: 'Failed to get modes' } });
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ success: false, error: { code: 'MODES_FAILED', message: 'Failed to get modes' } });
   }
 });
 
@@ -8381,7 +8444,7 @@ app.put('/v1/ops/modes', authMiddleware, async (req: AuthenticatedRequest, res: 
     res.json({ success: true, data: { sector, mode } });
   } catch (error) {
     logger.error('Failed to set mode', error as Error);
-    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'MODE_FAILED', message: 'Failed to set mode' } });
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ success: false, error: { code: 'MODE_FAILED', message: 'Failed to set mode' } });
   }
 });
 
@@ -8409,7 +8472,7 @@ app.post('/v1/calibration', authMiddleware, async (req: AuthenticatedRequest, re
     res.status(HTTP_STATUS.CREATED).json({ success: true, data: { recorded: true } });
   } catch (error) {
     logger.error('Failed to record calibration', error as Error);
-    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Failed to record calibration' } });
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Failed to record calibration' } });
   }
 });
 
@@ -8456,7 +8519,7 @@ app.get('/v1/calibration', authMiddleware, async (req: AuthenticatedRequest, res
     res.json({ success: true, data: { brierScore, count: n, buckets } });
   } catch (error) {
     logger.error('Failed to compute calibration', error as Error);
-    res.status(HTTP_STATUS.INTERNAL_ERROR).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Failed to compute calibration' } });
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Failed to compute calibration' } });
   }
 });
 
@@ -8594,7 +8657,7 @@ app.get('/v1/weekly-report', authMiddleware, async (req: AuthenticatedRequest, r
     });
   } catch (error) {
     logger.error('Weekly report generation failed', error as Error);
-    res.status(HTTP_STATUS.INTERNAL_ERROR).json({
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
       success: false,
       error: { code: 'REPORT_FAILED', message: 'Failed to generate weekly report' },
     });
@@ -8692,7 +8755,10 @@ const stepExecutors: Record<string, StepExecutor> = {
     const symsWithQ = list.filter(s => quotes.has(s));
     for (const sym of symsWithQ.slice(0, 30)) {
       let closes: number[] | null = null;
-      if (hasAlpacaCreds) closes = await directAlpacaBars(sym, alpacaKey, alpacaSecret, 210);
+      if (hasAlpacaCreds) {
+        const bars = await directAlpacaBars(sym, alpacaKey, alpacaSecret, 210);
+        if (bars) closes = bars.map(b => b.c);
+      }
       if (!closes) closes = await directYahooCandles(sym);
       if (!closes || closes.length < 20) continue;
       const ind = localComputeIndicators(sym, closes);
@@ -9484,7 +9550,10 @@ app.get('/v1/diagnostic/live', async (_req: Request, res: Response) => {
       for (const sym of testSymbols) {
         if (!quotes.has(sym)) continue;
         let closes: number[] | null = null;
-        if (SERVER_ALPACA_CONFIGURED) closes = await directAlpacaBars(sym, SERVER_ALPACA_API_KEY, SERVER_ALPACA_SECRET_KEY, 210);
+        if (SERVER_ALPACA_CONFIGURED) {
+          const bars = await directAlpacaBars(sym, SERVER_ALPACA_API_KEY, SERVER_ALPACA_SECRET_KEY, 210);
+          if (bars) closes = bars.map(b => b.c);
+        }
         if (!closes) closes = await directYahooCandles(sym);
         if (!closes || closes.length < 20) continue;
         const ind = localComputeIndicators(sym, closes);

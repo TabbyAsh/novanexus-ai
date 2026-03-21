@@ -11,7 +11,12 @@
     "skipLibCheck": true,
     "moduleResolution": "node",
     "forceConsistentCasingInFileNames": true,
-    "resolveJsonModule": true
+    "resolveJsonModule": true,
+    "baseUrl": "../..",
+    "paths": {
+      "@nova/shared": ["libs/shared/dist"],
+      "@nova/telemetry": ["libs/telemetry/dist"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist", "**/*.test.ts"]

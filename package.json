@@ -62,7 +62,5 @@
     "node": ">=18.0.0"
   },
   "packageManager": "npm@10.2.0",
-  "dependencies": {
-    "nova-enterprises": "file:"
-  }
+  "dependencies": {}
 }

@@ -3,17 +3,23 @@
     "target": "ES2022",
     "module": "commonjs",
     "lib": ["ES2022"],
+    "declaration": true,
+    "declarationMap": true,
+    "sourceMap": true,
     "outDir": "./dist",
     "rootDir": "./src",
     "strict": true,
     "esModuleInterop": true,
     "skipLibCheck": true,
-    "moduleResolution": "node",
     "forceConsistentCasingInFileNames": true,
     "resolveJsonModule": true,
-    "declaration": true,
-    "declarationMap": true,
-    "sourceMap": true
+    "moduleResolution": "node",
+    "baseUrl": "../..",
+    "paths": {
+      "@nova/shared": ["libs/shared/dist"],
+      "@nova/eventing": ["libs/eventing/dist"],
+      "@nova/telemetry": ["libs/telemetry/dist"]
+    }
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

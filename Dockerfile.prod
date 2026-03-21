@@ -25,83 +25,93 @@ COPY tsconfig.json ./
 
 # Install all dependencies (need devDeps for build)
 ENV NODE_ENV=development
-RUN npm ci --legacy-peer-deps --ignore-scripts || npm install --legacy-peer-deps
+RUN npm ci --legacy-peer-deps --ignore-scripts
 
 # Install esbuild globally
 RUN npm install -g esbuild
 
-# Build workspace libs with turbo (these are simpler and pass tsc)
-RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --no-cache || true
+# Build workspace libs with turbo (must succeed — these are deps for everything)
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --no-cache
 
-# Bundle each service with esbuild (bypasses strict tsc, same as local Dockerfiles)
+# ==========================================================================
+# Bundle production services with esbuild
+# Every service listed here is REQUIRED for production. If it fails, the
+# build fails. That is intentional.
+# ==========================================================================
+
 RUN esbuild services/gateway/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/gateway/dist/index.js \
   --external:pg-native \
-  --tsconfig=services/gateway/tsconfig.json || true
+  --tsconfig=services/gateway/tsconfig.json
 
 RUN esbuild services/auth/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/auth/dist/index.js \
   --external:pg-native --external:bcryptjs \
-  --tsconfig=services/auth/tsconfig.json || true
+  --tsconfig=services/auth/tsconfig.json
 
 RUN esbuild services/orchestrator/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/orchestrator/dist/index.js \
   --external:pg-native \
-  --tsconfig=services/orchestrator/tsconfig.json || true
+  --tsconfig=services/orchestrator/tsconfig.json
 
 RUN esbuild services/eventbus/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/eventbus/dist/index.js \
   --external:pg-native \
-  --tsconfig=services/eventbus/tsconfig.json || true
+  --tsconfig=services/eventbus/tsconfig.json
 
 RUN esbuild services/billing/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/billing/dist/index.js \
   --external:pg-native --external:stripe \
-  --tsconfig=services/billing/tsconfig.json || true
+  --tsconfig=services/billing/tsconfig.json
 
 RUN esbuild services/tradebot/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/tradebot/dist/index.js \
   --external:pg-native --external:openai \
-  --tsconfig=services/tradebot/tsconfig.json || true
+  --tsconfig=services/tradebot/tsconfig.json
 
 RUN esbuild services/marketdata/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/marketdata/dist/index.js \
   --external:pg-native \
-  --tsconfig=services/marketdata/tsconfig.json || true
+  --tsconfig=services/marketdata/tsconfig.json
 
 RUN esbuild services/nova-hub/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/nova-hub/dist/index.js \
   --external:pg-native --external:openai \
-  --tsconfig=services/nova-hub/tsconfig.json || true
+  --tsconfig=services/nova-hub/tsconfig.json
 
 RUN esbuild services/socialbot/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/socialbot/dist/index.js \
   --external:pg-native --external:cors \
-  --tsconfig=services/socialbot/tsconfig.json || true
+  --tsconfig=services/socialbot/tsconfig.json
 
 RUN esbuild services/storebot/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/storebot/dist/index.js \
   --external:pg-native --external:cors \
-  --tsconfig=services/storebot/tsconfig.json || true
+  --tsconfig=services/storebot/tsconfig.json
 
-# Verify critical bundles exist (gateway is the entry point)
-RUN ls -la services/gateway/dist/index.js services/auth/dist/index.js \
-  services/eventbus/dist/index.js services/billing/dist/index.js \
-  services/nova-hub/dist/index.js
-
-# Non-critical services: log whether they built but don't fail
-RUN ls services/socialbot/dist/index.js 2>/dev/null && echo 'socialbot OK' || echo 'WARN: socialbot build skipped'
-RUN ls services/storebot/dist/index.js 2>/dev/null && echo 'storebot OK' || echo 'WARN: storebot build skipped'
+# Verify ALL production bundles exist — fail hard if any are missing
+RUN echo '=== Verifying all production bundles ===' && \
+  ls -la services/gateway/dist/index.js && \
+  ls -la services/auth/dist/index.js && \
+  ls -la services/orchestrator/dist/index.js && \
+  ls -la services/eventbus/dist/index.js && \
+  ls -la services/billing/dist/index.js && \
+  ls -la services/tradebot/dist/index.js && \
+  ls -la services/marketdata/dist/index.js && \
+  ls -la services/nova-hub/dist/index.js && \
+  ls -la services/socialbot/dist/index.js && \
+  ls -la services/storebot/dist/index.js && \
+  echo '=== All production bundles verified ==='
 
 # ─────────────────────────────────────────────────────────────────
 FROM node:20-alpine AS runner

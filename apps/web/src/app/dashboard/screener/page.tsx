@@ -11,19 +11,8 @@ import { api } from '@/lib/api';
 
 type ConfidenceTag = 'high' | 'medium' | 'low';
 
-type CandleProvenance = {
-  source: string;
-  method: 'primary' | 'fallback' | 'synthetic' | string;
-  confidence: ConfidenceTag | string;
-  confidenceScore: number;
-  note?: string;
-};
-
-type SignalProvenance = {
-  candles?: CandleProvenance | null;
-  quoteSource?: string | null;
-  model?: string;
-};
+type BoardType = 'BREAKOUT_LONG' | 'TREND_PULLBACK' | 'MEAN_REVERT_LONG' | 'SHORT_BREAKDOWN' | 'PARABOLIC_FADE' | 'MOMENTUM_CONTINUATION' | 'SWING_REVERSAL';
+type SortMode = 'BEST_TRADES_NOW' | 'SAFEST_VIABLE' | 'HIGHEST_REWARD' | 'SHORT_BOARD' | 'MOMENTUM_BOARD';
 
 interface Signal {
   symbol: string;
@@ -31,27 +20,48 @@ interface Signal {
   type: 'bullish' | 'bearish' | 'neutral';
   pattern: string;
   confidence: number;
-  confidenceTag?: ConfidenceTag;
-  rawConfidence?: number;
+  confidenceTag?: ConfidenceTag | string;
   entry: number;
   target: number;
   stopLoss: number;
+  stop?: number;
   riskReward: number;
   reasoning: string;
   timeframe: string;
+  // Trade Card fields
+  setupType?: BoardType;
+  direction?: 'LONG' | 'SHORT';
+  durationBucket?: string;
+  entryTrigger?: string;
+  targets?: { t1: number; t2: number };
+  timeStop?: string;
+  riskR?: number;
+  rewardR_t1?: number;
+  rewardR_t2?: number;
+  scenarioTree?: { ifGoes: string; ifStalls: string; ifFails: string };
+  riskFlags?: string[];
+  pWin?: number;
+  evR?: number;
+  tailRiskPenalty?: number;
+  liquidityScore?: number;
+  regime?: { trend: string; vol: string; maAlignment: string; squeeze: boolean };
+  board?: string;
   indicators?: {
     rsi: number | null;
     sma20?: number | null;
     sma50?: number | null;
     sma200?: number | null;
-    volumeRatio?: number;
-    atr?: number;
-    priceVsSma20?: number | null;
-    priceVsSma50?: number | null;
+    atr?: number | null;
+    atrPercent?: number | null;
+    adx?: number | null;
+    bollingerB?: number | null;
+    zScore?: number | null;
+    roc20?: number | null;
+    rvol?: number | null;
+    maAlignmentScore?: number | null;
     macdHistogram?: number | null;
+    [key: string]: any;
   };
-  timestamp?: string;
-  provenance?: SignalProvenance;
 }
 
 interface ScanStatus {
@@ -103,48 +113,45 @@ type PaperTrade = {
   pnlPercent?: number;
 };
 
-const confidenceColors: Record<ConfidenceTag, string> = {
+const confidenceColors: Record<string, string> = {
   high: 'bg-green-500/20 text-green-300 border-green-500/40',
+  HIGH: 'bg-green-500/20 text-green-300 border-green-500/40',
   medium: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
+  MEDIUM: 'bg-yellow-500/20 text-yellow-300 border-yellow-500/40',
   low: 'bg-red-500/20 text-red-300 border-red-500/40',
+  LOW: 'bg-red-500/20 text-red-300 border-red-500/40',
+};
+
+const boardLabels: Record<string, { label: string; color: string; icon: string }> = {
+  BREAKOUT_LONG: { label: 'Breakout', color: 'text-cyan-400 bg-cyan-500/20 border-cyan-500/40', icon: '🚀' },
+  TREND_PULLBACK: { label: 'Pullback', color: 'text-blue-400 bg-blue-500/20 border-blue-500/40', icon: '📐' },
+  MEAN_REVERT_LONG: { label: 'Mean Revert', color: 'text-purple-400 bg-purple-500/20 border-purple-500/40', icon: '🔄' },
+  SHORT_BREAKDOWN: { label: 'Short', color: 'text-red-400 bg-red-500/20 border-red-500/40', icon: '📉' },
+  PARABOLIC_FADE: { label: 'Fade', color: 'text-orange-400 bg-orange-500/20 border-orange-500/40', icon: '⚡' },
+  MOMENTUM_CONTINUATION: { label: 'Momentum', color: 'text-green-400 bg-green-500/20 border-green-500/40', icon: '🎯' },
+  SWING_REVERSAL: { label: 'Reversal', color: 'text-amber-400 bg-amber-500/20 border-amber-500/40', icon: '↩️' },
+};
+
+const sortModeLabels: Record<SortMode, string> = {
+  BEST_TRADES_NOW: 'Best Trades Now',
+  SAFEST_VIABLE: 'Safest Viable',
+  HIGHEST_REWARD: 'Highest Reward',
+  SHORT_BOARD: 'Short Board',
+  MOMENTUM_BOARD: 'Momentum Board',
 };
 
 const classifyConfidence = (score: number): ConfidenceTag => {
-  if (score >= 75) return 'high';
-  if (score >= 55) return 'medium';
+  if (score >= 70) return 'high';
+  if (score >= 50) return 'medium';
   return 'low';
 };
 
-const formatModelName = (model?: string) => {
-  if (!model) return null;
-  if (model.startsWith('openai:')) {
-    return `OpenAI ${model.split(':')[1]}`;
-  }
-  if (model === 'deterministic') return 'Deterministic';
-  return model;
-};
-
-const formatConfidenceScore = (score?: number) => {
-  if (typeof score !== 'number' || Number.isNaN(score)) return null;
-  const normalized = score <= 1 ? score * 100 : score;
-  return `${Math.round(normalized)}%`;
-};
-
-const normalizeSignals = (rawSignals: any[], source: 'ai' | 'deterministic'): Signal[] => {
+const normalizeSignals = (rawSignals: any[]): Signal[] => {
   return rawSignals.map((signal) => {
     const parsedConfidence = Number(signal.confidence ?? signal.score ?? 0);
     const confidence = Number.isFinite(parsedConfidence) ? parsedConfidence : 0;
-    const rawConfidence = typeof signal.rawConfidence === 'number' ? signal.rawConfidence : confidence;
     const confidenceTag = signal.confidenceTag || classifyConfidence(confidence);
-    const provenance = signal.provenance || (source === 'deterministic' ? { model: 'deterministic' } : undefined);
-
-    return {
-      ...signal,
-      confidence,
-      rawConfidence,
-      confidenceTag,
-      provenance,
-    } as Signal;
+    return { ...signal, confidence, confidenceTag } as Signal;
   });
 };
 
@@ -282,8 +289,8 @@ function DecisionCardModal({
   );
 }
 
-// Signal Card Component with enhanced visuals
-function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow, onApplyCard, onOpenUdm, cardBalance }: { 
+// Trade Card Component — institutional-grade display
+function TradeCardDisplay({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuidedFlow, onApplyCard, onOpenUdm, cardBalance }: { 
   signal: Signal; 
   index: number;
   onAddToWatchlist: (symbol: string) => void;
@@ -296,171 +303,148 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuid
   const [expanded, setExpanded] = useState(false);
   const [isAddingToWatchlist, setIsAddingToWatchlist] = useState(false);
   const [isPaperTrading, setIsPaperTrading] = useState(false);
-  const [isGuidedFlow, setIsGuidedFlow] = useState(false);
-  const [isApplyingCard, setIsApplyingCard] = useState(false);
-  const confidenceLabel = signal.confidenceTag || classifyConfidence(signal.confidence);
-  const modelLabel = formatModelName(signal.provenance?.model);
-  const candleProvenance = signal.provenance?.candles || null;
-  const candleScore = formatConfidenceScore(candleProvenance?.confidenceScore);
-  const isAI = (signal.provenance?.model || '').startsWith('openai');
+  const isLong = signal.direction === 'LONG' || signal.type === 'bullish';
+  const boardInfo = boardLabels[signal.board || signal.setupType || ''] || boardLabels.MOMENTUM_CONTINUATION;
+  const evR = signal.evR ?? 0;
+  const pWin = signal.pWin ?? 0;
+  const stopPrice = signal.stop ?? signal.stopLoss ?? 0;
+  const t1 = signal.targets?.t1 ?? signal.target ?? 0;
+  const t2 = signal.targets?.t2 ?? t1;
+  const regime = signal.regime;
+  const confidenceLabel = (signal.confidenceTag || classifyConfidence(signal.confidence)).toString().toLowerCase();
   
-  const typeColors = {
-    bullish: { 
-      bg: 'from-green-500/20 via-green-500/10 to-emerald-500/5', 
-      border: 'border-green-500/40 hover:border-green-400/60', 
-      text: 'text-green-400', 
-      badge: 'bg-green-500/30',
-      glow: 'hover:shadow-[0_0_30px_rgba(34,197,94,0.3)]',
-      icon: '📈'
-    },
-    bearish: { 
-      bg: 'from-red-500/20 via-red-500/10 to-rose-500/5', 
-      border: 'border-red-500/40 hover:border-red-400/60', 
-      text: 'text-red-400', 
-      badge: 'bg-red-500/30',
-      glow: 'hover:shadow-[0_0_30px_rgba(239,68,68,0.3)]',
-      icon: '📉'
-    },
-    neutral: { 
-      bg: 'from-yellow-500/20 via-yellow-500/10 to-amber-500/5', 
-      border: 'border-yellow-500/40 hover:border-yellow-400/60', 
-      text: 'text-yellow-400', 
-      badge: 'bg-yellow-500/30',
-      glow: 'hover:shadow-[0_0_30px_rgba(234,179,8,0.3)]',
-      icon: '➡️'
-    },
-  };
-  
-  const colors = typeColors[signal.type];
-  const priceVsSma20 = signal.indicators?.priceVsSma20;
-  const priceVsSma50 = signal.indicators?.priceVsSma50;
-  const hasSma20 = typeof priceVsSma20 === 'number';
-  const hasSma50 = typeof priceVsSma50 === 'number';
-  
+  const dirColors = isLong
+    ? { bg: 'from-green-500/15 via-emerald-500/10 to-cyan-500/5', border: 'border-green-500/40 hover:border-green-400/60', text: 'text-green-400', badge: 'bg-green-500/30', glow: 'hover:shadow-[0_0_25px_rgba(34,197,94,0.2)]' }
+    : { bg: 'from-red-500/15 via-rose-500/10 to-orange-500/5', border: 'border-red-500/40 hover:border-red-400/60', text: 'text-red-400', badge: 'bg-red-500/30', glow: 'hover:shadow-[0_0_25px_rgba(239,68,68,0.2)]' };
+
   return (
     <motion.div
-      initial={{ opacity: 0, y: 30, scale: 0.95 }}
+      initial={{ opacity: 0, y: 20, scale: 0.98 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
-      transition={{ duration: 0.5, delay: index * 0.1, type: 'spring', stiffness: 100 }}
-      whileHover={{ scale: 1.01, y: -2 }}
-      className={`
-        relative backdrop-blur-xl bg-gradient-to-br ${colors.bg}
-        border-2 ${colors.border}
-        rounded-2xl overflow-hidden
-        transition-all duration-300
-        ${colors.glow}
-      `}
+      transition={{ duration: 0.4, delay: index * 0.06 }}
+      whileHover={{ scale: 1.005, y: -1 }}
+      className={`relative backdrop-blur-xl bg-gradient-to-br ${dirColors.bg} border-2 ${dirColors.border} rounded-2xl overflow-hidden transition-all duration-300 ${dirColors.glow}`}
     >
-      {/* Animated background gradient */}
-      <div className="absolute inset-0 bg-gradient-to-r from-transparent via-white/5 to-transparent -translate-x-full animate-shimmer" />
-      
-      <div 
-        className="p-6 cursor-pointer relative z-10"
-        onClick={() => setExpanded(!expanded)}
-      >
-        <div className="flex items-start justify-between mb-4">
-          <div className="flex items-center gap-4">
-            <motion.div 
-              className={`w-14 h-14 rounded-2xl ${colors.badge} flex items-center justify-center border ${colors.border}`}
-              animate={{ rotate: signal.type === 'bullish' ? [0, 5, 0] : signal.type === 'bearish' ? [0, -5, 0] : 0 }}
-              transition={{ duration: 2, repeat: Infinity }}
-            >
-              <span className="text-2xl">{colors.icon}</span>
-            </motion.div>
-            <div>
-              <div className="flex items-center gap-3">
-                <span className="text-2xl font-bold text-white">{signal.symbol}</span>
-                <motion.span 
-                  className={`text-xs px-3 py-1 rounded-full ${colors.badge} ${colors.text} font-semibold border ${colors.border}`}
-                  animate={{ scale: [1, 1.05, 1] }}
-                  transition={{ duration: 2, repeat: Infinity }}
-                >
-                  {signal.type.toUpperCase()}
-                </motion.span>
-              </div>
-              <p className="text-gray-400 text-sm mt-1">{signal.name}</p>
-            </div>
-          </div>
-          
-          <div className="text-right">
-            <div className="flex items-center gap-2 mb-1">
-              <span className="text-gray-400 text-sm">Signal Score</span>
-              <span className={`text-[10px] px-2 py-0.5 rounded-full border ${confidenceColors[confidenceLabel]}`}>
-                {confidenceLabel.toUpperCase()}
+      <div className="p-5 cursor-pointer" onClick={() => setExpanded(!expanded)}>
+        {/* Row 1: Symbol + Board Badge + Direction + EV_R */}
+        <div className="flex items-center justify-between mb-3">
+          <div className="flex items-center gap-3">
+            <span className="text-2xl font-bold text-white">{signal.symbol}</span>
+            <span className={`text-[11px] px-2.5 py-1 rounded-full font-semibold border ${boardInfo.color}`}>
+              {boardInfo.icon} {boardInfo.label}
+            </span>
+            <span className={`text-[11px] px-2 py-0.5 rounded-full font-bold ${dirColors.badge} ${dirColors.text} border ${dirColors.border}`}>
+              {isLong ? '▲ LONG' : '▼ SHORT'}
+            </span>
+            {signal.durationBucket && (
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-white/5 text-gray-400 border border-white/10">
+                {signal.durationBucket}
               </span>
-            </div>
-            <div className="flex items-center gap-2">
-              <div className="w-24 h-3 bg-white/10 rounded-full overflow-hidden">
-                <motion.div 
-                  className={`h-full rounded-full ${signal.confidence >= 80 ? 'bg-gradient-to-r from-green-500 to-emerald-400' : signal.confidence >= 60 ? 'bg-gradient-to-r from-yellow-500 to-amber-400' : 'bg-gradient-to-r from-red-500 to-rose-400'}`}
-                  initial={{ width: 0 }}
-                  animate={{ width: `${signal.confidence}%` }}
-                  transition={{ duration: 1, delay: index * 0.1 + 0.3 }}
-                />
-              </div>
-              <span className={`text-xl font-bold ${signal.confidence >= 80 ? 'text-green-400' : signal.confidence >= 60 ? 'text-yellow-400' : 'text-red-400'}`}>
-                {signal.confidence}%
-              </span>
-            </div>
-            {typeof signal.rawConfidence === 'number' && signal.rawConfidence !== signal.confidence && (
-              <p className="text-gray-500 text-[11px] mt-1">Adj. from {Math.round(signal.rawConfidence)}%</p>
             )}
-            <p className="text-gray-500 text-xs mt-2 font-medium">{signal.pattern}</p>
-            {candleProvenance && (
-              <p className="text-gray-500 text-[11px] mt-1">
-                Data: {candleProvenance.source} · {candleProvenance.confidence || 'unknown'}{candleScore ? ` (${candleScore})` : ''}
+          </div>
+          <div className="flex items-center gap-3">
+            <div className="text-right">
+              <p className="text-[10px] text-gray-500 uppercase">EV/R</p>
+              <p className={`text-lg font-bold ${evR > 0.5 ? 'text-green-400' : evR > 0 ? 'text-yellow-400' : 'text-red-400'}`}>
+                {evR > 0 ? '+' : ''}{evR.toFixed(2)}
               </p>
-            )}
+            </div>
+            <div className="text-right">
+              <p className="text-[10px] text-gray-500 uppercase">Win%</p>
+              <p className="text-lg font-bold text-white">{Math.round(pWin * 100)}%</p>
+            </div>
+            <span className={`text-[10px] px-2 py-0.5 rounded-full border ${confidenceColors[confidenceLabel] || confidenceColors.low}`}>
+              {confidenceLabel.toUpperCase()}
+            </span>
           </div>
         </div>
-        
-        {/* Price targets with visual bars */}
-        <div className="grid grid-cols-4 gap-4 mb-4">
-          <div className="p-3 rounded-xl bg-white/5 border border-white/10">
-            <p className="text-gray-500 text-xs mb-1 uppercase tracking-wide">Entry</p>
-            <p className="text-white font-bold text-lg">${(signal.entry ?? 0).toFixed(2)}</p>
+
+        {/* Row 2: Entry / Stop / T1 / T2 with R labels */}
+        <div className="grid grid-cols-5 gap-2 mb-3">
+          <div className="p-2.5 rounded-xl bg-white/5 border border-white/10">
+            <p className="text-gray-500 text-[10px] uppercase">Entry</p>
+            <p className="text-white font-bold">${signal.entry.toFixed(2)}</p>
           </div>
-          <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/30">
-            <p className="text-green-400 text-xs mb-1 uppercase tracking-wide">Target</p>
-            <p className="text-green-400 font-bold text-lg">${(signal.target ?? 0).toFixed(2)}</p>
-            <p className="text-green-400/60 text-xs">+{(signal.entry ? ((signal.target - signal.entry) / signal.entry * 100) : 0).toFixed(1)}%</p>
+          <div className="p-2.5 rounded-xl bg-red-500/10 border border-red-500/30">
+            <p className="text-red-400 text-[10px] uppercase">Stop</p>
+            <p className="text-red-400 font-bold">${stopPrice.toFixed(2)}</p>
+            <p className="text-red-400/50 text-[10px]">{signal.entry ? ((stopPrice - signal.entry) / signal.entry * 100).toFixed(1) : 0}%</p>
           </div>
-          <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/30">
-            <p className="text-red-400 text-xs mb-1 uppercase tracking-wide">Stop Loss</p>
-            <p className="text-red-400 font-bold text-lg">${(signal.stopLoss ?? 0).toFixed(2)}</p>
-            <p className="text-red-400/60 text-xs">{(signal.entry ? ((signal.stopLoss - signal.entry) / signal.entry * 100) : 0).toFixed(1)}%</p>
+          <div className="p-2.5 rounded-xl bg-green-500/10 border border-green-500/30">
+            <p className="text-green-400 text-[10px] uppercase">T1</p>
+            <p className="text-green-400 font-bold">${t1.toFixed(2)}</p>
+            <p className="text-green-400/50 text-[10px]">{signal.rewardR_t1 ? `${signal.rewardR_t1.toFixed(1)}R` : ''}</p>
           </div>
-          <div className="p-3 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
-            <p className="text-cyan-400 text-xs mb-1 uppercase tracking-wide">Risk/Reward</p>
-            <p className="text-cyan-400 font-bold text-lg">{(signal.riskReward ?? 0).toFixed(2)}:1</p>
-            <p className="text-cyan-400/60 text-xs">{signal.riskReward >= 2 ? 'Excellent' : signal.riskReward >= 1.5 ? 'Good' : 'Fair'}</p>
+          <div className="p-2.5 rounded-xl bg-emerald-500/10 border border-emerald-500/30">
+            <p className="text-emerald-400 text-[10px] uppercase">T2</p>
+            <p className="text-emerald-400 font-bold">${t2.toFixed(2)}</p>
+            <p className="text-emerald-400/50 text-[10px]">{signal.rewardR_t2 ? `${signal.rewardR_t2.toFixed(1)}R` : ''}</p>
+          </div>
+          <div className="p-2.5 rounded-xl bg-cyan-500/10 border border-cyan-500/30">
+            <p className="text-cyan-400 text-[10px] uppercase">R:R</p>
+            <p className="text-cyan-400 font-bold">{(signal.riskReward ?? 0).toFixed(1)}:1</p>
+            <p className="text-cyan-400/50 text-[10px]">{signal.riskReward >= 2 ? 'Strong' : signal.riskReward >= 1.5 ? 'Good' : 'Fair'}</p>
           </div>
         </div>
-        
-        {/* Indicators if available */}
-        {signal.indicators && (
-          <div className="flex gap-4 mb-4 text-xs">
-            <div className={`px-3 py-1 rounded-full ${signal.indicators.rsi !== null && signal.indicators.rsi < 30 ? 'bg-green-500/20 text-green-400' : signal.indicators.rsi !== null && signal.indicators.rsi > 70 ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>
-              RSI: {signal.indicators.rsi !== null ? signal.indicators.rsi.toFixed(1) : '—'}
-            </div>
-            <div className={`px-3 py-1 rounded-full ${hasSma20 ? (priceVsSma20! > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400') : 'bg-gray-500/20 text-gray-400'}`}>
-              vs SMA20: {hasSma20 ? `${priceVsSma20! > 0 ? '+' : ''}${priceVsSma20!.toFixed(1)}%` : '—'}
-            </div>
-            <div className={`px-3 py-1 rounded-full ${hasSma50 ? (priceVsSma50! > 0 ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400') : 'bg-gray-500/20 text-gray-400'}`}>
-              vs SMA50: {hasSma50 ? `${priceVsSma50! > 0 ? '+' : ''}${priceVsSma50!.toFixed(1)}%` : '—'}
-            </div>
+
+        {/* Row 3: Indicators bar + regime + trigger */}
+        <div className="flex flex-wrap gap-2 mb-2 text-[11px]">
+          {signal.indicators?.rsi != null && (
+            <span className={`px-2 py-0.5 rounded-full ${signal.indicators.rsi < 30 ? 'bg-green-500/20 text-green-400' : signal.indicators.rsi > 70 ? 'bg-red-500/20 text-red-400' : 'bg-gray-500/20 text-gray-400'}`}>
+              RSI {signal.indicators.rsi.toFixed(0)}
+            </span>
+          )}
+          {signal.indicators?.adx != null && (
+            <span className={`px-2 py-0.5 rounded-full ${signal.indicators.adx > 25 ? 'bg-cyan-500/20 text-cyan-400' : 'bg-gray-500/20 text-gray-400'}`}>
+              ADX {signal.indicators.adx.toFixed(0)}
+            </span>
+          )}
+          {signal.indicators?.atrPercent != null && (
+            <span className="px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-400">
+              ATR% {signal.indicators.atrPercent.toFixed(1)}
+            </span>
+          )}
+          {signal.indicators?.zScore != null && (
+            <span className={`px-2 py-0.5 rounded-full ${Math.abs(signal.indicators.zScore) > 2 ? 'bg-purple-500/20 text-purple-400' : 'bg-gray-500/20 text-gray-400'}`}>
+              Z {signal.indicators.zScore.toFixed(1)}
+            </span>
+          )}
+          {signal.indicators?.rvol != null && (
+            <span className={`px-2 py-0.5 rounded-full ${signal.indicators.rvol > 1.5 ? 'bg-yellow-500/20 text-yellow-400' : 'bg-gray-500/20 text-gray-400'}`}>
+              RVOL {signal.indicators.rvol.toFixed(1)}x
+            </span>
+          )}
+          {signal.indicators?.bollingerB != null && (
+            <span className="px-2 py-0.5 rounded-full bg-gray-500/20 text-gray-400">
+              %B {signal.indicators.bollingerB.toFixed(2)}
+            </span>
+          )}
+          {regime && (
+            <span className="px-2 py-0.5 rounded-full bg-white/5 text-gray-300 border border-white/10">
+              {regime.trend} · {regime.vol} vol · {regime.maAlignment}{regime.squeeze ? ' · SQUEEZE' : ''}
+            </span>
+          )}
+        </div>
+
+        {/* Risk flags */}
+        {signal.riskFlags && signal.riskFlags.length > 0 && (
+          <div className="flex gap-1.5 mb-2">
+            {signal.riskFlags.map((flag, i) => (
+              <span key={i} className="text-[10px] px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 border border-red-500/20">
+                ⚠ {flag.replace(/_/g, ' ')}
+              </span>
+            ))}
           </div>
         )}
-        
+
+        {/* Entry trigger + expand toggle */}
         <div className="flex items-center justify-between text-sm">
-          <span className="text-gray-500">⏱️ Timeframe: {signal.timeframe}</span>
-          <motion.span 
-            className={`${colors.text} flex items-center gap-1 font-medium`}
-            animate={{ x: expanded ? 0 : [0, 3, 0] }}
-            transition={{ duration: 1.5, repeat: Infinity }}
-          >
-            {expanded ? '▲ Hide Explanation' : '▼ Show Explanation'}
-          </motion.span>
+          {signal.entryTrigger && (
+            <span className="text-gray-400 text-xs truncate max-w-[60%]">📍 {signal.entryTrigger}</span>
+          )}
+          <span className={`${dirColors.text} text-xs font-medium`}>
+            {expanded ? '▲ Details' : '▼ Details'}
+          </span>
         </div>
       </div>
       
@@ -471,144 +455,62 @@ function SignalCard({ signal, index, onAddToWatchlist, onPaperTrade, onStartGuid
             animate={{ height: 'auto', opacity: 1 }}
             exit={{ height: 0, opacity: 0 }}
             transition={{ duration: 0.3 }}
-            className="border-t-2 border-white/10 overflow-hidden"
+            className="border-t border-white/10 overflow-hidden"
           >
-            <div className="p-6 bg-gradient-to-br from-cyan-500/10 to-purple-500/10">
-              <div className="flex items-start gap-4">
-                <div className="w-12 h-12 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center flex-shrink-0">
-                  <span className="text-2xl">🧭</span>
-                </div>
-                <div className="flex-1">
-                  <p className="text-transparent bg-clip-text bg-gradient-to-r from-cyan-400 to-purple-400 font-bold text-lg mb-2">
-                    {isAI ? 'AI Explanation' : 'Rule-based Explanation'}
-                  </p>
-                  <p className="text-gray-300 leading-relaxed text-sm">{signal.reasoning}</p>
-                </div>
-              </div>
-
-              {signal.provenance && (
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-2 mt-4 text-xs">
-                  {modelLabel && (
-                    <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300">
-                      Model: {modelLabel}
-                    </div>
-                  )}
-                  {signal.provenance.quoteSource && (
-                    <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300">
-                      Quote: {signal.provenance.quoteSource}
-                    </div>
-                  )}
-                  {candleProvenance && (
-                    <div className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-gray-300">
-                      Candles: {candleProvenance.source} · {candleProvenance.confidence || 'unknown'}{candleScore ? ` (${candleScore})` : ''}
-                    </div>
-                  )}
+            <div className="p-5 space-y-4">
+              {/* Scenario Tree */}
+              {signal.scenarioTree && (
+                <div className="grid grid-cols-3 gap-3">
+                  <div className="p-3 rounded-xl bg-green-500/10 border border-green-500/20">
+                    <p className="text-green-400 text-[10px] uppercase font-bold mb-1">If Goes ✓</p>
+                    <p className="text-gray-300 text-xs">{signal.scenarioTree.ifGoes}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
+                    <p className="text-yellow-400 text-[10px] uppercase font-bold mb-1">If Stalls ⏸</p>
+                    <p className="text-gray-300 text-xs">{signal.scenarioTree.ifStalls}</p>
+                  </div>
+                  <div className="p-3 rounded-xl bg-red-500/10 border border-red-500/20">
+                    <p className="text-red-400 text-[10px] uppercase font-bold mb-1">If Fails ✕</p>
+                    <p className="text-gray-300 text-xs">{signal.scenarioTree.ifFails}</p>
+                  </div>
                 </div>
               )}
-              
-                              <div className="flex flex-col gap-3 mt-6">
-                                <div className="flex gap-3">
-                                <motion.button 
-                                  whileHover={{ scale: isAddingToWatchlist ? 1 : 1.02 }}
-                                  whileTap={{ scale: isAddingToWatchlist ? 1 : 0.98 }}
-                                  disabled={isAddingToWatchlist}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setIsAddingToWatchlist(true);
-                                    onAddToWatchlist(signal.symbol);
-                                    setTimeout(() => setIsAddingToWatchlist(false), 1000);
-                                  }}
-                                  className={`flex-1 py-3 rounded-xl text-white font-semibold text-sm transition-all ${
-                                    isAddingToWatchlist 
-                                      ? 'bg-gray-600 cursor-not-allowed' 
-                                      : 'bg-gradient-to-r from-cyan-500 to-purple-600 hover:shadow-lg hover:shadow-cyan-500/30'
-                                  }`}
-                                >
-                                  {isAddingToWatchlist ? '✓ Added!' : '📋 Add to Watchlist'}
-                                </motion.button>
-                                <motion.button 
-                                  whileHover={{ scale: isPaperTrading ? 1 : 1.02 }}
-                                  whileTap={{ scale: isPaperTrading ? 1 : 0.98 }}
-                                  disabled={isPaperTrading}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    setIsPaperTrading(true);
-                                    onPaperTrade(signal);
-                                    setTimeout(() => setIsPaperTrading(false), 1500);
-                                  }}
-                                  className={`flex-1 py-3 rounded-xl text-white font-semibold text-sm transition-all ${
-                                    isPaperTrading 
-                                      ? 'bg-gray-600 cursor-not-allowed' 
-                                      : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:shadow-lg hover:shadow-green-500/30'
-                                  }`}
-                                >
-                                  {isPaperTrading ? '⏳ Opening...' : '📊 Paper Trade'}
-                                </motion.button>
-                                </div>
-                                <motion.button
-                                  whileHover={{ scale: isGuidedFlow ? 1 : 1.02 }}
-                                  whileTap={{ scale: isGuidedFlow ? 1 : 0.98 }}
-                                  disabled={isGuidedFlow}
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    setIsGuidedFlow(true);
-                                    try {
-                                      await onStartGuidedFlow(signal);
-                                    } finally {
-                                      setIsGuidedFlow(false);
-                                    }
-                                  }}
-                                  className={`w-full py-3 rounded-xl text-white font-semibold text-sm transition-all ${
-                                    isGuidedFlow
-                                      ? 'bg-gray-600 cursor-not-allowed'
-                                      : 'bg-gradient-to-r from-purple-500 to-pink-600 hover:shadow-lg hover:shadow-purple-500/30'
-                                  }`}
-                                >
-                                  {isGuidedFlow ? '⏳ Starting...' : '🧭 Start Guided Flow'}
-                                </motion.button>
-                                {/* Phase 7.4: Apply Decision Card */}
-                                <motion.button
-                                  whileHover={{ scale: isApplyingCard || cardBalance < 1 ? 1 : 1.02 }}
-                                  whileTap={{ scale: isApplyingCard || cardBalance < 1 ? 1 : 0.98 }}
-                                  disabled={isApplyingCard || cardBalance < 1}
-                                  onClick={async (e) => {
-                                    e.stopPropagation();
-                                    setIsApplyingCard(true);
-                                    try {
-                                      await onApplyCard(signal);
-                                    } finally {
-                                      setIsApplyingCard(false);
-                                    }
-                                  }}
-                                  className={`w-full py-3 rounded-xl text-white font-semibold text-sm transition-all ${
-                                    isApplyingCard || cardBalance < 1
-                                      ? 'bg-gray-600 cursor-not-allowed'
-                                      : 'bg-gradient-to-r from-indigo-500 to-violet-600 hover:shadow-lg hover:shadow-indigo-500/30'
-                                  }`}
-                                >
-                                {isApplyingCard ? '⏳ Applying...' : cardBalance < 1 ? '🎴 No Cards Left' : `🎴 Apply Decision Card (${cardBalance} left)`}
-                                </motion.button>
-                                {/* UDM v2: Universal Decision Matrix */}
-                                <motion.button
-                                  whileHover={{ scale: 1.02 }}
-                                  whileTap={{ scale: 0.98 }}
-                                  onClick={(e) => {
-                                    e.stopPropagation();
-                                    onOpenUdm(signal.symbol);
-                                  }}
-                                  className="w-full py-3 rounded-xl text-white font-semibold text-sm transition-all bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 hover:shadow-lg hover:shadow-purple-500/30"
-                                >
-                                  🧬 UDM v2 Analysis
-                                </motion.button>
-                                {/* Phase 6.1: Direct thesis generation link */}
-                                <Link
-                                  href={`/dashboard/thesis?symbol=${signal.symbol}`}
-                                  onClick={(e) => e.stopPropagation()}
-                                  className="w-full py-3 rounded-xl text-white font-semibold text-sm text-center transition-all bg-gradient-to-r from-amber-500 to-orange-600 hover:shadow-lg hover:shadow-amber-500/30"
-                                >
-                                  💡 Generate Thesis
-                                </Link>
-                              </div>
+
+              {/* Reasoning */}
+              <div className="p-3 rounded-xl bg-white/5 border border-white/10">
+                <p className="text-gray-500 text-[10px] uppercase mb-1">Analysis</p>
+                <p className="text-gray-300 text-sm">{signal.reasoning}</p>
+              </div>
+
+              {/* Action buttons */}
+              <div className="flex gap-3">
+                <motion.button
+                  whileHover={{ scale: isAddingToWatchlist ? 1 : 1.02 }}
+                  whileTap={{ scale: isAddingToWatchlist ? 1 : 0.98 }}
+                  disabled={isAddingToWatchlist}
+                  onClick={(e) => { e.stopPropagation(); setIsAddingToWatchlist(true); onAddToWatchlist(signal.symbol); setTimeout(() => setIsAddingToWatchlist(false), 1000); }}
+                  className={`flex-1 py-2.5 rounded-xl text-white font-semibold text-sm transition-all ${isAddingToWatchlist ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-cyan-500 to-purple-600 hover:shadow-lg'}`}
+                >
+                  {isAddingToWatchlist ? '✓ Added!' : '📋 Watchlist'}
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: isPaperTrading ? 1 : 1.02 }}
+                  whileTap={{ scale: isPaperTrading ? 1 : 0.98 }}
+                  disabled={isPaperTrading}
+                  onClick={(e) => { e.stopPropagation(); setIsPaperTrading(true); onPaperTrade(signal); setTimeout(() => setIsPaperTrading(false), 1500); }}
+                  className={`flex-1 py-2.5 rounded-xl text-white font-semibold text-sm transition-all ${isPaperTrading ? 'bg-gray-600 cursor-not-allowed' : 'bg-gradient-to-r from-green-500 to-emerald-600 hover:shadow-lg'}`}
+                >
+                  {isPaperTrading ? '⏳ Opening...' : '📊 Paper Trade'}
+                </motion.button>
+                <motion.button
+                  whileHover={{ scale: 1.02 }}
+                  whileTap={{ scale: 0.98 }}
+                  onClick={(e) => { e.stopPropagation(); onOpenUdm(signal.symbol); }}
+                  className="flex-1 py-2.5 rounded-xl text-white font-semibold text-sm transition-all bg-gradient-to-r from-cyan-500 via-purple-500 to-pink-500 hover:shadow-lg"
+                >
+                  🧬 Analyze
+                </motion.button>
+              </div>
             </div>
           </motion.div>
         )}
@@ -681,9 +583,13 @@ export default function ScreenerPage() {
     environment?: 'paper' | 'live';
     liveTradingEnabled?: boolean;
   } | null>(null);
+  const [sortMode, setSortMode] = useState<SortMode>('BEST_TRADES_NOW');
+  const [boardFilter, setBoardFilter] = useState<string>('ALL');
+  const [boardDistribution, setBoardDistribution] = useState<Record<string, number>>({});
+  const [totalCandidates, setTotalCandidates] = useState(0);
   const [settings, setSettings] = useState({
     maxStocks: 50,
-    minConfidence: 65,
+    minConfidence: 50,
     signalType: 'all' as 'all' | 'bullish' | 'bearish',
   });
   const [usage, setUsage] = useState<UsageSnapshot | null>(null);
@@ -862,22 +768,25 @@ export default function ScreenerPage() {
       }));
     };
     
-    // Primary: Deterministic screener (uses live Alpaca market data)
+    // Primary: Trade Card Engine (uses live Alpaca OHLCV data)
     try {
       const result = await api.runScreener({
         maxSymbols: settings.maxStocks,
         minConfidence: settings.minConfidence,
         signalType: settings.signalType,
+        sortMode,
+        board: boardFilter,
       });
 
       if (result.success && result.data?.signals) {
-        const normalized = normalizeSignals(result.data.signals, 'deterministic');
+        const normalized = normalizeSignals(result.data.signals);
+        setBoardDistribution(result.data.boardDistribution || {});
+        setTotalCandidates(result.data.totalCandidates || normalized.length);
         finalizeSuccess(normalized, result.data.scannedAt, 'deterministic');
         return;
       }
       throw new Error(result.error?.message || 'Screener returned no data');
     } catch (err) {
-      // Fallback: AI screener (requires OpenAI)
       setScanMode('ai');
       try {
         const ai = await api.runAIScreener({
@@ -885,9 +794,8 @@ export default function ScreenerPage() {
           minConfidence: settings.minConfidence,
           signalType: settings.signalType,
         });
-
         if (ai.success && ai.data?.signals) {
-          const normalized = normalizeSignals(ai.data.signals, 'ai');
+          const normalized = normalizeSignals(ai.data.signals);
           finalizeSuccess(normalized, ai.data.scannedAt, 'ai');
           return;
         }
@@ -898,7 +806,7 @@ export default function ScreenerPage() {
         setScanStatus(s => ({ ...s, scanning: false, progress: 0, scannedCount: 0, foundSignals: 0 }));
       }
     }
-  }, [settings]);
+  }, [settings, sortMode, boardFilter]);
 
   const handleSaveReport = useCallback(async () => {
     if (!signals || signals.length === 0) return;
@@ -1048,10 +956,10 @@ export default function ScreenerPage() {
         >
           <div>
             <h1 className="text-4xl font-bold text-white mb-2">
-              AI <GradientText>Screener</GradientText>
+              Trade Card <GradientText>Engine</GradientText>
             </h1>
             <p className="text-gray-400">
-              AI-first market screening across {settings.maxStocks}+ symbols with provenance-tagged signals
+              Institutional-grade screener with EV/R ranking, board classification, and regime detection
             </p>
           </div>
           
@@ -1417,6 +1325,26 @@ export default function ScreenerPage() {
           )}
         </div>
         
+        {/* Board Tabs */}
+        <div className="flex flex-wrap gap-2">
+          {['ALL', 'BREAKOUT_LONG', 'TREND_PULLBACK', 'MEAN_REVERT_LONG', 'SHORT_BREAKDOWN', 'MOMENTUM_CONTINUATION', 'PARABOLIC_FADE', 'SWING_REVERSAL'].map((board) => {
+            const info = board === 'ALL' ? { label: 'All', icon: '📊', color: 'text-white bg-white/10 border-white/20' } : (boardLabels[board] || { label: board, icon: '', color: '' });
+            const count = board === 'ALL' ? totalCandidates : (boardDistribution[board] || 0);
+            const isActive = boardFilter === board;
+            return (
+              <button
+                key={board}
+                onClick={() => { setBoardFilter(board); }}
+                className={`px-3 py-1.5 rounded-full text-xs font-medium border transition-all ${
+                  isActive ? `${info.color} ring-1 ring-white/30` : 'bg-white/5 border-white/10 text-gray-400 hover:border-white/20'
+                }`}
+              >
+                {info.icon} {info.label} {count > 0 && <span className="ml-1 opacity-60">({count})</span>}
+              </button>
+            );
+          })}
+        </div>
+
         {/* Scan Controls */}
         <motion.div
           initial={{ opacity: 0 }}
@@ -1426,7 +1354,7 @@ export default function ScreenerPage() {
         >
           <div className="flex flex-wrap items-center gap-4">
             <div>
-              <label className="text-gray-400 text-xs mb-1 block">Stocks to Scan</label>
+              <label className="text-gray-400 text-xs mb-1 block">Universe</label>
               <select 
                 value={settings.maxStocks}
                 onChange={(e) => setSettings(s => ({ ...s, maxStocks: Number(e.target.value) }))}
@@ -1440,29 +1368,28 @@ export default function ScreenerPage() {
             </div>
             
             <div>
-              <label className="text-gray-400 text-xs mb-1 block">Min Confidence</label>
-              <select 
-                value={settings.minConfidence}
-                onChange={(e) => setSettings(s => ({ ...s, minConfidence: Number(e.target.value) }))}
+              <label className="text-gray-400 text-xs mb-1 block">Sort Mode</label>
+              <select
+                value={sortMode}
+                onChange={(e) => setSortMode(e.target.value as SortMode)}
                 className="bg-white/5 border border-white/20 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-cyan-500/50"
               >
-                <option value={50}>50%+</option>
-                <option value={65}>65%+</option>
-                <option value={75}>75%+</option>
-                <option value={85}>85%+</option>
+                {Object.entries(sortModeLabels).map(([key, label]) => (
+                  <option key={key} value={key}>{label}</option>
+                ))}
               </select>
             </div>
             
             <div>
-              <label className="text-gray-400 text-xs mb-1 block">Signal Type</label>
+              <label className="text-gray-400 text-xs mb-1 block">Direction</label>
               <select 
                 value={settings.signalType}
                 onChange={(e) => setSettings(s => ({ ...s, signalType: e.target.value as 'all' | 'bullish' | 'bearish' }))}
                 className="bg-white/5 border border-white/20 rounded-xl px-4 py-2 text-white text-sm focus:outline-none focus:border-cyan-500/50"
               >
-                <option value="all">All Signals</option>
-                <option value="bullish">Bullish Only</option>
-                <option value="bearish">Bearish Only</option>
+                <option value="all">All</option>
+                <option value="bullish">Long Only</option>
+                <option value="bearish">Short Only</option>
               </select>
             </div>
             
@@ -1518,7 +1445,10 @@ export default function ScreenerPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-2xl font-bold text-white">
-              Signals <span className="text-cyan-400">({signals === null ? '—' : signals.length})</span>
+              Trade Cards <span className="text-cyan-400">({signals === null ? '—' : signals.length})</span>
+              {totalCandidates > 0 && signals && signals.length < totalCandidates && (
+                <span className="text-gray-500 text-sm font-normal ml-2">of {totalCandidates} scanned</span>
+              )}
             </h2>
             {lastScan && (
               <span className="text-gray-500 text-sm">
@@ -1577,7 +1507,7 @@ export default function ScreenerPage() {
             </div>
           ) : (
             signals.map((signal, i) => (
-              <SignalCard 
+              <TradeCardDisplay 
                 key={`${signal.symbol}-${i}`} 
                 signal={signal} 
                 index={i}

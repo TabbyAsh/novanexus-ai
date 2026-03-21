@@ -1324,10 +1324,12 @@ class ApiClient {
     maxSymbols?: number;
     minConfidence?: number;
     signalType?: 'all' | 'bullish' | 'bearish';
+    sortMode?: string;
+    board?: string;
     save?: boolean;
     name?: string;
   }) {
-    return this.request<{ signals: any[]; scannedAt: string; reportId?: string }>(
+    return this.request<{ signals: any[]; scannedAt: string; reportId?: string; totalCandidates?: number; sortMode?: string; boardFilter?: string; boardDistribution?: Record<string, number> }>(
       'POST',
       '/v1/screener/scan',
       params || {}
