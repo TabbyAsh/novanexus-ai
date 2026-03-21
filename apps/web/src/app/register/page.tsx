@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useMemo } from 'react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/lib/store';
@@ -57,6 +57,7 @@ function calculatePasswordStrength(password: string): { score: number; label: st
 
 export default function RegisterPage() {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const register = useAuthStore((s) => s.register);
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
   const [email, setEmail] = useState('');
@@ -68,6 +69,11 @@ export default function RegisterPage() {
   const [error, setError] = useState('');
   const [isLoading, setIsLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
+
+  // Founding member detection from URL
+  const planParam = searchParams?.get('plan') || '';
+  const isFoundingFlow = planParam.toLowerCase() === 'founding';
+  const referralCode = searchParams?.get('ref') || '';
 
   // Redirect if already authenticated
   useEffect(() => {
@@ -125,7 +131,12 @@ export default function RegisterPage() {
       const result = await register(email, password, orgName || undefined);
       
       if (result.success) {
-        router.push('/dashboard');
+        // If founding flow, redirect to checkout after registration
+        if (isFoundingFlow) {
+          router.push('/pricing?plan=founding');
+        } else {
+          router.push('/dashboard');
+        }
       } else {
         setError(result.error || 'Registration failed. Please try again.');
       }
@@ -162,17 +173,35 @@ export default function RegisterPage() {
               NovaNexus
             </span>
           </Link>
-          <h1 className="mt-8 text-3xl font-bold text-white">Create your account</h1>
-          <p className="mt-2 text-gray-400">Start your AI-powered trading journey</p>
+          <h1 className="mt-8 text-3xl font-bold text-white">
+            {isFoundingFlow ? 'Claim Your Founding Seat' : 'Create your account'}
+          </h1>
+          <p className="mt-2 text-gray-400">
+            {isFoundingFlow
+              ? 'Register to lock in $29/mo forever — Trader Intelligence, delivered daily.'
+              : 'Start your AI-powered trading journey'}
+          </p>
         </div>
+
+        {/* Founding member badge */}
+        {isFoundingFlow && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 mx-auto max-w-md px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-center"
+          >
+            <div className="text-amber-400 font-semibold text-sm">⭐ Founding Member — $29/mo locked for life</div>
+            <div className="text-amber-400/60 text-xs mt-1">Daily Brief + full setup logic + Discord access</div>
+          </motion.div>
+        )}
 
         {/* Features highlight */}
         <div className="flex justify-center gap-6 mb-6 text-xs text-gray-400">
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> Free trial
+            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Pre-market daily brief' : 'Free trial'}
           </span>
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> No credit card
+            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Structured setups' : 'No credit card'}
           </span>
           <span className="flex items-center gap-1">
             <span className="text-green-400">✓</span> Cancel anytime
