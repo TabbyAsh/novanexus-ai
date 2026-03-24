@@ -31,7 +31,7 @@ RUN npm ci --legacy-peer-deps --ignore-scripts
 RUN npm install -g esbuild
 
 # Build workspace libs with turbo (must succeed — these are deps for everything)
-RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --no-cache
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --filter=@nova/nexus-core --no-cache
 
 # ==========================================================================
 # Bundle production services with esbuild
@@ -72,7 +72,7 @@ RUN esbuild services/billing/src/index.ts \
 RUN esbuild services/tradebot/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/tradebot/dist/index.js \
-  --external:pg-native --external:openai \
+  --external:pg-native --external:openai --external:@nova/nexus-core \
   --tsconfig=services/tradebot/tsconfig.json
 
 RUN esbuild services/marketdata/src/index.ts \
