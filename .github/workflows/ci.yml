@@ -73,8 +73,9 @@ jobs:
         run: npx turbo run build --no-cache
 
       - name: Typecheck
-        run: npx turbo run typecheck
-        continue-on-error: true  # Gateway TS6059 on Linux — known cross-platform issue (SYSTEM_STATUS.md #4)
+        # tradebot excluded: uses esbuild not tsc, has pre-existing TS2339 type errors (SYSTEM_STATUS.md #2)
+        # All other services must pass strict typecheck
+        run: npx turbo run typecheck --filter='!@nova/tradebot'
 
       - name: Lint
         run: npx turbo run lint

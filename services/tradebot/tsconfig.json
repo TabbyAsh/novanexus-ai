@@ -13,18 +13,13 @@
     "resolveJsonModule": true,
     "declaration": true,
     "sourceMap": true,
-    "baseUrl": ".",
+    "baseUrl": "../..",
     "paths": {
-      "@nova/shared": ["../../libs/shared/src/index.ts"],
-      "@nova/shared/*": ["../../libs/shared/src/*"],
-      "@nova/telemetry": ["../../libs/telemetry/src/index.ts"],
-      "@nova/telemetry/*": ["../../libs/telemetry/src/*"],
-      "@nova/bot-sdk": ["../../libs/bot-sdk/src/index.ts"],
-      "@nova/bot-sdk/*": ["../../libs/bot-sdk/src/*"],
-      "@nova/eventing": ["../../libs/eventing/src/index.ts"],
-      "@nova/eventing/*": ["../../libs/eventing/src/*"],
-      "@nova/nexus-core": ["../../libs/nexus-core/src/index.ts"],
-      "@nova/nexus-core/*": ["../../libs/nexus-core/src/*"]
+      "@nova/shared": ["libs/shared/dist"],
+      "@nova/telemetry": ["libs/telemetry/dist"],
+      "@nova/bot-sdk": ["libs/bot-sdk/dist"],
+      "@nova/eventing": ["libs/eventing/dist"],
+      "@nova/nexus-core": ["libs/nexus-core/dist"]
     }
   },
   "include": ["src/**/*"],
