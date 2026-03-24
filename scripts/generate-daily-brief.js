@@ -52,6 +52,7 @@ async function fetchScan() {
       minConfidence: MIN_CONFIDENCE,
       signalType: 'all',
       sortMode: 'BEST_TRADES_NOW',
+      governanceFilter: true, // Exclude quarantined setup types from brief
     }),
   });
 
@@ -274,6 +275,19 @@ async function main() {
   try {
     scanData = await fetchScan();
     console.log(`[SCAN] ✓ ${scanData.signals?.length || 0} signals from ${scanData.totalCandidates || '?'} candidates`);
+
+    // Log governance enforcement summary
+    const gov = scanData.governance;
+    if (gov) {
+      console.log(`[GOV]  Governance: ${gov.enabled ? 'ENFORCED' : 'informational'} | ${gov.typesLoaded} types loaded | ${gov.suppressed} suppressed`);
+      if (gov.suppressed > 0 && gov.suppressedSignals) {
+        for (const s of gov.suppressedSignals) {
+          console.log(`[GOV]    ✕ ${s.symbol} (${s.setupType}) — quarantined`);
+        }
+      }
+    } else {
+      console.log(`[GOV]  Governance: not available (table may not exist yet)`);
+    }
   } catch (err) {
     console.error(`[SCAN] ✕ Failed: ${err.message}`);
     console.error('');

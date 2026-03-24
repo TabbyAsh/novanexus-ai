@@ -142,5 +142,22 @@ module.exports = {
       wait_ready: true,
       listen_timeout: 10000,
     },
+    {
+      name: 'scheduler',
+      script: './services/scheduler/dist/index.js',
+      instances: 1,
+      exec_mode: 'fork',
+      env: {
+        NODE_ENV: 'production',
+        PORT: 3040,
+        GATEWAY_URL: 'http://localhost:' + (process.env.PORT || 3000),
+        AUTH_SERVICE_URL: 'http://localhost:3001',
+        NOVA_HUB_URL: 'http://localhost:3030',
+        MARKETDATA_URL: 'http://localhost:3020',
+        BILLING_URL: 'http://localhost:3006',
+      },
+      wait_ready: true,
+      listen_timeout: 15000,
+    },
   ],
 };

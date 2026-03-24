@@ -28,6 +28,7 @@ const SERVICE_URLS = {
   opsbot: process.env.OPSBOT_URL || 'http://localhost:3014',
   marketdata: process.env.MARKETDATA_URL || 'http://localhost:3020',
   novaHub: process.env.NOVA_HUB_URL || 'http://localhost:3030',
+  scheduler: process.env.SCHEDULER_URL || 'http://localhost:3040',
 };
 
 // Route to required scopes mapping
@@ -65,8 +66,9 @@ const PUBLIC_ROUTES = [
   '/v1/nexus/initialize',
   '/v1/nexus/analyze',
   '/v1/nexus/ledger',
-  // Platform stats (public for landing page)
+  // Platform stats + brief proof (public for landing page)
   '/v1/platform/stats',
+  '/v1/platform/brief-proof',
   // System health/reality check (must be public for banner)
   '/v1/reality',
   // Diagnostic (public for debugging)
@@ -1196,10 +1198,28 @@ app.post('/v1/referrals/generate', (req: Request, res: Response) => {
 });
 
 // ============================================
+// Command Layer -> Nova Hub + Scheduler
+// ============================================
+
+// Command pulse + review -> Nova Hub
+app.all('/v1/command/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Scheduler status, triggers, history -> Scheduler service
+app.all('/v1/scheduler/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.scheduler, req, res);
+});
+
+// ============================================
 // Tycoon: Platform Stats (public) -> Nova Hub
 // ============================================
 
 app.get('/v1/platform/stats', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.get('/v1/platform/brief-proof', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 

@@ -33,6 +33,7 @@ These services are built, deployed, and required for the platform to function:
 | SocialBot | @nova/socialbot | 3012 | tsc | Content manager |
 | MarketData | @nova/marketdata-service | 3020 | tsc | Quotes, candles (Alpaca/Polygon/Finnhub/Yahoo) |
 | Nova Hub | @nova/nova-hub | 3030 | tsc | Core brain: journal, backtest, thesis, screener, decision cards |
+| Scheduler | @nova/scheduler-service | 3040 | tsc | Automated brief delivery, outcome tracking, health monitoring |
 | Web | @nova/web | 4000 | Next.js | Dashboard frontend (Vercel) |
 
 ---
@@ -122,5 +123,5 @@ npx turbo run typecheck # Run after build (needs .d.ts files from ^build)
 | One-command boot | ⬜ NOT VERIFIED | `npm run nova:mvp` — needs Docker Desktop running |
 | Health endpoints respond | ⬜ NOT VERIFIED | Requires running stack |
 | Smoke test green | ⬜ NOT VERIFIED | `npm run verify` |
-| CI/CD pipeline | ❌ MISSING | No GitHub Actions |
+| CI/CD pipeline | ✅ IMPLEMENTED | GitHub Actions CI + Deploy workflows |
 | Railway deploy verified | ⬜ NOT VERIFIED | Config exists, not end-to-end tested |

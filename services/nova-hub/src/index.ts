@@ -3995,8 +3995,54 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
   let filteredCards = filterByBoard(allTradeCards, requestedBoard);
   filteredCards = sortTradeCards(filteredCards, requestedSortMode);
 
+  // ====== GOVERNANCE ENFORCEMENT ======
+  // Attach governance_status to every signal.
+  // When governanceFilter=true, exclude quarantined setup types.
+  // Fails closed: types NOT in governance table are treated as 'watch'.
+  const governanceMap = new Map<string, string>();
+  const suppressedByGovernance: Array<{ symbol: string; setupType: string; governance: string }> = [];
+  try {
+    const govRows = await query<{ setup_type: string; status: string }>(
+      'SELECT setup_type, status FROM setup_governance'
+    );
+    for (const row of govRows.rows) governanceMap.set(row.setup_type, row.status);
+  } catch {
+    // Table may not exist yet — all types default to 'watch' (fail closed)
+  }
+
+  const governanceFilterEnabled = req.body?.governanceFilter === true;
+
+  // Annotate + filter
+  let governedCards = filteredCards.map(card => {
+    const setupKey = card.setupType || card.board || 'unknown';
+    const govStatus = governanceMap.get(setupKey) || 'watch'; // fail closed: unknown = watch
+    return { ...card, governance_status: govStatus };
+  });
+
+  if (governanceFilterEnabled && governanceMap.size > 0) {
+    governedCards = governedCards.filter(card => {
+      if ((card as any).governance_status === 'quarantine') {
+        suppressedByGovernance.push({
+          symbol: card.symbol,
+          setupType: card.setupType || card.board || 'unknown',
+          governance: 'quarantine',
+        });
+        return false;
+      }
+      return true;
+    });
+  }
+
+  if (suppressedByGovernance.length > 0) {
+    logger.info('Governance filter suppressed signals', {
+      count: suppressedByGovernance.length,
+      suppressed: suppressedByGovernance,
+      governanceFilterEnabled,
+    });
+  }
+
   // Guarantee minimum results
-  const finalSignals = filteredCards.length > 0 ? filteredCards : allTradeCards.slice(0, 5);
+  const finalSignals = governedCards.length > 0 ? governedCards : allTradeCards.slice(0, 5);
 
   const scannedAt = new Date().toISOString();
   let reportId: string | null = null;
@@ -4041,6 +4087,12 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
       sortMode: requestedSortMode,
       boardFilter: requestedBoard,
       boardDistribution,
+      governance: {
+        enabled: governanceFilterEnabled,
+        typesLoaded: governanceMap.size,
+        suppressed: suppressedByGovernance.length,
+        suppressedSignals: suppressedByGovernance.length > 0 ? suppressedByGovernance : undefined,
+      },
     },
     trace: {
       engine: 'trade-card-v1',
@@ -4061,6 +4113,7 @@ app.post('/v1/screener/scan', authMiddleware, async (req: AuthenticatedRequest, 
         pWin: c.pWin,
         confidence: c.confidence,
         riskFlags: c.riskFlags,
+        governance_status: (c as any).governance_status,
       })),
       providerDiagnostics: providerDiag,
       alpacaCredentialSource: alpacaSource,
@@ -9592,6 +9645,53 @@ app.get('/v1/diagnostic/live', async (_req: Request, res: Response) => {
   });
 });
 
+// Public brief performance proof — truthful metrics for landing/pricing page
+app.get('/v1/platform/brief-proof', async (_req: Request, res: Response) => {
+  try {
+    const resolved = await query<{ outcome_status: string; cnt: string; avg_pnl: string }>(
+      `SELECT outcome_status, COUNT(*) as cnt, COALESCE(AVG(pnl_percent), 0) as avg_pnl
+       FROM brief_outcomes WHERE outcome_status IN ('HIT_T1', 'HIT_T2', 'STOPPED_OUT')
+       GROUP BY outcome_status`
+    );
+
+    let wins = 0, losses = 0, totalResolved = 0;
+    for (const r of resolved.rows) {
+      const count = parseInt(r.cnt, 10);
+      if (r.outcome_status === 'HIT_T1' || r.outcome_status === 'HIT_T2') wins += count;
+      else if (r.outcome_status === 'STOPPED_OUT') losses += count;
+      totalResolved += count;
+    }
+    const winRate = totalResolved > 0 ? Math.round(wins / totalResolved * 100) : null;
+
+    const dateRange = await queryOne<{ earliest: string; latest: string }>(
+      `SELECT MIN(brief_date) as earliest, MAX(brief_date) as latest FROM brief_outcomes WHERE outcome_status IN ('HIT_T1','HIT_T2','STOPPED_OUT')`
+    );
+
+    const totalTracked = await queryOne<{ cnt: string }>('SELECT COUNT(*) as cnt FROM brief_outcomes');
+
+    // Honesty gate: only show proof if sample size is meaningful
+    const sufficientData = totalResolved >= 10;
+
+    res.json({
+      success: true,
+      data: {
+        available: sufficientData,
+        resolved: totalResolved,
+        wins,
+        losses,
+        winRate: sufficientData ? winRate : null,
+        totalTracked: parseInt(totalTracked?.cnt || '0', 10),
+        dateRange: dateRange?.earliest ? { from: dateRange.earliest, to: dateRange.latest } : null,
+        disclaimer: 'Past performance does not predict future results. Not financial advice.',
+        sampleSizeNote: sufficientData ? null : `Sample size (${totalResolved} resolved) is below minimum threshold for published metrics.`,
+        computedAt: new Date().toISOString(),
+      },
+    });
+  } catch {
+    res.json({ success: true, data: { available: false, resolved: 0, disclaimer: 'Performance data not yet available.' } });
+  }
+});
+
 // Public platform stats for landing page social proof
 app.get('/v1/platform/stats', async (_req: Request, res: Response) => {
   try {
@@ -9751,6 +9851,607 @@ app.get('/v1/referrals/stats', authMiddleware, async (req: AuthenticatedRequest,
       })),
     },
   });
+});
+
+// ============================================
+// COMMAND LAYER — Founder Enterprise Pulse
+// ============================================
+
+// Master aggregation endpoint: returns full enterprise state in one call.
+// This is the Mind's view of the organism — everything the founder needs
+// to observe, diagnose, control, and direct from one place.
+app.get('/v1/command/pulse', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const startTime = Date.now();
+  const sections: Record<string, any> = {};
+  const errors: string[] = [];
+
+  // 1. REVENUE — subscribers by plan, MRR calculation
+  try {
+    const planCounts = await query<{ plan: string; status: string; cnt: string }>(
+      `SELECT plan, status, COUNT(*) as cnt FROM entitlements GROUP BY plan, status ORDER BY plan`
+    );
+    const byPlan: Record<string, { active: number; canceled: number; pastDue: number; trialing: number }> = {};
+    let totalActive = 0;
+    for (const row of planCounts.rows) {
+      if (!byPlan[row.plan]) byPlan[row.plan] = { active: 0, canceled: 0, pastDue: 0, trialing: 0 };
+      const count = parseInt(row.cnt, 10);
+      if (row.status === 'ACTIVE') { byPlan[row.plan].active = count; totalActive += count; }
+      else if (row.status === 'CANCELED') byPlan[row.plan].canceled = count;
+      else if (row.status === 'PAST_DUE') byPlan[row.plan].pastDue = count;
+      else if (row.status === 'TRIALING') byPlan[row.plan].trialing = count;
+    }
+    // MRR calculation: FOUNDING=$99, LITE=$29, PRO=$149
+    const priceMap: Record<string, number> = { FOUNDING: 99, LITE: 29, PRO: 149 };
+    let mrr = 0;
+    for (const [plan, counts] of Object.entries(byPlan)) {
+      mrr += (counts.active + counts.trialing) * (priceMap[plan] || 0);
+    }
+    const totalUsers = await queryOne<{ cnt: string }>('SELECT COUNT(*) as cnt FROM users');
+    sections.revenue = {
+      mrr,
+      totalActiveSubscribers: totalActive,
+      totalUsers: parseInt(totalUsers?.cnt || '0', 10),
+      byPlan,
+    };
+  } catch (err) {
+    errors.push(`revenue: ${(err as Error).message}`);
+    sections.revenue = null;
+  }
+
+  // 2. BRIEF DELIVERY — recent scheduler runs for daily-brief job
+  try {
+    const recentBriefRuns = await query<{ job_name: string; status: string; duration_ms: number; created_at: string; details: string }>(
+      `SELECT job_name, status, duration_ms, created_at, details FROM scheduler_runs
+       WHERE job_name = 'daily-brief' ORDER BY created_at DESC LIMIT 14`
+    );
+    const briefStats = await query<{ status: string; cnt: string }>(
+      `SELECT status, COUNT(*) as cnt FROM scheduler_runs WHERE job_name = 'daily-brief' GROUP BY status`
+    );
+    const counts: Record<string, number> = {};
+    for (const r of briefStats.rows) counts[r.status] = parseInt(r.cnt, 10);
+    sections.briefDelivery = {
+      recentRuns: recentBriefRuns.rows.map(r => ({ ...r, details: typeof r.details === 'string' ? JSON.parse(r.details) : r.details })),
+      totals: counts,
+      successRate: counts.success && (counts.success + (counts.failure || 0)) > 0
+        ? Math.round(counts.success / (counts.success + (counts.failure || 0)) * 100)
+        : null,
+    };
+  } catch (err) {
+    errors.push(`briefDelivery: ${(err as Error).message}`);
+    sections.briefDelivery = null;
+  }
+
+  // 3. OUTCOME BREAKDOWN — brief outcome statistics
+  try {
+    const outcomeTotals = await query<{ outcome_status: string; cnt: string; avg_pnl: string }>(
+      `SELECT outcome_status, COUNT(*) as cnt, COALESCE(AVG(pnl_percent), 0) as avg_pnl
+       FROM brief_outcomes GROUP BY outcome_status`
+    );
+    const byStatus: Record<string, { count: number; avgPnl: number }> = {};
+    let totalOutcomes = 0;
+    for (const r of outcomeTotals.rows) {
+      byStatus[r.outcome_status] = { count: parseInt(r.cnt, 10), avgPnl: parseFloat(r.avg_pnl) };
+      totalOutcomes += parseInt(r.cnt, 10);
+    }
+    const wins = (byStatus.HIT_T1?.count || 0) + (byStatus.HIT_T2?.count || 0);
+    const losses = byStatus.STOPPED_OUT?.count || 0;
+    const resolved = wins + losses;
+    sections.outcomes = {
+      byStatus,
+      totalTracked: totalOutcomes,
+      resolved,
+      winRate: resolved > 0 ? Math.round(wins / resolved * 100) : null,
+      wins,
+      losses,
+    };
+  } catch (err) {
+    errors.push(`outcomes: ${(err as Error).message}`);
+    sections.outcomes = null;
+  }
+
+  // 4. CALIBRATION — accuracy by setup type
+  try {
+    const calibration = await query<{
+      setup_type: string; total_setups: string; triggered: string;
+      hit_t1: string; hit_t2: string; stopped_out: string;
+      win_rate: string; avg_pnl_percent: string; brier_score: string;
+      period_start: string; period_end: string;
+    }>(
+      `SELECT * FROM calibration_metrics ORDER BY period_end DESC, setup_type LIMIT 20`
+    );
+    sections.calibration = { metrics: calibration.rows };
+  } catch (err) {
+    errors.push(`calibration: ${(err as Error).message}`);
+    sections.calibration = null;
+  }
+
+  // 5. SCHEDULER — recent runs across all job types
+  try {
+    const recentRuns = await query<{ job_name: string; status: string; duration_ms: number; created_at: string }>(
+      `SELECT job_name, status, duration_ms, created_at FROM scheduler_runs ORDER BY created_at DESC LIMIT 30`
+    );
+    sections.scheduler = { recentRuns: recentRuns.rows };
+  } catch (err) {
+    errors.push(`scheduler: ${(err as Error).message}`);
+    sections.scheduler = null;
+  }
+
+  // 6. DEPLOYMENT — version info
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const versionPath = path.resolve(__dirname, '..', '..', '..', 'VERSION');
+    const version = fs.existsSync(versionPath) ? fs.readFileSync(versionPath, 'utf-8').trim() : 'unknown';
+    sections.deployment = {
+      version,
+      nodeVersion: process.version,
+      uptime: process.uptime(),
+      env: process.env.NODE_ENV || 'development',
+    };
+  } catch {
+    sections.deployment = { version: 'unknown', nodeVersion: process.version, uptime: process.uptime() };
+  }
+
+  // 7. THREATS — known issues and active alerts
+  try {
+    const recentAlerts = await query<{ job_name: string; status: string; details: string; created_at: string }>(
+      `SELECT job_name, status, details, created_at FROM scheduler_runs
+       WHERE status IN ('failure', 'alert') ORDER BY created_at DESC LIMIT 10`
+    );
+    const pastDueCount = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM entitlements WHERE status = 'PAST_DUE'`
+    );
+    sections.threats = {
+      recentFailures: recentAlerts.rows.map(r => ({
+        ...r,
+        details: typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return r.details; } })() : r.details,
+      })),
+      pastDueSubscriptions: parseInt(pastDueCount?.cnt || '0', 10),
+    };
+  } catch (err) {
+    errors.push(`threats: ${(err as Error).message}`);
+    sections.threats = null;
+  }
+
+  // 8. OPPORTUNITIES — screener signal counts, conversion funnel
+  try {
+    const signalCount7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM decision_cards WHERE created_at > NOW() - INTERVAL '7 days'`
+    );
+    const signalCount30d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM decision_cards WHERE created_at > NOW() - INTERVAL '30 days'`
+    );
+    const signups7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM users WHERE created_at > NOW() - INTERVAL '7 days'`
+    );
+    const signups30d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM users WHERE created_at > NOW() - INTERVAL '30 days'`
+    );
+    sections.opportunities = {
+      decisionCardsThisWeek: parseInt(signalCount7d?.cnt || '0', 10),
+      decisionCards30d: parseInt(signalCount30d?.cnt || '0', 10),
+      newUsersThisWeek: parseInt(signups7d?.cnt || '0', 10),
+      newUsers30d: parseInt(signups30d?.cnt || '0', 10),
+    };
+  } catch (err) {
+    errors.push(`opportunities: ${(err as Error).message}`);
+    sections.opportunities = null;
+  }
+
+  // 9. ECONOMICS — net MRR, unit economics, period comparisons
+  try {
+    const paidUsers = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM entitlements WHERE plan != 'FREE' AND status IN ('ACTIVE', 'TRIALING')`
+    );
+    const pastDue = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM entitlements WHERE status = 'PAST_DUE'`
+    );
+    const briefs7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM scheduler_runs WHERE job_name = 'daily-brief' AND status = 'success' AND created_at > NOW() - INTERVAL '7 days'`
+    );
+    const briefs30d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM scheduler_runs WHERE job_name = 'daily-brief' AND status = 'success' AND created_at > NOW() - INTERVAL '30 days'`
+    );
+    const grossMrr = sections.revenue?.mrr || 0;
+    const pastDueCount = parseInt(pastDue?.cnt || '0', 10);
+    // Net MRR: subtract estimated at-risk revenue from past-due subs
+    // Assume average plan price for past-due ($64 = midpoint of 29/99)
+    const atRiskMrr = pastDueCount * 64;
+    const netMrr = Math.max(0, grossMrr - atRiskMrr);
+    const paidCount = parseInt(paidUsers?.cnt || '0', 10);
+    const totalUsers = sections.revenue?.totalUsers || 0;
+    sections.economics = {
+      grossMrr,
+      netMrr,
+      atRiskMrr,
+      paidUsers: paidCount,
+      freeUsers: totalUsers - paidCount,
+      conversionRate: totalUsers > 0 ? parseFloat((paidCount / totalUsers * 100).toFixed(1)) : 0,
+      briefsSent7d: parseInt(briefs7d?.cnt || '0', 10),
+      briefsSent30d: parseInt(briefs30d?.cnt || '0', 10),
+      revenuePerPaidUser: paidCount > 0 ? parseFloat((grossMrr / paidCount).toFixed(2)) : 0,
+      // Infrastructure costs: placeholder wired for future real inputs
+      infraCostMonthly: null as number | null, // Set via env INFRA_COST_MONTHLY when known
+      margin: null as number | null, // Computed when infraCostMonthly is set
+    };
+    // Wire infra cost if available
+    const infraCost = process.env.INFRA_COST_MONTHLY ? parseFloat(process.env.INFRA_COST_MONTHLY) : null;
+    if (infraCost !== null && !isNaN(infraCost)) {
+      sections.economics.infraCostMonthly = infraCost;
+      sections.economics.margin = grossMrr > 0 ? parseFloat(((grossMrr - infraCost) / grossMrr * 100).toFixed(1)) : null;
+    }
+  } catch (err) {
+    errors.push(`economics: ${(err as Error).message}`);
+    sections.economics = null;
+  }
+
+  // 10. TRENDS — daily counts for key metrics over last 30 days
+  try {
+    const userTrend = await query<{ d: string; cnt: string }>(
+      `SELECT DATE(created_at) as d, COUNT(*) as cnt FROM users
+       WHERE created_at > NOW() - INTERVAL '30 days' GROUP BY DATE(created_at) ORDER BY d`
+    );
+    const briefTrend = await query<{ d: string; cnt: string }>(
+      `SELECT DATE(created_at) as d, COUNT(*) as cnt FROM scheduler_runs
+       WHERE job_name = 'daily-brief' AND status = 'success' AND created_at > NOW() - INTERVAL '30 days'
+       GROUP BY DATE(created_at) ORDER BY d`
+    );
+    const outcomeTrend = await query<{ d: string; wins: string; losses: string }>(
+      `SELECT DATE(evaluated_at) as d,
+              SUM(CASE WHEN outcome_status IN ('HIT_T1','HIT_T2') THEN 1 ELSE 0 END) as wins,
+              SUM(CASE WHEN outcome_status = 'STOPPED_OUT' THEN 1 ELSE 0 END) as losses
+       FROM brief_outcomes WHERE evaluated_at > NOW() - INTERVAL '30 days'
+       GROUP BY DATE(evaluated_at) ORDER BY d`
+    );
+    sections.trends = {
+      signups: userTrend.rows.map(r => ({ date: r.d, count: parseInt(r.cnt, 10) })),
+      briefsSent: briefTrend.rows.map(r => ({ date: r.d, count: parseInt(r.cnt, 10) })),
+      outcomes: outcomeTrend.rows.map(r => ({ date: r.d, wins: parseInt(r.wins, 10), losses: parseInt(r.losses, 10) })),
+    };
+  } catch (err) {
+    errors.push(`trends: ${(err as Error).message}`);
+    sections.trends = null;
+  }
+
+  // 11. ACTION LOG — recent command actions
+  try {
+    const actions = await query<{ id: string; actor_id: string; action_type: string; target: string; result: string; details: string; created_at: string }>(
+      `SELECT id, actor_id, action_type, target, result, details, created_at
+       FROM command_actions ORDER BY created_at DESC LIMIT 30`
+    );
+    sections.actionLog = actions.rows.map(r => ({
+      ...r,
+      details: typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return r.details; } })() : r.details,
+    }));
+  } catch (err) {
+    errors.push(`actionLog: ${(err as Error).message}`);
+    sections.actionLog = null;
+  }
+
+  // 12. REVIEWS — weekly review history
+  try {
+    const reviews = await query<{ id: string; details: string; created_at: string }>(
+      `SELECT id, details, created_at FROM scheduler_runs
+       WHERE job_name = 'weekly-review' ORDER BY created_at DESC LIMIT 12`
+    );
+    sections.reviews = reviews.rows.map(r => ({
+      id: r.id,
+      ...( typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return { raw: r.details }; } })() : r.details ),
+      createdAt: r.created_at,
+    }));
+  } catch (err) {
+    errors.push(`reviews: ${(err as Error).message}`);
+    sections.reviews = null;
+  }
+
+  // 13. SCHEDULER STATE — computed health status
+  try {
+    const recentHealthAlerts = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM scheduler_runs WHERE job_name = 'health-monitor' AND status = 'alert' AND created_at > NOW() - INTERVAL '30 minutes'`
+    );
+    const lastBriefRun = await queryOne<{ status: string; created_at: string }>(
+      `SELECT status, created_at FROM scheduler_runs WHERE job_name = 'daily-brief' ORDER BY created_at DESC LIMIT 1`
+    );
+    const alertCount = parseInt(recentHealthAlerts?.cnt || '0', 10);
+    let schedulerState: 'healthy' | 'degraded' | 'blocked' | 'unknown' = 'unknown';
+    if (alertCount === 0) schedulerState = 'healthy';
+    else if (alertCount <= 2) schedulerState = 'degraded';
+    else schedulerState = 'blocked';
+    sections.schedulerState = {
+      status: schedulerState,
+      recentHealthAlerts: alertCount,
+      lastBriefRun: lastBriefRun ? { status: lastBriefRun.status, at: lastBriefRun.created_at } : null,
+    };
+  } catch (err) {
+    errors.push(`schedulerState: ${(err as Error).message}`);
+    sections.schedulerState = null;
+  }
+
+  // 14. GOVERNANCE — setup type eligibility state
+  try {
+    const gov = await query<any>(
+      `SELECT setup_type, status, reason, total_setups, triggered, hit_t1, hit_t2, stopped_out,
+              win_rate, avg_pnl, auto_status, manual_override, changed_by, changed_at
+       FROM setup_governance ORDER BY total_setups DESC`
+    );
+    const eligible = gov.rows.filter((g: any) => g.status === 'eligible').length;
+    const watch = gov.rows.filter((g: any) => g.status === 'watch').length;
+    const quarantine = gov.rows.filter((g: any) => g.status === 'quarantine').length;
+    sections.governance = {
+      setupTypes: gov.rows,
+      summary: { eligible, watch, quarantine, total: gov.rows.length },
+      _fetchedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    errors.push(`governance: ${(err as Error).message}`);
+    sections.governance = null;
+  }
+
+  // 15. GOVERNANCE IMPACT — outcome quality by governance class
+  try {
+    // Join brief_outcomes with setup_governance to measure quality by class
+    const impactByClass = await query<{
+      gov_status: string; total: string; wins: string; losses: string; avg_pnl: string;
+    }>(
+      `SELECT COALESCE(sg.status, 'unclassified') as gov_status,
+              COUNT(*) as total,
+              SUM(CASE WHEN bo.outcome_status IN ('HIT_T1','HIT_T2') THEN 1 ELSE 0 END) as wins,
+              SUM(CASE WHEN bo.outcome_status = 'STOPPED_OUT' THEN 1 ELSE 0 END) as losses,
+              COALESCE(AVG(CASE WHEN bo.outcome_status IN ('HIT_T1','HIT_T2','STOPPED_OUT') THEN bo.pnl_percent END), 0) as avg_pnl
+       FROM brief_outcomes bo
+       LEFT JOIN setup_governance sg ON bo.setup_type = sg.setup_type
+       WHERE bo.outcome_status IN ('HIT_T1','HIT_T2','STOPPED_OUT')
+       GROUP BY COALESCE(sg.status, 'unclassified')`
+    );
+
+    const byClass: Record<string, { total: number; wins: number; losses: number; winRate: number | null; avgPnl: number }> = {};
+    for (const row of impactByClass.rows) {
+      const wins = parseInt(row.wins, 10);
+      const losses = parseInt(row.losses, 10);
+      const resolved = wins + losses;
+      byClass[row.gov_status] = {
+        total: parseInt(row.total, 10),
+        wins, losses,
+        winRate: resolved > 0 ? parseFloat((wins / resolved * 100).toFixed(1)) : null,
+        avgPnl: parseFloat(row.avg_pnl),
+      };
+    }
+
+    // Suppression and override counts
+    const govCounts = await queryOne<{ quarantined: string; overrides: string }>(
+      `SELECT
+        SUM(CASE WHEN status = 'quarantine' THEN 1 ELSE 0 END) as quarantined,
+        SUM(CASE WHEN manual_override = true THEN 1 ELSE 0 END) as overrides
+       FROM setup_governance`
+    );
+
+    // Governance override action count from command_actions
+    const overrideActions7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM command_actions WHERE action_type = 'governance-override' AND created_at > NOW() - INTERVAL '7 days'`
+    );
+
+    sections.governanceImpact = {
+      outcomesByClass: byClass,
+      activeQuarantines: parseInt(govCounts?.quarantined || '0', 10),
+      manualOverrides: parseInt(govCounts?.overrides || '0', 10),
+      overrideActions7d: parseInt(overrideActions7d?.cnt || '0', 10),
+      _fetchedAt: new Date().toISOString(),
+    };
+  } catch (err) {
+    errors.push(`governanceImpact: ${(err as Error).message}`);
+    sections.governanceImpact = null;
+  }
+
+  const durationMs = Date.now() - startTime;
+  res.json({
+    success: true,
+    data: {
+      ...sections,
+      _meta: {
+        generatedAt: new Date().toISOString(),
+        durationMs,
+        errors: errors.length > 0 ? errors : undefined,
+      },
+    },
+  });
+});
+
+// ============================================
+// Command Action Logging
+// ============================================
+
+app.post('/v1/command/action', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { actionType, target, result, details } = req.body || {};
+
+  if (!actionType) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false, error: { code: 'INVALID_INPUT', message: 'actionType is required' },
+    });
+  }
+
+  try {
+    const action = await queryOne<{ id: string }>(
+      `INSERT INTO command_actions (actor_id, action_type, target, result, details)
+       VALUES ($1, $2, $3, $4, $5) RETURNING id`,
+      [userId, actionType, target || null, result || 'success', JSON.stringify(details || {})]
+    );
+    res.json({ success: true, data: { actionId: action?.id } });
+  } catch (err) {
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false, error: { code: 'ACTION_LOG_FAILED', message: (err as Error).message },
+    });
+  }
+});
+
+// ============================================
+// Weekly Reviews
+// ============================================
+
+app.post('/v1/command/review', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { wins, losses, decisions, nextPriorities, risks, nextActions, notes } = req.body || {};
+
+  try {
+    const review = await queryOne<{ id: string }>(
+      `INSERT INTO scheduler_runs (job_name, status, duration_ms, details, created_at)
+       VALUES ('weekly-review', 'success', 0, $1, NOW()) RETURNING id`,
+      [JSON.stringify({ userId, wins, losses, decisions, nextPriorities, risks, nextActions, notes })]
+    );
+    // Also log as command action
+    await query(
+      `INSERT INTO command_actions (actor_id, action_type, target, result, details) VALUES ($1, $2, $3, $4, $5)`,
+      [userId, 'weekly-review', 'enterprise', 'success', JSON.stringify({ reviewId: review?.id })]
+    ).catch(() => {});
+    res.json({ success: true, data: { reviewId: review?.id } });
+  } catch (err) {
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'REVIEW_FAILED', message: (err as Error).message },
+    });
+  }
+});
+
+app.get('/v1/command/reviews', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const reviews = await query<{ id: string; details: string; created_at: string }>(
+      `SELECT id, details, created_at FROM scheduler_runs
+       WHERE job_name = 'weekly-review' ORDER BY created_at DESC LIMIT 20`
+    );
+    res.json({
+      success: true,
+      data: {
+        reviews: reviews.rows.map(r => ({
+          id: r.id,
+          ...(typeof r.details === 'string' ? (() => { try { return JSON.parse(r.details); } catch { return { raw: r.details }; } })() : r.details),
+          createdAt: r.created_at,
+        })),
+      },
+    });
+  } catch (err) {
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false, error: { code: 'REVIEWS_FAILED', message: (err as Error).message },
+    });
+  }
+});
+
+// ============================================
+// Setup Type Governance — Decision Quality Control
+// ============================================
+
+// Compute governance state from brief_outcomes, update setup_governance table
+async function computeGovernance(): Promise<Array<Record<string, any>>> {
+  // Aggregate outcomes by setup_type
+  const stats = await query<{
+    setup_type: string; total: string; triggered: string;
+    hit_t1: string; hit_t2: string; stopped_out: string; avg_pnl: string;
+  }>(
+    `SELECT setup_type, COUNT(*) as total,
+            SUM(CASE WHEN outcome_status NOT IN ('NO_TRIGGER','NO_QUOTE','NO_ENTRY') THEN 1 ELSE 0 END) as triggered,
+            SUM(CASE WHEN outcome_status = 'HIT_T1' THEN 1 ELSE 0 END) as hit_t1,
+            SUM(CASE WHEN outcome_status = 'HIT_T2' THEN 1 ELSE 0 END) as hit_t2,
+            SUM(CASE WHEN outcome_status = 'STOPPED_OUT' THEN 1 ELSE 0 END) as stopped_out,
+            COALESCE(AVG(CASE WHEN outcome_status IN ('HIT_T1','HIT_T2','STOPPED_OUT') THEN pnl_percent END), 0) as avg_pnl
+     FROM brief_outcomes WHERE setup_type IS NOT NULL
+     GROUP BY setup_type ORDER BY total DESC`
+  );
+
+  const results: Array<Record<string, any>> = [];
+  for (const row of stats.rows) {
+    const total = parseInt(row.total, 10);
+    const wins = parseInt(row.hit_t1, 10) + parseInt(row.hit_t2, 10);
+    const losses = parseInt(row.stopped_out, 10);
+    const resolved = wins + losses;
+    const winRate = resolved > 0 ? parseFloat((wins / resolved * 100).toFixed(1)) : null;
+
+    // Auto-classification: fail closed — unknown defaults to 'watch'
+    // >= 50% win rate AND >= 5 resolved → eligible
+    // 30-50% OR < 5 resolved → watch
+    // < 30% AND >= 5 resolved → quarantine
+    let autoStatus: 'eligible' | 'watch' | 'quarantine' = 'watch';
+    let reason = 'Insufficient data for classification';
+    if (resolved >= 5) {
+      if (winRate !== null && winRate >= 50) {
+        autoStatus = 'eligible';
+        reason = `Win rate ${winRate}% (${wins}W/${losses}L) over ${resolved} resolved`;
+      } else if (winRate !== null && winRate < 30) {
+        autoStatus = 'quarantine';
+        reason = `Win rate ${winRate}% (${wins}W/${losses}L) below 30% threshold`;
+      } else {
+        autoStatus = 'watch';
+        reason = `Win rate ${winRate}% — monitoring (30-50% range)`;
+      }
+    }
+
+    // Upsert into setup_governance, respecting manual overrides
+    await query(
+      `INSERT INTO setup_governance (setup_type, status, reason, total_setups, triggered, hit_t1, hit_t2, stopped_out, win_rate, avg_pnl, auto_status, changed_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $2, NOW())
+       ON CONFLICT (setup_type) DO UPDATE SET
+         total_setups = $4, triggered = $5, hit_t1 = $6, hit_t2 = $7, stopped_out = $8,
+         win_rate = $9, avg_pnl = $10, auto_status = $2,
+         status = CASE WHEN setup_governance.manual_override THEN setup_governance.status ELSE $2 END,
+         reason = CASE WHEN setup_governance.manual_override THEN setup_governance.reason ELSE $3 END,
+         changed_at = NOW()`,
+      [row.setup_type, autoStatus, reason, total, parseInt(row.triggered, 10),
+       parseInt(row.hit_t1, 10), parseInt(row.hit_t2, 10), parseInt(row.stopped_out, 10),
+       winRate, parseFloat(row.avg_pnl)]
+    );
+
+    // Read back the actual state (may differ if manually overridden)
+    const current = await queryOne<any>(
+      `SELECT * FROM setup_governance WHERE setup_type = $1`, [row.setup_type]
+    );
+    results.push(current || { setup_type: row.setup_type, status: autoStatus, reason, win_rate: winRate, total_setups: total });
+  }
+  return results;
+}
+
+// GET — compute and return governance state
+app.get('/v1/command/governance', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const governance = await computeGovernance();
+    res.json({ success: true, data: { governance, computedAt: new Date().toISOString() } });
+  } catch (err) {
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false, error: { code: 'GOVERNANCE_FAILED', message: (err as Error).message },
+    });
+  }
+});
+
+// POST — manual override for a setup type
+app.post('/v1/command/governance/:setupType', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { setupType } = req.params;
+  const { status, reason } = req.body || {};
+
+  if (!status || !['eligible', 'watch', 'quarantine'].includes(status)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false, error: { code: 'INVALID_INPUT', message: 'status must be eligible, watch, or quarantine' },
+    });
+  }
+
+  try {
+    await query(
+      `INSERT INTO setup_governance (setup_type, status, reason, manual_override, changed_by, changed_at)
+       VALUES ($1, $2, $3, true, $4, NOW())
+       ON CONFLICT (setup_type) DO UPDATE SET
+         status = $2, reason = $3, manual_override = true, changed_by = $4, changed_at = NOW()`,
+      [setupType, status, reason || `Manual override to ${status}`, userId]
+    );
+
+    // Audit log
+    await query(
+      `INSERT INTO command_actions (actor_id, action_type, target, result, details) VALUES ($1, $2, $3, $4, $5)`,
+      [userId, 'governance-override', setupType, 'success', JSON.stringify({ newStatus: status, reason })]
+    ).catch(() => {});
+
+    res.json({ success: true, data: { setupType, status, manualOverride: true } });
+  } catch (err) {
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false, error: { code: 'GOVERNANCE_OVERRIDE_FAILED', message: (err as Error).message },
+    });
+  }
 });
 
 // ============================================

@@ -1767,6 +1767,63 @@ class ApiClient {
   }
 
   // ==========================================================================
+  // Command Layer — Founder Enterprise Control
+  // ==========================================================================
+  async getCommandPulse() {
+    return this.request<{
+      revenue: { mrr: number; totalActiveSubscribers: number; totalUsers: number; byPlan: Record<string, { active: number; canceled: number; pastDue: number; trialing: number }> } | null;
+      briefDelivery: { recentRuns: Array<{ job_name: string; status: string; duration_ms: number; created_at: string; details: any }>; totals: Record<string, number>; successRate: number | null } | null;
+      outcomes: { byStatus: Record<string, { count: number; avgPnl: number }>; totalTracked: number; resolved: number; winRate: number | null; wins: number; losses: number } | null;
+      calibration: { metrics: Array<any> } | null;
+      scheduler: { recentRuns: Array<{ job_name: string; status: string; duration_ms: number; created_at: string }> } | null;
+      deployment: { version: string; nodeVersion: string; uptime: number; env: string } | null;
+      threats: { recentFailures: Array<any>; pastDueSubscriptions: number } | null;
+      opportunities: { decisionCardsThisWeek: number; newUsersThisWeek: number } | null;
+      _meta: { generatedAt: string; durationMs: number; errors?: string[] };
+    }>('GET', '/v1/command/pulse');
+  }
+
+  async postCommandReview(review: { wins?: string; losses?: string; decisions?: string; nextPriorities?: string; notes?: string }) {
+    return this.request<{ reviewId: string }>('POST', '/v1/command/review', review);
+  }
+
+  async triggerSchedulerJob(job: 'brief' | 'outcomes' | 'health') {
+    return this.request<{ success: boolean; message?: string; data?: any }>('POST', `/v1/scheduler/trigger/${job}`);
+  }
+
+  async getSchedulerStatus() {
+    return this.request<{
+      uptime: number;
+      schedulesActive: boolean;
+      healthMonitorActive: boolean;
+      recentRuns: Array<any>;
+      serviceHealth: Array<{ service: string; url: string; status: string; responseTimeMs: number; statusCode: number | null; error: string | null }>;
+    }>('GET', '/v1/scheduler/status');
+  }
+
+  async getSchedulerHistory() {
+    return this.request<{ runs: Array<any> }>('GET', '/v1/scheduler/history');
+  }
+
+  async logCommandAction(actionType: string, target: string, result: string, details?: Record<string, any>) {
+    return this.request<{ actionId: string }>('POST', '/v1/command/action', { actionType, target, result, details });
+  }
+
+  async getCommandReviews() {
+    return this.request<{ reviews: Array<any> }>('GET', '/v1/command/reviews');
+  }
+
+  async getCommandGovernance() {
+    return this.request<{ governance: Array<any>; computedAt: string }>('GET', '/v1/command/governance');
+  }
+
+  async setGovernanceOverride(setupType: string, status: 'eligible' | 'watch' | 'quarantine', reason?: string) {
+    return this.request<{ setupType: string; status: string; manualOverride: boolean }>(
+      'POST', `/v1/command/governance/${encodeURIComponent(setupType)}`, { status, reason }
+    );
+  }
+
+  // ==========================================================================
   // Dashboard — Aggregate stats
   // ==========================================================================
   async getDashboardStats() {

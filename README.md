@@ -1,5 +1,7 @@
 # Nova Enterprises
 
+![CI](https://github.com/nova-enterprises/nova-enterprises/actions/workflows/ci.yml/badge.svg)
+
 **The AI-Orchestrated Universal Life-and-Business Operating System**
 
 Nova is a platform that merges trading, e-commerce, and content distribution into a single system where every action produces data, every data point improves the AI, and every improved decision increases profitability.

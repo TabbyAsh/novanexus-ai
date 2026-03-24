@@ -131,6 +131,24 @@ export default function RegisterPage() {
       const result = await register(email, password, orgName || undefined);
       
       if (result.success) {
+        // Redeem referral code if provided (best effort — don't block registration)
+        if (referralCode) {
+          try {
+            const token = localStorage.getItem('nova_access_token');
+            if (token) {
+              const res = await fetch('/api/proxy/v1/referrals/redeem', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ code: referralCode }),
+              });
+              const data = await res.json();
+              if (data?.success && data?.data?.redeemed) {
+                console.log(`Referral redeemed: ${data.data.message}`);
+              }
+            }
+          } catch { /* referral is bonus, not critical path */ }
+        }
+
         // If founding flow, redirect to checkout after registration
         if (isFoundingFlow) {
           router.push('/pricing?plan=founding');
@@ -192,6 +210,18 @@ export default function RegisterPage() {
           >
             <div className="text-amber-400 font-semibold text-sm">⭐ Founding Member — $29/mo locked for life</div>
             <div className="text-amber-400/60 text-xs mt-1">Daily Brief + full setup logic + Discord access</div>
+          </motion.div>
+        )}
+
+        {/* Referral bonus notice */}
+        {referralCode && !isFoundingFlow && (
+          <motion.div
+            initial={{ opacity: 0, y: -10 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-6 mx-auto max-w-md px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/30 text-center"
+          >
+            <div className="text-green-400 font-semibold text-sm">Referred by a friend — $10 credit on signup</div>
+            <div className="text-green-400/60 text-xs mt-1">Credit applied automatically after registration</div>
           </motion.div>
         )}
 
