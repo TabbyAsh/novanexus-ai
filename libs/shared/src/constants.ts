@@ -19,6 +19,7 @@ export const SERVICE_PORTS = {
   MARKETDATA: 3020,
   CONTENTDATA: 3021,
   COMMERCEDATA: 3022,
+  SCHEDULER: 3040,
 } as const;
 
 // ============================================
