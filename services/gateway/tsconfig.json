@@ -14,10 +14,8 @@
     "resolveJsonModule": true,
     "baseUrl": "../..",
     "paths": {
-      "@nova/shared": ["libs/shared/src/index.ts"],
-      "@nova/shared/*": ["libs/shared/src/*"],
-      "@nova/telemetry": ["libs/telemetry/src/index.ts"],
-      "@nova/telemetry/*": ["libs/telemetry/src/*"]
+      "@nova/shared": ["libs/shared/dist"],
+      "@nova/telemetry": ["libs/telemetry/dist"]
     }
   },
   "include": ["src/**/*"],
