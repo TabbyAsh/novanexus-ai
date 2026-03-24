@@ -10187,7 +10187,42 @@ app.get('/v1/command/pulse', authMiddleware, async (req: AuthenticatedRequest, r
     sections.governance = null;
   }
 
-  // 15. GOVERNANCE IMPACT — outcome quality by governance class
+  // 15. CONVERSION — funnel metrics for monetization visibility
+  try {
+    const regs7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM users WHERE created_at > NOW() - INTERVAL '7 days'`
+    );
+    const regs30d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM users WHERE created_at > NOW() - INTERVAL '30 days'`
+    );
+    const paidConversions7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM command_actions WHERE action_type = 'subscriber-onboarded' AND created_at > NOW() - INTERVAL '7 days'`
+    );
+    const paidConversions30d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM command_actions WHERE action_type = 'subscriber-onboarded' AND created_at > NOW() - INTERVAL '30 days'`
+    );
+    const welcomeEmails7d = await query<{ result: string; cnt: string }>(
+      `SELECT result, COUNT(*) as cnt FROM command_actions WHERE action_type = 'welcome-email' AND created_at > NOW() - INTERVAL '7 days' GROUP BY result`
+    );
+    const referralRedemptions7d = await queryOne<{ cnt: string }>(
+      `SELECT COUNT(*) as cnt FROM command_actions WHERE action_type LIKE '%referral%' AND result = 'success' AND created_at > NOW() - INTERVAL '7 days'`
+    );
+    const welcomeByResult: Record<string, number> = {};
+    for (const r of welcomeEmails7d.rows) welcomeByResult[r.result] = parseInt(r.cnt, 10);
+    sections.conversion = {
+      registrations7d: parseInt(regs7d?.cnt || '0', 10),
+      registrations30d: parseInt(regs30d?.cnt || '0', 10),
+      paidConversions7d: parseInt(paidConversions7d?.cnt || '0', 10),
+      paidConversions30d: parseInt(paidConversions30d?.cnt || '0', 10),
+      welcomeEmails7d: welcomeByResult,
+      referralRedemptions7d: parseInt(referralRedemptions7d?.cnt || '0', 10),
+    };
+  } catch (err) {
+    errors.push(`conversion: ${(err as Error).message}`);
+    sections.conversion = null;
+  }
+
+  // 16. GOVERNANCE IMPACT — outcome quality by governance class
   try {
     // Join brief_outcomes with setup_governance to measure quality by class
     const impactByClass = await query<{

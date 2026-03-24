@@ -6,6 +6,7 @@ import {
   CheckCircle,
   CreditCard,
   ExternalLink,
+  Gift,
   RefreshCw,
   Shield,
   AlertTriangle,
@@ -670,6 +671,9 @@ export default function SettingsPage() {
             </div>
           </div>
 
+          {/* Referral Program */}
+          <ReferralSection />
+
           {/* Data Sources */}
           <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
             <div className="flex items-center gap-3 mb-4">
@@ -742,5 +746,101 @@ export default function SettingsPage() {
         </div>
       </div>
     </DashboardLayout>
+  );
+}
+
+// ============================================
+// Referral Section Component
+// ============================================
+
+function ReferralSection() {
+  const [referral, setReferral] = useState<{ code: string; referralUrl: string; totalReferrals: number; totalEarnings: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const loadOrGenerate = async () => {
+    setLoading(true);
+    try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
+      if (!token) { setLoading(false); return; }
+      const headers = { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` };
+
+      // Try to get existing stats first
+      const statsRes = await fetch('/api/proxy/v1/referrals/stats', { headers }).then(r => r.json()).catch(() => null);
+      if (statsRes?.success && statsRes?.data?.code) {
+        setReferral(statsRes.data);
+      } else {
+        // Generate a new code
+        const genRes = await fetch('/api/proxy/v1/referrals/generate', { method: 'POST', headers }).then(r => r.json()).catch(() => null);
+        if (genRes?.success && genRes?.data) {
+          setReferral(genRes.data);
+        }
+      }
+    } catch { /* non-critical */ }
+    finally { setLoading(false); }
+  };
+
+  useEffect(() => { loadOrGenerate(); }, []);
+
+  const copyLink = () => {
+    if (referral?.referralUrl) {
+      navigator.clipboard.writeText(referral.referralUrl).then(() => {
+        setCopied(true);
+        setTimeout(() => setCopied(false), 2000);
+      });
+    }
+  };
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl p-6">
+      <div className="flex items-center gap-3 mb-4">
+        <div className="p-2 bg-purple-500/20 rounded-lg">
+          <Gift className="w-5 h-5 text-purple-400" />
+        </div>
+        <h2 className="text-lg font-semibold text-white">Referral Program</h2>
+      </div>
+
+      <div className="space-y-3">
+        <p className="text-gray-400 text-sm">Refer a friend and you both get <span className="text-purple-300 font-medium">$10 credit</span>.</p>
+
+        {referral ? (
+          <>
+            <div className="bg-gray-800 rounded-lg p-3">
+              <p className="text-gray-500 text-xs mb-1">Your referral link</p>
+              <div className="flex items-center gap-2">
+                <code className="text-cyan-400 text-sm flex-1 truncate">{referral.referralUrl}</code>
+                <button
+                  onClick={copyLink}
+                  className={`px-3 py-1 rounded text-xs font-medium transition ${
+                    copied ? 'bg-green-500/20 text-green-400' : 'bg-cyan-500/20 text-cyan-400 hover:bg-cyan-500/30'
+                  }`}
+                >
+                  {copied ? 'Copied!' : 'Copy'}
+                </button>
+              </div>
+            </div>
+            <div className="flex gap-4 text-sm">
+              <div>
+                <span className="text-gray-500">Referrals: </span>
+                <span className="text-white font-medium">{referral.totalReferrals}</span>
+              </div>
+              <div>
+                <span className="text-gray-500">Earned: </span>
+                <span className="text-green-400 font-medium">${referral.totalEarnings.toFixed(2)}</span>
+              </div>
+            </div>
+          </>
+        ) : loading ? (
+          <p className="text-gray-500 text-sm">Loading referral info...</p>
+        ) : (
+          <button
+            onClick={loadOrGenerate}
+            className="px-4 py-2 bg-purple-600 hover:bg-purple-700 text-white rounded-lg transition text-sm"
+          >
+            Get Your Referral Link
+          </button>
+        )}
+      </div>
+    </div>
   );
 }
