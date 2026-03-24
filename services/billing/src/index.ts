@@ -11,6 +11,8 @@ const PORT = process.env.PORT || SERVICE_PORTS.BILLING || 3006;
 const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const APP_URL = process.env.APP_URL || 'http://localhost:8080';
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'Nova Trader Intelligence <brief@novanexus-ai.com>';
 
 // Initialize Stripe (will be null if no key provided)
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' }) : null;
@@ -69,6 +71,81 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 // ============================================
 // Audit Logging Helper
 // ============================================
+
+// ============================================
+// Welcome Email (best-effort, non-blocking)
+// ============================================
+
+async function sendWelcomeEmail(email: string, userId: string): Promise<void> {
+  if (!RESEND_API_KEY) {
+    logger.warn('Welcome email skipped: RESEND_API_KEY not set', { userId });
+    await logOnboardingAction(userId, 'welcome-email', 'skipped', { reason: 'RESEND_API_KEY not configured' });
+    return;
+  }
+
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const templatePath = path.resolve(__dirname, '..', '..', '..', 'templates', 'welcome-email.html');
+    let html = '';
+    try {
+      html = fs.readFileSync(templatePath, 'utf-8');
+    } catch {
+      // Fallback: simple text if template not found
+      html = '<h1>Welcome to Nova</h1><p>Your Trader Intelligence subscription is active. Daily Briefs are sent weekdays before 9 AM ET.</p><p>Log in at novanexus-ai.com/dashboard</p>';
+      logger.warn('Welcome email template not found, using fallback', { templatePath });
+    }
+
+    const https = await import('https');
+    const body = JSON.stringify({
+      from: EMAIL_FROM,
+      to: [email],
+      subject: 'Welcome to Nova Trader Intelligence',
+      html,
+    });
+
+    await new Promise<void>((resolve, reject) => {
+      const req = https.request({
+        hostname: 'api.resend.com',
+        path: '/emails',
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${RESEND_API_KEY}`,
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(body),
+        },
+      }, (res) => {
+        let data = '';
+        res.on('data', (chunk: Buffer) => data += chunk);
+        res.on('end', () => {
+          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
+            resolve();
+          } else {
+            reject(new Error(`Resend API ${res.statusCode}: ${data}`));
+          }
+        });
+      });
+      req.on('error', reject);
+      req.write(body);
+      req.end();
+    });
+
+    logger.info('Welcome email sent', { userId, email });
+    await logOnboardingAction(userId, 'welcome-email', 'success', { email });
+  } catch (err) {
+    logger.error('Welcome email failed', err as Error, { userId });
+    await logOnboardingAction(userId, 'welcome-email', 'failure', { error: (err as Error).message, email });
+  }
+}
+
+async function logOnboardingAction(userId: string, actionType: string, result: string, details: Record<string, any> = {}): Promise<void> {
+  try {
+    await query(
+      `INSERT INTO command_actions (actor_id, action_type, target, result, details) VALUES ($1, $2, $3, $4, $5)`,
+      [userId, actionType, 'onboarding', result, JSON.stringify(details)]
+    );
+  } catch { /* best effort */ }
+}
 
 async function auditLog(log: AuditLog): Promise<void> {
   try {
@@ -509,6 +586,16 @@ app.post('/webhook', async (req: Request, res: Response) => {
           } catch { /* best effort — command_actions table may not exist yet */ }
 
           logger.info('Subscription activated', { userId, subscriptionId: subscription.id });
+
+          // Send welcome email (best-effort, non-blocking)
+          const userRow = await queryOne<{ email: string }>(
+            `SELECT email FROM users WHERE id = $1`, [userId]
+          );
+          if (userRow?.email) {
+            sendWelcomeEmail(userRow.email, userId).catch(err => {
+              logger.error('Welcome email fire-and-forget failed', err as Error);
+            });
+          }
         }
         break;
       }
