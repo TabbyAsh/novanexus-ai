@@ -500,6 +500,14 @@ app.post('/webhook', async (req: Request, res: Response) => {
             timestamp: new Date().toISOString(),
           });
 
+          // Log onboarding event for command layer visibility
+          try {
+            await query(
+              `INSERT INTO command_actions (actor_id, action_type, target, result, details) VALUES ($1, $2, $3, $4, $5)`,
+              [userId, 'subscriber-onboarded', 'billing', 'success', JSON.stringify({ plan: 'LITE', subscriptionId: subscription.id })]
+            );
+          } catch { /* best effort — command_actions table may not exist yet */ }
+
           logger.info('Subscription activated', { userId, subscriptionId: subscription.id });
         }
         break;
