@@ -1,392 +1,330 @@
 'use client';
 
-import { motion, useScroll, useTransform } from 'framer-motion';
 import Link from 'next/link';
-import { useRef, useEffect, useState } from 'react';
-import GlassCard, { GlassButton, GradientText } from '@/components/ui/GlassCard';
-import ParticleField from '@/components/three/ParticleField';
 
-const features = [
-  {
-    icon: '🤖',
-    title: 'Autonomous Agent Engine',
-    description: 'AI agents that execute multi-step workflows end-to-end. Scanner, FlipFinder, Rebalancer, Compliance — not chatbots, executors.',
-    color: 'cyan' as const,
-  },
-  {
-    icon: '📈',
-    title: 'AI Stock Screener',
-    description: 'Real-time market screening with direct Alpaca + Yahoo data. RSI, MACD, SMA crossovers — signals ranked by confidence, auto-generated decision cards.',
-    color: 'purple' as const,
-  },
-  {
-    icon: '💰',
-    title: 'Flip Arbitrage Engine',
-    description: 'Scrapes eBay active + sold listings, computes real flip margins, auto-generates flip plans. Find $50+ profit items while you sleep.',
-    color: 'pink' as const,
-  },
-  {
-    icon: '📊',
-    title: 'Outcome Ledger & ROI Tracking',
-    description: 'Every agent run produces measurable outcomes. Track profit, time saved, opportunities found — see real ROI within 2 weeks.',
-    color: 'green' as const,
-  },
-];
-
-function Navbar() {
-  return (
-    <motion.nav
-      initial={{ y: -100, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6 }}
-      className="fixed top-0 left-0 right-0 z-50 px-6 py-4"
-    >
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-            <span className="text-white font-bold text-xl">N</span>
-          </div>
-          <span className="text-white font-bold text-xl tracking-tight">
-            Nova<span className="text-cyan-400">Nexus</span>
-          </span>
-        </Link>
-        
-        <div className="hidden md:flex items-center gap-8">
-          <Link href="#features" className="text-gray-300 hover:text-white transition-colors">Features</Link>
-          <Link href="#about" className="text-gray-300 hover:text-white transition-colors">About</Link>
-          <Link href="/pricing" className="text-amber-400 hover:text-amber-300 transition-colors font-medium">Pricing</Link>
-          <Link href="/dashboard" className="text-gray-300 hover:text-white transition-colors">Dashboard</Link>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <Link href="/login">
-            <GlassButton variant="secondary" className="!py-2 !px-4 text-sm">
-              Sign In
-            </GlassButton>
-          </Link>
-          <Link href="/register">
-            <GlassButton variant="primary" className="!py-2 !px-4 text-sm">
-              Get Started
-            </GlassButton>
-          </Link>
-        </div>
-      </div>
-    </motion.nav>
-  );
-}
-
-function HeroSection() {
-  return (
-    <section className="relative min-h-screen flex items-center justify-center px-6 pt-20">
-      <div className="max-w-5xl mx-auto text-center z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-        >
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/30 mb-8"
-          >
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-amber-400 text-sm font-medium">Founding Members — Only 50 Seats Available</span>
-          </motion.div>
-          
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white mb-6 leading-tight">
-            <motion.span
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.3 }}
-              className="block"
-            >
-              Power to the
-            </motion.span>
-            <motion.span
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.5 }}
-            >
-              <GradientText className="block">User</GradientText>
-            </motion.span>
-          </h1>
-          
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.7 }}
-            className="text-xl md:text-2xl text-gray-400 max-w-3xl mx-auto mb-12"
-          >
-            The AI-powered ecosystem that brings together intelligent trading, algorithmic commerce, 
-            and autonomous operations. Tools that were once exclusive to the elite, now in your hands.
-          </motion.p>
-          
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.9 }}
-            className="flex flex-col sm:flex-row items-center justify-center gap-4"
-          >
-            <Link href="/pricing">
-              <button className="px-8 py-4 rounded-xl text-lg font-semibold bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30 transition-all">
-                Become a Founding Member →
-              </button>
-            </Link>
-            <Link href="/register">
-              <GlassButton variant="secondary" className="text-lg">
-                Start Free
-              </GlassButton>
-            </Link>
-          </motion.div>
-        </motion.div>
-        
-        {/* Floating badges */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 1, delay: 1.2 }}
-          className="absolute bottom-10 left-1/2 -translate-x-1/2"
-        >
-          <motion.div
-            animate={{ y: [0, -10, 0] }}
-            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-            className="flex items-center gap-2 text-gray-500"
-          >
-            <span className="text-sm">Scroll to explore</span>
-            <svg className="w-4 h-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-            </svg>
-          </motion.div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-function FeaturesSection() {
-  return (
-    <section id="features" className="relative py-20 px-6">
-      <div className="max-w-6xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-          className="text-center mb-16"
-        >
-          <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">
-            Your <GradientText>Unfair Advantage</GradientText>
-          </h2>
-          <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-            Tools that level the playing field. AI that works while you sleep.
-          </p>
-        </motion.div>
-        
-        <div className="grid md:grid-cols-2 gap-6">
-          {features.map((feature, i) => (
-            <GlassCard key={feature.title} glowColor={feature.color} delay={i * 0.1}>
-              <div className="flex items-start gap-4">
-                <div className="text-4xl">{feature.icon}</div>
-                <div>
-                  <h3 className="text-xl font-bold text-white mb-2">{feature.title}</h3>
-                  <p className="text-gray-400 leading-relaxed">{feature.description}</p>
-                </div>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function MissionSection() {
-  const ref = useRef(null);
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ['start end', 'end start']
-  });
-  const y = useTransform(scrollYProgress, [0, 1], [100, -100]);
-  
-  return (
-    <section id="about" ref={ref} className="relative py-32 px-6 overflow-hidden">
-      <motion.div style={{ y }} className="absolute inset-0 flex items-center justify-center opacity-5">
-        <span className="text-[20rem] font-bold text-white">N</span>
-      </motion.div>
-      
-      <div className="max-w-4xl mx-auto relative z-10">
-        <GlassCard hover={false} className="!p-12 text-center">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            viewport={{ once: true }}
-          >
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">
-              This isn't about personal gain.
-            </h2>
-            <p className="text-xl text-gray-300 leading-relaxed mb-8">
-              The world doesn't give people a leg up. The tools that create wealth—algorithmic trading, 
-              market intelligence, automated commerce—have always been locked behind walls of capital and connections.
-            </p>
-            <p className="text-xl text-gray-300 leading-relaxed mb-8">
-              <GradientText className="font-bold">NovaNexus AI</GradientText> tears down those walls. 
-              This digital ecosystem brings together everything a person needs to compete on equal footing 
-              with institutions and the privileged few.
-            </p>
-            <p className="text-2xl font-bold text-white">
-              This is your legacy. <GradientText>This is power to the user.</GradientText>
-            </p>
-          </motion.div>
-        </GlassCard>
-      </div>
-    </section>
-  );
-}
-
-function LiveStatsSection() {
-  const [stats, setStats] = useState<{
-    totalUsers: number; agentRunsCompleted: number; timeSavedMinutes: number; flipsTracked: number;
-  } | null>(null);
-
-  useEffect(() => {
-    fetch('/api/proxy/v1/platform/stats')
-      .then(r => r.json())
-      .then(d => { if (d.success && d.data) setStats(d.data); })
-      .catch(() => {});
-  }, []);
-
-  const counters = [
-    { label: 'Active Users', value: stats ? stats.totalUsers : '—', icon: '👥' },
-    { label: 'Agent Runs', value: stats ? stats.agentRunsCompleted : '—', icon: '🤖' },
-    { label: 'Hours Saved', value: stats ? `${(stats.timeSavedMinutes / 60).toFixed(0)}+` : '—', icon: '⏱️' },
-    { label: 'Flips Tracked', value: stats ? stats.flipsTracked : '—', icon: '💰' },
-  ];
-
-  return (
-    <section className="relative py-16 px-6">
-      <div className="max-w-5xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-          className="text-center mb-10"
-        >
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-2">
-            The Machine is <GradientText>Running</GradientText>
-          </h2>
-          <p className="text-gray-400">Live platform activity — updated in real-time</p>
-        </motion.div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {counters.map((c, i) => (
-            <motion.div
-              key={c.label}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: i * 0.1 }}
-              viewport={{ once: true }}
-              className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-6 text-center"
-            >
-              <div className="text-3xl mb-2">{c.icon}</div>
-              <div className="text-3xl font-bold text-white mb-1">{c.value}</div>
-              <div className="text-sm text-gray-400">{c.label}</div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CTASection() {
-  return (
-    <section className="relative py-20 px-6">
-      <div className="max-w-4xl mx-auto text-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          whileInView={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-        >
-          <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
-            Ready to take <GradientText>control</GradientText>?
-          </h2>
-          <p className="text-xl text-gray-400 mb-2">
-            50 Founding Member seats. $99/month. Unlimited everything. Lock it in forever.
-          </p>
-          <p className="text-amber-400 font-medium mb-2">
-            Refer a friend → you both get $10 credit.
-          </p>
-          <p className="text-gray-500 mb-10">
-            Or start free — no credit card required.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/pricing">
-              <button className="px-10 py-5 rounded-xl text-xl font-semibold bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30 transition-all">
-                Claim Your Founding Seat →
-              </button>
-            </Link>
-            <Link href="/register">
-              <GlassButton variant="secondary" className="text-lg !px-8 !py-4">
-                Start Free
-              </GlassButton>
-            </Link>
-          </div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="relative py-12 px-6 border-t border-white/10">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-              <span className="text-white font-bold">N</span>
-            </div>
-            <span className="text-white font-semibold">NovaNexus AI</span>
-          </div>
-          
-          <div className="flex items-center gap-8 text-gray-400 text-sm">
-            <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
-            <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
-            <a href="mailto:wyatt@novanexus-ai.com" className="hover:text-white transition-colors">Contact</a>
-          </div>
-          
-          <p className="text-gray-500 text-sm">
-            © 2026 NovaNexus AI. All rights reserved.
-          </p>
-        </div>
-        
-        <div className="mt-8 pt-6 border-t border-white/5">
-          <p className="text-gray-600 text-xs leading-relaxed text-center max-w-4xl mx-auto">
-            <strong className="text-gray-500">Risk Disclosure:</strong> NovaNexus AI provides informational tools only. 
-            Nothing on this platform constitutes financial, investment, or trading advice. All trading and investment decisions 
-            are made by you. Past performance, backtests, and AI-generated signals do not guarantee future results. 
-            You may lose money. Use at your own risk.
-          </p>
-        </div>
-      </div>
-    </footer>
-  );
-}
+// ============================================================================
+// Homepage — Flip Card
+// ============================================================================
+// This page answers in under 10 seconds:
+//   What is this? → A flip decision tool
+//   What does it do? → Tells you if something is worth flipping
+//   Why should I care? → Saves you from bad buys
+//   What can I do right now? → Analyze a listing
 
 export default function HomePage() {
   return (
-    <main className="relative min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
-      <ParticleField />
+    <div className="min-h-screen bg-gray-950 text-white">
       <Navbar />
-      <HeroSection />
-      <FeaturesSection />
-      <LiveStatsSection />
-      <MissionSection />
-      <CTASection />
+      <Hero />
+      <HowItWorks />
+      <ExampleFlipCard />
+      <TrustSection />
+      <PricingTeaser />
       <Footer />
-    </main>
+    </div>
+  );
+}
+
+// ============================================================================
+// Navbar
+// ============================================================================
+
+function Navbar() {
+  return (
+    <nav className="px-6 py-4 border-b border-gray-800/50">
+      <div className="max-w-5xl mx-auto flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center">
+            <span className="text-white font-bold text-sm">FC</span>
+          </div>
+          <span className="text-white font-semibold text-lg">Flip Card</span>
+        </Link>
+        <div className="hidden sm:flex items-center gap-6 text-sm">
+          <a href="#how-it-works" className="text-gray-400 hover:text-white transition">How It Works</a>
+          <Link href="/pricing" className="text-gray-400 hover:text-white transition">Pricing</Link>
+          <Link href="/login" className="text-gray-400 hover:text-white transition">Sign In</Link>
+          <Link
+            href="/analyze"
+            className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition"
+          >
+            Analyze a Listing
+          </Link>
+        </div>
+        <Link
+          href="/analyze"
+          className="sm:hidden px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium"
+        >
+          Analyze
+        </Link>
+      </div>
+    </nav>
+  );
+}
+
+// ============================================================================
+// Hero
+// ============================================================================
+
+function Hero() {
+  return (
+    <section className="px-6 py-20 md:py-28">
+      <div className="max-w-3xl mx-auto text-center">
+        <h1 className="text-4xl md:text-6xl font-bold leading-tight mb-6">
+          Know if it&apos;s worth flipping
+          <br />
+          <span className="text-emerald-400">before you buy it.</span>
+        </h1>
+        <p className="text-lg md:text-xl text-gray-400 max-w-2xl mx-auto mb-10">
+          Paste a listing and get a resale estimate, profit range, risk flags,
+          and a clear <strong className="text-white">buy</strong>, <strong className="text-white">negotiate</strong>, or <strong className="text-white">pass</strong> decision.
+        </p>
+        <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-6">
+          <Link
+            href="/analyze"
+            className="px-8 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-lg font-semibold transition shadow-lg shadow-emerald-900/30"
+          >
+            Analyze a Listing
+          </Link>
+          <a
+            href="#how-it-works"
+            className="px-8 py-4 rounded-xl bg-gray-800/60 hover:bg-gray-800 text-gray-300 text-lg font-medium transition"
+          >
+            See how it works
+          </a>
+        </div>
+        <p className="text-sm text-gray-500">
+          Structured estimates. Transparent assumptions. Clear action.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// How It Works
+// ============================================================================
+
+function HowItWorks() {
+  const steps = [
+    {
+      num: '1',
+      title: 'Describe the item',
+      desc: 'Enter what you\'re looking at — item name, asking price, condition, and where you\'d sell it.',
+    },
+    {
+      num: '2',
+      title: 'We evaluate it',
+      desc: 'We look up real sold prices, calculate platform fees and shipping, and assess the risk.',
+    },
+    {
+      num: '3',
+      title: 'Get your Flip Card',
+      desc: 'A clear verdict — BUY, NEGOTIATE, or PASS — with the numbers and rationale behind it.',
+    },
+  ];
+
+  return (
+    <section id="how-it-works" className="px-6 py-16 bg-gray-900/30">
+      <div className="max-w-4xl mx-auto">
+        <h2 className="text-2xl md:text-3xl font-bold text-center mb-12">
+          How it works
+        </h2>
+        <div className="grid md:grid-cols-3 gap-8">
+          {steps.map(s => (
+            <div key={s.num} className="text-center">
+              <div className="w-12 h-12 rounded-full bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center mx-auto mb-4">
+                <span className="text-emerald-400 font-bold text-lg">{s.num}</span>
+              </div>
+              <h3 className="text-lg font-semibold text-white mb-2">{s.title}</h3>
+              <p className="text-gray-400 text-sm leading-relaxed">{s.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Example Flip Card
+// ============================================================================
+
+function ExampleFlipCard() {
+  return (
+    <section className="px-6 py-16">
+      <div className="max-w-2xl mx-auto">
+        <h2 className="text-2xl md:text-3xl font-bold text-center mb-3">
+          Example Flip Card
+        </h2>
+        <p className="text-gray-400 text-center mb-10">
+          Here&apos;s what a real analysis looks like.
+        </p>
+
+        {/* Mock Flip Card */}
+        <div className="rounded-2xl border border-gray-800 overflow-hidden">
+          {/* Verdict */}
+          <div className="bg-emerald-900/40 border-b border-emerald-500/30 px-6 py-5 text-center">
+            <div className="text-4xl font-black text-emerald-400 mb-1">BUY</div>
+            <p className="text-gray-300 text-sm max-w-md mx-auto">
+              At $80, this looks like a solid flip opportunity. Based on 18 recent sold comps, the expected resale is around $170.
+              After eBay fees (~$22.83) and shipping (~$10), your estimated net profit is $57.17.
+            </p>
+          </div>
+
+          {/* Details */}
+          <div className="bg-gray-900 px-6 py-5 space-y-4">
+            <div className="flex items-center justify-between">
+              <div>
+                <div className="font-semibold text-white">Sony WH-1000XM5 Headphones</div>
+                <div className="text-xs text-gray-500">Audio · Good condition</div>
+              </div>
+              <div className="text-right">
+                <div className="text-xs text-gray-500">Confidence</div>
+                <div className="font-bold text-white">72%</div>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-4 gap-3 text-center text-sm">
+              <div>
+                <div className="text-gray-500 text-xs">Buy</div>
+                <div className="text-white font-medium">$80</div>
+              </div>
+              <div>
+                <div className="text-gray-500 text-xs">Resale (mid)</div>
+                <div className="text-white font-medium">$170</div>
+              </div>
+              <div>
+                <div className="text-gray-500 text-xs">Costs</div>
+                <div className="text-gray-400 font-medium">-$32.83</div>
+              </div>
+              <div>
+                <div className="text-gray-500 text-xs">Net profit</div>
+                <div className="text-emerald-400 font-bold">$57.17</div>
+              </div>
+            </div>
+
+            <div className="flex items-center gap-2 text-xs text-amber-400/80 bg-amber-900/20 rounded-lg px-3 py-2">
+              <span>⚠</span>
+              <span>Limited comps — price range may be wider than shown</span>
+            </div>
+          </div>
+        </div>
+
+        <p className="text-center text-xs text-gray-600 mt-4">
+          Real data from eBay sold listings. No fake numbers.
+        </p>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Trust Section
+// ============================================================================
+
+function TrustSection() {
+  const points = [
+    {
+      title: 'Real sold prices',
+      desc: 'We look up actual completed sales, not listing prices. You see what items actually sold for.',
+    },
+    {
+      title: 'Every number explained',
+      desc: 'Platform fees, shipping estimates, and condition adjustments are all shown with their assumptions.',
+    },
+    {
+      title: 'Honest confidence',
+      desc: 'If we don\'t have enough data, we say so. Low confidence means low confidence — not hidden uncertainty.',
+    },
+    {
+      title: 'Never guaranteed profit',
+      desc: 'We give you structured estimates and a clear verdict. The final decision is always yours.',
+    },
+  ];
+
+  return (
+    <section className="px-6 py-16 bg-gray-900/30">
+      <div className="max-w-4xl mx-auto">
+        <h2 className="text-2xl md:text-3xl font-bold text-center mb-3">
+          Built on trust, not theatrics
+        </h2>
+        <p className="text-gray-400 text-center mb-10">
+          Every Flip Card shows its work. No hidden assumptions. No fake certainty.
+        </p>
+        <div className="grid md:grid-cols-2 gap-6">
+          {points.map(p => (
+            <div key={p.title} className="bg-gray-900 border border-gray-800 rounded-xl p-5">
+              <h3 className="text-white font-semibold mb-2">{p.title}</h3>
+              <p className="text-gray-400 text-sm leading-relaxed">{p.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Pricing Teaser
+// ============================================================================
+
+function PricingTeaser() {
+  return (
+    <section className="px-6 py-16">
+      <div className="max-w-2xl mx-auto text-center">
+        <h2 className="text-2xl md:text-3xl font-bold mb-4">
+          Try it free
+        </h2>
+        <p className="text-gray-400 mb-8">
+          Your first analyses are free. No account required.
+          <br />
+          Avoid one bad buy and it pays for itself.
+        </p>
+        <Link
+          href="/analyze"
+          className="inline-block px-8 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-lg font-semibold transition shadow-lg shadow-emerald-900/30"
+        >
+          Analyze Your First Listing
+        </Link>
+        <div className="mt-4">
+          <Link href="/pricing" className="text-sm text-gray-500 hover:text-gray-300 transition">
+            View pricing plans →
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ============================================================================
+// Footer
+// ============================================================================
+
+function Footer() {
+  return (
+    <footer className="px-6 py-8 border-t border-gray-800">
+      <div className="max-w-5xl mx-auto">
+        <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+          <div className="flex items-center gap-2">
+            <div className="w-6 h-6 rounded bg-emerald-600/30 flex items-center justify-center">
+              <span className="text-emerald-400 text-xs font-bold">FC</span>
+            </div>
+            <span className="text-gray-400 text-sm">Flip Card</span>
+            <span className="text-gray-600 text-xs">· Powered by Nova</span>
+          </div>
+          <div className="flex items-center gap-6 text-sm text-gray-500">
+            <Link href="/privacy" className="hover:text-gray-300 transition">Privacy</Link>
+            <Link href="/terms" className="hover:text-gray-300 transition">Terms</Link>
+            <a href="mailto:wyatt@novanexus-ai.com" className="hover:text-gray-300 transition">Contact</a>
+          </div>
+          <span className="text-gray-600 text-xs">© 2026 Nova Enterprises</span>
+        </div>
+        <p className="mt-4 text-xs text-gray-700 text-center max-w-3xl mx-auto">
+          Flip Card provides structured estimates for resale opportunities. It is not financial advice.
+          All estimates are based on publicly available sold data and category heuristics. Actual results may vary.
+          You are responsible for your own buying and selling decisions.
+        </p>
+      </div>
+    </footer>
   );
 }

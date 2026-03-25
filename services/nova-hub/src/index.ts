@@ -34,6 +34,7 @@ import {
   sortTradeCards,
   filterByBoard,
 } from './screener-engine';
+import { computeFlipCard, type FlipCardInput } from './flip-card';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -6383,6 +6384,59 @@ app.get('/v1/sim/seeded', authMiddleware, async (req: AuthenticatedRequest, res:
       hasSeededResults: seeded.length > 0,
     },
   });
+});
+
+// ============================================
+// Flip Card API — Public Decision Product
+// ============================================
+
+const VALID_CONDITIONS = ['New', 'Like New', 'Good', 'Fair', 'Poor', 'For Parts'];
+
+app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
+  const { title, description, buy_price, condition, category, shipping_or_pickup, target_platform, location } = req.body || {};
+
+  if (!title || typeof title !== 'string' || title.trim().length < 2) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'title is required (minimum 2 characters)' },
+    });
+  }
+
+  if (buy_price === undefined || buy_price === null || isNaN(Number(buy_price)) || Number(buy_price) < 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'buy_price is required and must be a non-negative number' },
+    });
+  }
+
+  const resolvedCondition = VALID_CONDITIONS.includes(condition) ? condition : 'Good';
+  const resolvedShipping = shipping_or_pickup === 'pickup' ? 'pickup' : 'shipping';
+
+  try {
+    const input: FlipCardInput = {
+      title: title.trim(),
+      description: description?.trim() || undefined,
+      buy_price: Number(buy_price),
+      condition: resolvedCondition,
+      category: category?.trim() || undefined,
+      shipping_or_pickup: resolvedShipping,
+      target_platform: target_platform?.trim() || undefined,
+      location: location?.trim() || undefined,
+    };
+
+    const flipCard = await computeFlipCard(input);
+
+    res.json({
+      success: true,
+      data: flipCard,
+    });
+  } catch (error) {
+    logger.error('Flip Card analysis failed', error as Error);
+    res.status(500).json({
+      success: false,
+      error: { code: 'ANALYSIS_FAILED', message: 'Failed to generate Flip Card. Please try again.' },
+    });
+  }
 });
 
 // ============================================
