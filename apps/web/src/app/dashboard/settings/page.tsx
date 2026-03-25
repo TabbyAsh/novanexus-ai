@@ -295,10 +295,6 @@ export default function SettingsPage() {
                     <p className="text-white">{me.orgName}</p>
                   </div>
                 )}
-                <div>
-                  <p className="text-gray-500 text-xs">Account Type</p>
-                  <p className="text-white">{me.role === 'OWNER' ? 'Full Access' : me.role === 'ADMIN' ? 'Admin' : 'Member'}</p>
-                </div>
               </div>
             ) : (
               <div className="text-gray-400">Loading account…</div>
