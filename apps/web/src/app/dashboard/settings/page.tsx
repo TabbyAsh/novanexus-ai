@@ -289,17 +289,15 @@ export default function SettingsPage() {
                   <p className="text-gray-500 text-xs">Email</p>
                   <p className="text-white">{me.email}</p>
                 </div>
+                {me.orgName && me.orgName !== `${me.email.split('@')[0]}'s Organization` && (
+                  <div>
+                    <p className="text-gray-500 text-xs">Organization</p>
+                    <p className="text-white">{me.orgName}</p>
+                  </div>
+                )}
                 <div>
-                  <p className="text-gray-500 text-xs">Organization</p>
-                  <p className="text-white">{me.orgName || '—'}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500 text-xs">Role</p>
-                  <p className="text-white">{me.role}</p>
-                </div>
-                <div>
-                  <p className="text-gray-500 text-xs">Scopes</p>
-                  <p className="text-gray-300 text-sm break-words">{me.scopes?.join(', ') || '—'}</p>
+                  <p className="text-gray-500 text-xs">Account Type</p>
+                  <p className="text-white">{me.role === 'OWNER' ? 'Full Access' : me.role === 'ADMIN' ? 'Admin' : 'Member'}</p>
                 </div>
               </div>
             ) : (
@@ -341,12 +339,18 @@ export default function SettingsPage() {
                   </p>
                 </div>
 
-                <div>
-                  <p className="text-gray-500 text-xs">Features</p>
-                  <p className="text-gray-300 text-sm break-words">
-                    {entitlement.features?.length ? entitlement.features.join(', ') : '—'}
-                  </p>
-                </div>
+                {entitlement.plan !== 'FREE' && entitlement.features && entitlement.features.length > 0 && (
+                  <div>
+                    <p className="text-gray-500 text-xs">Includes</p>
+                    <div className="flex flex-wrap gap-1 mt-1">
+                      {entitlement.features.filter(f => !['scanner','watchlists','alerts','basic_scanner','watchlist_1','paper_trading','thesis_cards','decisions'].includes(f)).map(f => (
+                        <span key={f} className="px-2 py-0.5 bg-purple-500/10 text-purple-300 rounded text-xs">
+                          {f.replace(/_/g, ' ')}
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
 
                 <div className="flex flex-col gap-2 pt-2">
                   <button
