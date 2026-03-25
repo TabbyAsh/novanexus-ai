@@ -5,8 +5,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Flip Card — Know Before You Buy',
-  description: 'Evaluate flipping opportunities with real sold comps, profit estimates, risk flags, and a clear buy, negotiate, or pass decision. Powered by Nova.',
+  title: 'Nova - AI-Orchestrated Operating System',
+  description: 'The universal life-and-business operating system that merges trading, e-commerce, and content distribution.',
 };
 
 export default function RootLayout({

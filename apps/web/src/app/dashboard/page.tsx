@@ -61,6 +61,16 @@ const CORE_LOOP_PHASES = [
 // ================================================================
 const SECTOR_NODES = [
   {
+    name: 'Flip Card',
+    description: 'Evaluate any item — get resale estimate, fees, risk flags, and a buy/pass verdict',
+    href: '/dashboard/analyze',
+    icon: '💰',
+    gradient: 'from-emerald-500/20 via-green-500/10 to-transparent',
+    border: 'border-emerald-500/30 hover:border-emerald-400/60',
+    glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.15)]',
+    color: 'text-emerald-400',
+  },
+  {
     name: 'Wall Street',
     description: 'Trading intelligence, AI screening, backtesting, paper trading',
     href: '/dashboard/screener',
