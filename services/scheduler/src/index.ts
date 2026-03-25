@@ -490,6 +490,191 @@ app.get('/v1/scheduler/history', (_req: Request, res: Response) => {
 });
 
 // ============================================================================
+// JOB: DAILY FLIP ALERTS — Free flip opportunities emailed to subscribers
+// ============================================================================
+
+const NOVA_HUB_URL = process.env.NOVA_HUB_URL || 'http://localhost:3030';
+const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
+const FLIP_ALERT_CITIES = ['newyork', 'losangeles', 'chicago', 'houston', 'phoenix', 'sfbay', 'seattle', 'denver', 'atlanta', 'miami'];
+
+const FLIP_ALERT_PATTERNS = [
+  { pattern: /iphone|ipad|macbook|apple watch/i, category: 'apple' },
+  { pattern: /samsung|galaxy|pixel/i, category: 'phones' },
+  { pattern: /laptop|chromebook|computer/i, category: 'computers' },
+  { pattern: /ps[45]|playstation|xbox|nintendo|switch/i, category: 'gaming' },
+  { pattern: /dyson|roomba|vacuum/i, category: 'appliances' },
+  { pattern: /bike|bicycle/i, category: 'bikes' },
+  { pattern: /drill|saw|dewalt|milwaukee|makita/i, category: 'tools' },
+  { pattern: /airpods|headphones|speaker|bose|sonos/i, category: 'audio' },
+  { pattern: /camera|canon|nikon|gopro/i, category: 'cameras' },
+  { pattern: /guitar|keyboard|piano/i, category: 'instruments' },
+  { pattern: /kitchenaid|mixer|instant pot/i, category: 'kitchen' },
+  { pattern: /lego|pokemon|trading card/i, category: 'collectibles' },
+  { pattern: /peloton|treadmill|dumbbell/i, category: 'fitness' },
+];
+
+async function scanCityFreeListings(city: string): Promise<{ title: string; link: string; city: string }[]> {
+  try {
+    const url = `https://${city}.craigslist.org/search/zip`;
+    const res = await fetch(url, {
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' },
+      signal: AbortSignal.timeout(10000),
+    });
+    if (!res.ok) return [];
+    const html = await res.text();
+    const listings: { title: string; link: string; city: string }[] = [];
+
+    // Parse CL listings
+    const titleRegex = /class="titlestring">([^<]+)</g;
+    const linkRegex = /href="(https:\/\/[^"]*\.craigslist\.org\/[^"]+)"/g;
+    const titles: string[] = [];
+    const links: string[] = [];
+    let m;
+    while ((m = titleRegex.exec(html)) && titles.length < 50) titles.push(m[1].trim());
+    while ((m = linkRegex.exec(html)) && links.length < 50) links.push(m[1]);
+    for (let i = 0; i < Math.min(titles.length, links.length); i++) {
+      listings.push({ title: titles[i], link: links[i], city });
+    }
+    return listings;
+  } catch {
+    return [];
+  }
+}
+
+interface FlipAlertItem {
+  title: string;
+  city: string;
+  link: string;
+  category: string;
+  verdict: string;
+  resale_mid: number;
+  net_profit_mid: number;
+  confidence: number;
+}
+
+async function jobDailyFlipAlerts(): Promise<void> {
+  const startTime = Date.now();
+  logger.info('=== DAILY FLIP ALERTS JOB STARTED ===');
+
+  try {
+    // 1. Scan Craigslist free sections
+    const allListings: { title: string; link: string; city: string }[] = [];
+    for (const city of FLIP_ALERT_CITIES.slice(0, 5)) {
+      const listings = await scanCityFreeListings(city);
+      allListings.push(...listings);
+      await new Promise(r => setTimeout(r, 1000)); // Rate limit
+    }
+
+    // 2. Filter to potentially valuable items
+    const valuable = allListings.filter(l => FLIP_ALERT_PATTERNS.some(p => p.pattern.test(l.title))).slice(0, 10);
+    if (valuable.length === 0) {
+      logger.info('No valuable free items found today');
+      await logSchedulerRun('flip-alerts', 'success', Date.now() - startTime, { found: 0 });
+      return;
+    }
+
+    // 3. Evaluate each through Flip Card engine
+    const evaluated: FlipAlertItem[] = [];
+    for (const item of valuable) {
+      try {
+        const category = FLIP_ALERT_PATTERNS.find(p => p.pattern.test(item.title))?.category || 'general';
+        const res = await fetch(`${NOVA_HUB_URL}/v1/flip-card/analyze`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ title: item.title, buy_price: 0, condition: 'Fair', shipping_or_pickup: 'pickup', category }),
+          signal: AbortSignal.timeout(15000),
+        });
+        const data = await res.json() as { success: boolean; data: { est_net_profit_mid: number; verdict: string; est_resale_mid: number; confidence_score: number } };
+        if (data.success && data.data.est_net_profit_mid > 10) {
+          evaluated.push({
+            title: item.title, city: item.city, link: item.link, category,
+            verdict: data.data.verdict, resale_mid: data.data.est_resale_mid,
+            net_profit_mid: data.data.est_net_profit_mid, confidence: data.data.confidence_score,
+          });
+        }
+      } catch { /* skip failed evaluations */ }
+      await new Promise(r => setTimeout(r, 500));
+    }
+
+    evaluated.sort((a, b) => b.net_profit_mid - a.net_profit_mid);
+    logger.info(`Flip Alerts: ${evaluated.length} opportunities found from ${allListings.length} listings`);
+
+    // 4. Get subscribers with LITE or higher plans
+    let subscribers: { email: string; user_id: string }[] = [];
+    try {
+      const result = await query<{ user_id: string }>(
+        `SELECT user_id FROM entitlements WHERE plan IN ('LITE', 'PRO', 'FOUNDING') AND status = 'ACTIVE'`
+      );
+      for (const row of result.rows) {
+        const user = await query<{ email: string }>('SELECT email FROM users WHERE id = $1', [row.user_id]);
+        if (user.rows[0]?.email) subscribers.push({ email: user.rows[0].email, user_id: row.user_id });
+      }
+    } catch (err: any) {
+      logger.warn('Could not fetch subscribers for flip alerts', { error: err.message });
+    }
+
+    // 5. Send email via Resend
+    if (evaluated.length > 0 && subscribers.length > 0 && RESEND_API_KEY) {
+      const itemsHtml = evaluated.slice(0, 5).map(item =>
+        `<tr><td style="padding:8px;border-bottom:1px solid #333">${item.title}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #333;color:#10b981;font-weight:bold">~$${item.resale_mid}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #333">${item.city}</td>` +
+        `<td style="padding:8px;border-bottom:1px solid #333"><a href="${item.link}" style="color:#10b981">View</a></td></tr>`
+      ).join('');
+
+      const html = `<div style="font-family:system-ui;background:#0a0a0f;color:#fff;padding:32px;max-width:600px">
+        <h1 style="color:#10b981;margin-bottom:4px">Daily Flip Alerts</h1>
+        <p style="color:#9ca3af;font-size:14px">Free items near you that could be worth money.</p>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0">
+          <tr style="color:#9ca3af;font-size:12px;text-transform:uppercase">
+            <th style="text-align:left;padding:8px">Item</th><th style="padding:8px">Est. Value</th>
+            <th style="padding:8px">City</th><th style="padding:8px">Link</th>
+          </tr>
+          ${itemsHtml}
+        </table>
+        <p style="color:#6b7280;font-size:12px">Estimates based on eBay sold comps. Pick up for free, sell for profit. Not guaranteed.</p>
+        <p style="color:#374151;font-size:11px">Powered by Nova · <a href="https://novanexus-ai.com" style="color:#6b7280">Flip Card</a></p>
+      </div>`;
+
+      for (const sub of subscribers) {
+        try {
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'Flip Card Alerts <brief@novanexus-ai.com>',
+              to: [sub.email],
+              subject: `${evaluated.length} Free Flip Opportunities Today`,
+              html,
+            }),
+          });
+          logger.info('Flip alert sent', { userId: sub.user_id });
+        } catch (err: any) {
+          logger.warn('Flip alert email failed', { userId: sub.user_id, error: err.message });
+        }
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    await logSchedulerRun('flip-alerts', 'success', durationMs, {
+      scanned: allListings.length, valuable: valuable.length, evaluated: evaluated.length, emailed: subscribers.length,
+    });
+
+    if (evaluated.length > 0) {
+      await sendDiscordAlert(
+        '💰 Daily Flip Alerts Sent',
+        `Found ${evaluated.length} opportunities from ${allListings.length} free listings. Emailed ${subscribers.length} subscribers.`,
+        0x10b981
+      );
+    }
+  } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    await logSchedulerRun('flip-alerts', 'failure', durationMs, { error: err.message });
+    logger.error('Daily Flip Alerts failed', err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ============================================================================
 // CRON SCHEDULING
 // ============================================================================
 
@@ -519,6 +704,15 @@ function startSchedules(): void {
       });
     }, { timezone: 'UTC' });
     logger.info('📅 Scheduled: Outcome Tracking — 4:30 PM ET (21:30 UTC) weekdays');
+
+    // Daily Flip Alerts: 7:00 AM ET = 12:00 UTC (every day)
+    cron.schedule('0 12 * * *', () => {
+      logger.info('Cron triggered: Daily Flip Alerts');
+      jobDailyFlipAlerts().catch(err => {
+        logger.error('Daily Flip Alerts cron job failed', err instanceof Error ? err : new Error(String(err)));
+      });
+    }, { timezone: 'UTC' });
+    logger.info('📅 Scheduled: Daily Flip Alerts — 7:00 AM ET (12:00 UTC) daily');
   } else {
     logger.info('⏸ Brief scheduling disabled (ENABLE_BRIEF_SCHEDULE=false)');
   }

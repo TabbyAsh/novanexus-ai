@@ -6392,8 +6392,48 @@ app.get('/v1/sim/seeded', authMiddleware, async (req: AuthenticatedRequest, res:
 
 const VALID_CONDITIONS = ['New', 'Like New', 'Good', 'Fair', 'Poor', 'For Parts'];
 
+// IP-based rate limiting: 3 free analyses/day for unauthenticated users
+const flipCardUsage = new Map<string, { count: number; resetAt: number }>();
+const FREE_DAILY_LIMIT = 3;
+
+function getFlipCardUsage(ip: string): { count: number; remaining: number; limit: number } {
+  const now = Date.now();
+  const entry = flipCardUsage.get(ip);
+  if (!entry || now > entry.resetAt) {
+    flipCardUsage.set(ip, { count: 0, resetAt: now + 24 * 60 * 60 * 1000 });
+    return { count: 0, remaining: FREE_DAILY_LIMIT, limit: FREE_DAILY_LIMIT };
+  }
+  return { count: entry.count, remaining: Math.max(0, FREE_DAILY_LIMIT - entry.count), limit: FREE_DAILY_LIMIT };
+}
+
+function incrementFlipCardUsage(ip: string): void {
+  const entry = flipCardUsage.get(ip);
+  if (entry) entry.count++;
+}
+
 app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
   const { title, description, buy_price, condition, category, shipping_or_pickup, target_platform, location } = req.body || {};
+
+  // Check if user is authenticated (gateway forwards x-user-id)
+  const userId = req.headers['x-user-id'] as string;
+  const isAuthenticated = !!userId;
+
+  // Rate limit for unauthenticated users
+  const clientIp = req.headers['x-forwarded-for'] as string || req.ip || 'unknown';
+  if (!isAuthenticated) {
+    const usage = getFlipCardUsage(clientIp);
+    if (usage.remaining <= 0) {
+      return res.status(429).json({
+        success: false,
+        error: {
+          code: 'FREE_LIMIT_REACHED',
+          message: `You've used all ${FREE_DAILY_LIMIT} free analyses today. Sign up for unlimited access.`,
+          signupUrl: '/register',
+          resetsIn: '24 hours',
+        },
+      });
+    }
+  }
 
   if (!title || typeof title !== 'string' || title.trim().length < 2) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
@@ -6426,9 +6466,18 @@ app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
 
     const flipCard = await computeFlipCard(input);
 
+    // Track usage for unauthenticated users
+    if (!isAuthenticated) {
+      incrementFlipCardUsage(clientIp);
+    }
+    const usage = isAuthenticated ? { remaining: -1, limit: -1 } : getFlipCardUsage(clientIp);
+
     res.json({
       success: true,
-      data: flipCard,
+      data: {
+        ...flipCard,
+        _usage: isAuthenticated ? { unlimited: true } : { remaining: usage.remaining, limit: usage.limit, signupUrl: '/register' },
+      },
     });
   } catch (error) {
     logger.error('Flip Card analysis failed', error as Error);

@@ -5,8 +5,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Nova - AI-Orchestrated Operating System',
-  description: 'The universal life-and-business operating system that merges trading, e-commerce, and content distribution.',
+  title: 'Flip Card — Know If It\'s Worth Flipping Before You Buy',
+  description: 'Enter any item and get a resale estimate, cost breakdown, risk flags, and a clear buy, negotiate, or pass decision. Free to try. Powered by Nova.',
 };
 
 export default function RootLayout({

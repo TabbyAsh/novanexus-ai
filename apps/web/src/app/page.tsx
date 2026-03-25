@@ -1,392 +1,315 @@
 'use client';
 
-import { motion, useScroll, useTransform } from 'framer-motion';
 import Link from 'next/link';
-import { useRef, useEffect, useState } from 'react';
-import GlassCard, { GlassButton, GradientText } from '@/components/ui/GlassCard';
-import ParticleField from '@/components/three/ParticleField';
+import { useState } from 'react';
 
-const features = [
-  {
-    icon: '🤖',
-    title: 'Autonomous Agent Engine',
-    description: 'AI agents that execute multi-step workflows end-to-end. Scanner, FlipFinder, Rebalancer, Compliance — not chatbots, executors.',
-    color: 'cyan' as const,
-  },
-  {
-    icon: '📈',
-    title: 'AI Stock Screener',
-    description: 'Real-time market screening with direct Alpaca + Yahoo data. RSI, MACD, SMA crossovers — signals ranked by confidence, auto-generated decision cards.',
-    color: 'purple' as const,
-  },
-  {
-    icon: '💰',
-    title: 'Flip Arbitrage Engine',
-    description: 'Scrapes eBay active + sold listings, computes real flip margins, auto-generates flip plans. Find $50+ profit items while you sleep.',
-    color: 'pink' as const,
-  },
-  {
-    icon: '📊',
-    title: 'Outcome Ledger & ROI Tracking',
-    description: 'Every agent run produces measurable outcomes. Track profit, time saved, opportunities found — see real ROI within 2 weeks.',
-    color: 'green' as const,
-  },
-];
+const CONDITIONS = ['New', 'Like New', 'Good', 'Fair', 'Poor', 'For Parts'];
+const PLATFORMS = ['eBay', 'Facebook Marketplace', 'Mercari', 'Poshmark', 'OfferUp', 'Craigslist'];
 
-function Navbar() {
-  return (
-    <motion.nav
-      initial={{ y: -100, opacity: 0 }}
-      animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6 }}
-      className="fixed top-0 left-0 right-0 z-50 px-6 py-4"
-    >
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-            <span className="text-white font-bold text-xl">N</span>
-          </div>
-          <span className="text-white font-bold text-xl tracking-tight">
-            Nova<span className="text-cyan-400">Nexus</span>
-          </span>
-        </Link>
-        
-        <div className="hidden md:flex items-center gap-8">
-          <Link href="#features" className="text-gray-300 hover:text-white transition-colors">Features</Link>
-          <Link href="#about" className="text-gray-300 hover:text-white transition-colors">About</Link>
-          <Link href="/pricing" className="text-amber-400 hover:text-amber-300 transition-colors font-medium">Pricing</Link>
-          <Link href="/dashboard" className="text-gray-300 hover:text-white transition-colors">Dashboard</Link>
-        </div>
-        
-        <div className="flex items-center gap-4">
-          <Link href="/login">
-            <GlassButton variant="secondary" className="!py-2 !px-4 text-sm">
-              Sign In
-            </GlassButton>
-          </Link>
-          <Link href="/register">
-            <GlassButton variant="primary" className="!py-2 !px-4 text-sm">
-              Get Started
-            </GlassButton>
-          </Link>
-        </div>
-      </div>
-    </motion.nav>
-  );
-}
-
-function HeroSection() {
-  return (
-    <section className="relative min-h-screen flex items-center justify-center px-6 pt-20">
-      <div className="max-w-5xl mx-auto text-center z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-        >
-          <motion.div
-            initial={{ scale: 0.8, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            transition={{ duration: 0.5, delay: 0.2 }}
-            className="inline-flex items-center gap-2 px-4 py-2 rounded-full bg-amber-500/10 border border-amber-500/30 mb-8"
-          >
-            <span className="w-2 h-2 rounded-full bg-amber-400 animate-pulse" />
-            <span className="text-amber-400 text-sm font-medium">Founding Members — Only 50 Seats Available</span>
-          </motion.div>
-          
-          <h1 className="text-5xl md:text-7xl lg:text-8xl font-bold text-white mb-6 leading-tight">
-            <motion.span
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.3 }}
-              className="block"
-            >
-              Power to the
-            </motion.span>
-            <motion.span
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.6, delay: 0.5 }}
-            >
-              <GradientText className="block">User</GradientText>
-            </motion.span>
-          </h1>
-          
-          <motion.p
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.7 }}
-            className="text-xl md:text-2xl text-gray-400 max-w-3xl mx-auto mb-12"
-          >
-            The AI-powered ecosystem that brings together intelligent trading, algorithmic commerce, 
-            and autonomous operations. Tools that were once exclusive to the elite, now in your hands.
-          </motion.p>
-          
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.6, delay: 0.9 }}
-            className="flex flex-col sm:flex-row items-center justify-center gap-4"
-          >
-            <Link href="/pricing">
-              <button className="px-8 py-4 rounded-xl text-lg font-semibold bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30 transition-all">
-                Become a Founding Member →
-              </button>
-            </Link>
-            <Link href="/register">
-              <GlassButton variant="secondary" className="text-lg">
-                Start Free
-              </GlassButton>
-            </Link>
-          </motion.div>
-        </motion.div>
-        
-        {/* Floating badges */}
-        <motion.div
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 1, delay: 1.2 }}
-          className="absolute bottom-10 left-1/2 -translate-x-1/2"
-        >
-          <motion.div
-            animate={{ y: [0, -10, 0] }}
-            transition={{ duration: 2, repeat: Infinity, ease: 'easeInOut' }}
-            className="flex items-center gap-2 text-gray-500"
-          >
-            <span className="text-sm">Scroll to explore</span>
-            <svg className="w-4 h-4 animate-bounce" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 14l-7 7m0 0l-7-7m7 7V3" />
-            </svg>
-          </motion.div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-function FeaturesSection() {
-  return (
-    <section id="features" className="relative py-20 px-6">
-      <div className="max-w-6xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-          className="text-center mb-16"
-        >
-          <h2 className="text-4xl md:text-5xl font-bold text-white mb-4">
-            Your <GradientText>Unfair Advantage</GradientText>
-          </h2>
-          <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-            Tools that level the playing field. AI that works while you sleep.
-          </p>
-        </motion.div>
-        
-        <div className="grid md:grid-cols-2 gap-6">
-          {features.map((feature, i) => (
-            <GlassCard key={feature.title} glowColor={feature.color} delay={i * 0.1}>
-              <div className="flex items-start gap-4">
-                <div className="text-4xl">{feature.icon}</div>
-                <div>
-                  <h3 className="text-xl font-bold text-white mb-2">{feature.title}</h3>
-                  <p className="text-gray-400 leading-relaxed">{feature.description}</p>
-                </div>
-              </div>
-            </GlassCard>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function MissionSection() {
-  const ref = useRef(null);
-  const { scrollYProgress } = useScroll({
-    target: ref,
-    offset: ['start end', 'end start']
-  });
-  const y = useTransform(scrollYProgress, [0, 1], [100, -100]);
-  
-  return (
-    <section id="about" ref={ref} className="relative py-32 px-6 overflow-hidden">
-      <motion.div style={{ y }} className="absolute inset-0 flex items-center justify-center opacity-5">
-        <span className="text-[20rem] font-bold text-white">N</span>
-      </motion.div>
-      
-      <div className="max-w-4xl mx-auto relative z-10">
-        <GlassCard hover={false} className="!p-12 text-center">
-          <motion.div
-            initial={{ opacity: 0, y: 30 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.8 }}
-            viewport={{ once: true }}
-          >
-            <h2 className="text-3xl md:text-4xl font-bold text-white mb-6">
-              This isn't about personal gain.
-            </h2>
-            <p className="text-xl text-gray-300 leading-relaxed mb-8">
-              The world doesn't give people a leg up. The tools that create wealth—algorithmic trading, 
-              market intelligence, automated commerce—have always been locked behind walls of capital and connections.
-            </p>
-            <p className="text-xl text-gray-300 leading-relaxed mb-8">
-              <GradientText className="font-bold">NovaNexus AI</GradientText> tears down those walls. 
-              This digital ecosystem brings together everything a person needs to compete on equal footing 
-              with institutions and the privileged few.
-            </p>
-            <p className="text-2xl font-bold text-white">
-              This is your legacy. <GradientText>This is power to the user.</GradientText>
-            </p>
-          </motion.div>
-        </GlassCard>
-      </div>
-    </section>
-  );
-}
-
-function LiveStatsSection() {
-  const [stats, setStats] = useState<{
-    totalUsers: number; agentRunsCompleted: number; timeSavedMinutes: number; flipsTracked: number;
-  } | null>(null);
-
-  useEffect(() => {
-    fetch('/api/proxy/v1/platform/stats')
-      .then(r => r.json())
-      .then(d => { if (d.success && d.data) setStats(d.data); })
-      .catch(() => {});
-  }, []);
-
-  const counters = [
-    { label: 'Active Users', value: stats ? stats.totalUsers : '—', icon: '👥' },
-    { label: 'Agent Runs', value: stats ? stats.agentRunsCompleted : '—', icon: '🤖' },
-    { label: 'Hours Saved', value: stats ? `${(stats.timeSavedMinutes / 60).toFixed(0)}+` : '—', icon: '⏱️' },
-    { label: 'Flips Tracked', value: stats ? stats.flipsTracked : '—', icon: '💰' },
-  ];
-
-  return (
-    <section className="relative py-16 px-6">
-      <div className="max-w-5xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-          className="text-center mb-10"
-        >
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-2">
-            The Machine is <GradientText>Running</GradientText>
-          </h2>
-          <p className="text-gray-400">Live platform activity — updated in real-time</p>
-        </motion.div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          {counters.map((c, i) => (
-            <motion.div
-              key={c.label}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.4, delay: i * 0.1 }}
-              viewport={{ once: true }}
-              className="rounded-xl border border-white/10 bg-white/5 backdrop-blur-sm p-6 text-center"
-            >
-              <div className="text-3xl mb-2">{c.icon}</div>
-              <div className="text-3xl font-bold text-white mb-1">{c.value}</div>
-              <div className="text-sm text-gray-400">{c.label}</div>
-            </motion.div>
-          ))}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function CTASection() {
-  return (
-    <section className="relative py-20 px-6">
-      <div className="max-w-4xl mx-auto text-center">
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          whileInView={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-        >
-          <h2 className="text-4xl md:text-5xl font-bold text-white mb-6">
-            Ready to take <GradientText>control</GradientText>?
-          </h2>
-          <p className="text-xl text-gray-400 mb-2">
-            50 Founding Member seats. $99/month. Unlimited everything. Lock it in forever.
-          </p>
-          <p className="text-amber-400 font-medium mb-2">
-            Refer a friend → you both get $10 credit.
-          </p>
-          <p className="text-gray-500 mb-10">
-            Or start free — no credit card required.
-          </p>
-          <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
-            <Link href="/pricing">
-              <button className="px-10 py-5 rounded-xl text-xl font-semibold bg-gradient-to-r from-amber-600 to-yellow-600 hover:from-amber-500 hover:to-yellow-500 text-white shadow-lg shadow-amber-900/30 transition-all">
-                Claim Your Founding Seat →
-              </button>
-            </Link>
-            <Link href="/register">
-              <GlassButton variant="secondary" className="text-lg !px-8 !py-4">
-                Start Free
-              </GlassButton>
-            </Link>
-          </div>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-function Footer() {
-  return (
-    <footer className="relative py-12 px-6 border-t border-white/10">
-      <div className="max-w-6xl mx-auto">
-        <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-          <div className="flex items-center gap-3">
-            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-              <span className="text-white font-bold">N</span>
-            </div>
-            <span className="text-white font-semibold">NovaNexus AI</span>
-          </div>
-          
-          <div className="flex items-center gap-8 text-gray-400 text-sm">
-            <Link href="/privacy" className="hover:text-white transition-colors">Privacy</Link>
-            <Link href="/terms" className="hover:text-white transition-colors">Terms</Link>
-            <a href="mailto:wyatt@novanexus-ai.com" className="hover:text-white transition-colors">Contact</a>
-          </div>
-          
-          <p className="text-gray-500 text-sm">
-            © 2026 NovaNexus AI. All rights reserved.
-          </p>
-        </div>
-        
-        <div className="mt-8 pt-6 border-t border-white/5">
-          <p className="text-gray-600 text-xs leading-relaxed text-center max-w-4xl mx-auto">
-            <strong className="text-gray-500">Risk Disclosure:</strong> NovaNexus AI provides informational tools only. 
-            Nothing on this platform constitutes financial, investment, or trading advice. All trading and investment decisions 
-            are made by you. Past performance, backtests, and AI-generated signals do not guarantee future results. 
-            You may lose money. Use at your own risk.
-          </p>
-        </div>
-      </div>
-    </footer>
-  );
+interface FlipResult {
+  verdict: string;
+  rationale_summary: string;
+  item_title: string;
+  item_category: string;
+  condition_assessment: string;
+  buy_price: number;
+  est_resale_low: number;
+  est_resale_mid: number;
+  est_resale_high: number;
+  est_platform_fees: number;
+  est_shipping_cost: number;
+  est_net_profit_low: number;
+  est_net_profit_mid: number;
+  est_net_profit_high: number;
+  confidence_score: number;
+  risk_score: number;
+  risk_flags: string[];
+  negotiation_target_price: number | null;
+  assumptions: string[];
+  comp_sources: { source: string; count: number; freshness: string }[];
+  _usage?: { remaining?: number; limit?: number; unlimited?: boolean; signupUrl?: string };
 }
 
 export default function HomePage() {
+  const [title, setTitle] = useState('');
+  const [buyPrice, setBuyPrice] = useState('');
+  const [condition, setCondition] = useState('Good');
+  const [platform, setPlatform] = useState('eBay');
+  const [shipping, setShipping] = useState<'shipping'|'pickup'>('shipping');
+  const [loading, setLoading] = useState(false);
+  const [step, setStep] = useState(0);
+  const [result, setResult] = useState<FlipResult | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  const fmt = (n: number) => {
+    const f = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(n));
+    return n < 0 ? `-${f}` : f;
+  };
+
+  const analyze = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!title.trim() || !buyPrice) return;
+    setLoading(true); setError(null); setResult(null); setStep(0);
+    const steps = [300, 800, 1200];
+    steps.forEach((d, i) => setTimeout(() => setStep(i + 1), d));
+
+    try {
+      const res = await fetch('/api/proxy/v1/flip-card/analyze', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          title: title.trim(), buy_price: parseFloat(buyPrice), condition,
+          shipping_or_pickup: shipping, target_platform: platform,
+        }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setStep(4);
+        setTimeout(() => { setResult(data.data); setLoading(false); }, 300);
+      } else {
+        setError(data.error?.message || 'Analysis failed.');
+        setLoading(false);
+      }
+    } catch {
+      setError('Could not reach server. Try again.'); setLoading(false);
+    }
+  };
+
+  const reset = () => { setResult(null); setError(null); setTitle(''); setBuyPrice(''); };
+
   return (
-    <main className="relative min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
-      <ParticleField />
-      <Navbar />
-      <HeroSection />
-      <FeaturesSection />
-      <LiveStatsSection />
-      <MissionSection />
-      <CTASection />
-      <Footer />
-    </main>
+    <div className="min-h-screen bg-gray-950 text-white">
+      {/* Nav */}
+      <nav className="px-6 py-4 border-b border-gray-800/50">
+        <div className="max-w-3xl mx-auto flex items-center justify-between">
+          <Link href="/" className="flex items-center gap-2">
+            <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center">
+              <span className="text-white font-bold text-sm">FC</span>
+            </div>
+            <span className="text-white font-semibold">Flip Card</span>
+          </Link>
+          <div className="flex items-center gap-4 text-sm">
+            <Link href="/login" className="text-gray-400 hover:text-white transition">Sign In</Link>
+            <Link href="/register" className="px-3 py-1.5 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition">Sign Up Free</Link>
+          </div>
+        </div>
+      </nav>
+
+      <main className="max-w-3xl mx-auto px-6 py-12">
+        {/* Hero + Form (no result yet) */}
+        {!result && !loading && (
+          <div>
+            <div className="text-center mb-10">
+              <h1 className="text-4xl md:text-5xl font-bold leading-tight mb-4">
+                Know if it&apos;s worth flipping<br />
+                <span className="text-emerald-400">before you buy it.</span>
+              </h1>
+              <p className="text-gray-400 text-lg max-w-xl mx-auto">
+                Enter an item below. Get a resale estimate, cost breakdown, and a clear
+                <strong className="text-white"> buy</strong>,{' '}
+                <strong className="text-white">negotiate</strong>, or{' '}
+                <strong className="text-white">pass</strong> verdict.
+              </p>
+            </div>
+
+            {error && (
+              <div className="mb-6 p-4 rounded-lg bg-red-900/30 border border-red-700/50 text-red-300 text-sm">{error}</div>
+            )}
+
+            <form onSubmit={analyze} className="space-y-5">
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-1.5">What are you looking at? *</label>
+                <input value={title} onChange={e => setTitle(e.target.value)} required
+                  placeholder="e.g. Sony WH-1000XM5 Headphones"
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5">Asking price *</label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3 text-gray-500">$</span>
+                    <input type="number" step="0.01" min="0" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} required
+                      placeholder="0.00"
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5">Condition</label>
+                  <select value={condition} onChange={e => setCondition(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none">
+                    {CONDITIONS.map(c => <option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5">Sell on</label>
+                  <select value={platform} onChange={e => setPlatform(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none">
+                    {PLATFORMS.map(p => <option key={p}>{p}</option>)}
+                  </select>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-1.5">Fulfillment</label>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={() => setShipping('shipping')}
+                      className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${shipping === 'shipping' ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400' : 'bg-gray-900 border-gray-700 text-gray-400'}`}>Ship</button>
+                    <button type="button" onClick={() => setShipping('pickup')}
+                      className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${shipping === 'pickup' ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400' : 'bg-gray-900 border-gray-700 text-gray-400'}`}>Pickup</button>
+                  </div>
+                </div>
+              </div>
+              <button type="submit" className="w-full py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-lg transition">
+                Get My Flip Card — Free
+              </button>
+              <p className="text-center text-xs text-gray-500">3 free analyses per day. No account needed.</p>
+            </form>
+          </div>
+        )}
+
+        {/* Loading */}
+        {loading && !result && (
+          <div className="flex flex-col items-center justify-center py-24">
+            <div className="w-16 h-16 rounded-full border-4 border-emerald-500/30 border-t-emerald-500 animate-spin mb-8" />
+            <div className="space-y-3 text-center">
+              {['Evaluating opportunity...','Looking up recent sold prices...','Calculating fees and costs...','Generating your Flip Card...'].map((l, i) => (
+                <p key={l} className={`text-sm transition-all duration-300 ${step >= i ? 'text-white' : 'text-gray-600'}`}>
+                  {step > i ? '✓' : step === i ? '→' : '·'} {l}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Result */}
+        {result && (
+          <div>
+            {/* Verdict */}
+            <div className={`text-center py-8 px-6 rounded-2xl mb-6 ${
+              result.verdict === 'BUY' ? 'bg-emerald-900/40 border-2 border-emerald-500/60'
+              : result.verdict === 'NEGOTIATE LOWER' ? 'bg-amber-900/40 border-2 border-amber-500/60'
+              : 'bg-red-900/40 border-2 border-red-500/60'
+            }`}>
+              <div className={`text-5xl font-black mb-3 ${
+                result.verdict === 'BUY' ? 'text-emerald-400' : result.verdict === 'NEGOTIATE LOWER' ? 'text-amber-400' : 'text-red-400'
+              }`}>{result.verdict}</div>
+              <p className="text-gray-300 max-w-xl mx-auto text-sm">{result.rationale_summary}</p>
+            </div>
+
+            {/* Economics */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-4">
+              <div className="flex justify-between items-start mb-3">
+                <div>
+                  <div className="font-bold text-white">{result.item_title}</div>
+                  <div className="text-xs text-gray-500">{result.item_category} · {result.condition_assessment}</div>
+                </div>
+                <div className="text-right">
+                  <div className="text-xs text-gray-500">Confidence</div>
+                  <div className="font-bold text-white">{result.confidence_score}%</div>
+                </div>
+              </div>
+              <div className="w-full h-2 bg-gray-800 rounded-full mb-4">
+                <div className={`h-full rounded-full ${result.confidence_score >= 60 ? 'bg-emerald-500' : result.confidence_score >= 40 ? 'bg-amber-500' : 'bg-red-500'}`}
+                  style={{ width: `${result.confidence_score}%` }} />
+              </div>
+              <div className="grid grid-cols-4 gap-3 text-center text-sm">
+                <div><div className="text-gray-500 text-xs">Buy</div><div className="text-white font-medium">{fmt(result.buy_price)}</div></div>
+                <div><div className="text-gray-500 text-xs">Resale (mid)</div><div className="text-white font-medium">{fmt(result.est_resale_mid)}</div></div>
+                <div><div className="text-gray-500 text-xs">Costs</div><div className="text-gray-400 font-medium">-{fmt(result.est_platform_fees + result.est_shipping_cost)}</div></div>
+                <div><div className="text-gray-500 text-xs">Net profit</div>
+                  <div className={`font-bold ${result.est_net_profit_mid > 0 ? 'text-emerald-400' : 'text-red-400'}`}>{fmt(result.est_net_profit_mid)}</div>
+                </div>
+              </div>
+            </div>
+
+            {/* Negotiation */}
+            {result.negotiation_target_price && (
+              <div className="bg-amber-900/20 border border-amber-700/40 rounded-xl p-4 mb-4 flex items-center gap-3">
+                <span className="text-xl">💡</span>
+                <div>
+                  <span className="text-amber-300 font-semibold">Negotiate to </span>
+                  <span className="text-amber-400 font-bold">{fmt(result.negotiation_target_price)}</span>
+                  <span className="text-gray-400 text-sm"> or less for a solid flip.</span>
+                </div>
+              </div>
+            )}
+
+            {/* Risk */}
+            {result.risk_flags.length > 0 && (
+              <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-4">
+                <div className="text-xs font-semibold text-gray-400 uppercase mb-2">Risk Flags</div>
+                {result.risk_flags.map((f, i) => (
+                  <div key={i} className="flex items-start gap-2 text-sm text-gray-300 mb-1"><span className="text-amber-500">⚠</span>{f}</div>
+                ))}
+              </div>
+            )}
+
+            {/* Comps + Assumptions */}
+            <div className="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-4">
+              <div className="text-xs font-semibold text-gray-400 uppercase mb-2">Data Sources</div>
+              {result.comp_sources.map((cs, i) => (
+                <div key={i} className="flex justify-between text-sm"><span className="text-gray-300">{cs.source}</span><span className="text-gray-500">{cs.count > 0 ? `${cs.count} comps` : 'n/a'}</span></div>
+              ))}
+              <div className="text-xs font-semibold text-gray-400 uppercase mt-4 mb-2">Assumptions</div>
+              {result.assumptions.map((a, i) => (
+                <div key={i} className="text-xs text-gray-500 mb-1">· {a}</div>
+              ))}
+              <p className="mt-3 text-xs text-gray-600 italic">Structured estimate, not a guarantee. You decide.</p>
+            </div>
+
+            {/* Usage CTA */}
+            {result._usage && !result._usage.unlimited && (
+              <div className="bg-emerald-900/20 border border-emerald-500/30 rounded-xl p-5 mb-4 text-center">
+                <p className="text-emerald-300 font-medium mb-1">
+                  {result._usage.remaining !== undefined && result._usage.remaining > 0
+                    ? `${result._usage.remaining} free ${result._usage.remaining === 1 ? 'analysis' : 'analyses'} remaining today`
+                    : 'You\'ve used all free analyses today'}
+                </p>
+                <p className="text-gray-400 text-sm mb-3">Sign up for unlimited analyses, saved history, and daily flip alerts.</p>
+                <Link href="/register" className="inline-block px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition">
+                  Sign Up Free — Unlimited Analyses
+                </Link>
+              </div>
+            )}
+
+            {/* Actions */}
+            <div className="flex gap-4">
+              <button onClick={reset} className="flex-1 py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition">Analyze Another</button>
+              <Link href="/register" className="py-4 px-6 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium transition text-center">Sign Up</Link>
+            </div>
+
+            <p className="text-center text-xs text-gray-600 mt-6">Powered by Nova</p>
+          </div>
+        )}
+
+        {/* Trust strip below form */}
+        {!result && !loading && (
+          <div className="mt-16 grid md:grid-cols-3 gap-6 text-center">
+            <div><div className="text-2xl mb-2">🔍</div><div className="text-white font-semibold text-sm">Real Sold Prices</div><div className="text-gray-500 text-xs">From actual completed eBay sales</div></div>
+            <div><div className="text-2xl mb-2">💰</div><div className="text-white font-semibold text-sm">True Cost Breakdown</div><div className="text-gray-500 text-xs">Fees, shipping, and profit calculated</div></div>
+            <div><div className="text-2xl mb-2">✅</div><div className="text-white font-semibold text-sm">Clear Verdict</div><div className="text-gray-500 text-xs">BUY, NEGOTIATE, or PASS</div></div>
+          </div>
+        )}
+      </main>
+
+      {/* Footer */}
+      <footer className="px-6 py-6 border-t border-gray-800 mt-16">
+        <div className="max-w-3xl mx-auto flex flex-col md:flex-row items-center justify-between gap-3">
+          <div className="flex items-center gap-2">
+            <span className="text-gray-400 text-sm">Flip Card</span>
+            <span className="text-gray-600 text-xs">· Powered by Nova</span>
+          </div>
+          <div className="flex items-center gap-4 text-xs text-gray-500">
+            <Link href="/privacy" className="hover:text-gray-300">Privacy</Link>
+            <Link href="/terms" className="hover:text-gray-300">Terms</Link>
+            <a href="mailto:wyatt@novanexus-ai.com" className="hover:text-gray-300">Contact</a>
+          </div>
+          <span className="text-gray-700 text-xs">© 2026 Nova Enterprises</span>
+        </div>
+        <p className="text-center text-xs text-gray-700 mt-3 max-w-2xl mx-auto">
+          Structured estimates for resale opportunities. Not financial advice. Results may vary.
+        </p>
+      </footer>
+    </div>
   );
 }
