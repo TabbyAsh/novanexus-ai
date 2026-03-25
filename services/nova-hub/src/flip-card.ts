@@ -178,6 +178,34 @@ function detectCategory(title: string, userCategory?: string): { category: strin
 
 let lastEbayFetch = 0;
 const EBAY_MIN_INTERVAL_MS = 3000;
+let tableEnsured = false;
+
+async function ensureSoldCompsTable(): Promise<void> {
+  if (tableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS sold_comps (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        query_hash VARCHAR(32) NOT NULL,
+        search_query VARCHAR(500) NOT NULL,
+        item_title VARCHAR(500) NOT NULL,
+        sold_price DECIMAL(12,2) NOT NULL,
+        condition VARCHAR(50),
+        sold_date DATE,
+        source VARCHAR(50) NOT NULL DEFAULT 'ebay',
+        source_url TEXT,
+        category VARCHAR(100),
+        scraped_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+        raw_json JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+    await query(`CREATE INDEX IF NOT EXISTS idx_sold_comps_query_hash ON sold_comps(query_hash, scraped_at DESC)`, []);
+    tableEnsured = true;
+    logger.info('sold_comps table ensured');
+  } catch (err) {
+    logger.warn('Could not ensure sold_comps table, cache will be skipped', { error: (err as Error).message });
+  }
+}
 
 function normalizeQuery(title: string): string {
   return title
@@ -372,6 +400,9 @@ function getHeuristicResale(title: string): { low: number; mid: number; high: nu
 export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOutput> {
   const { title, buy_price, condition, shipping_or_pickup, target_platform, description } = input;
   const searchText = description ? `${title} ${description}` : title;
+
+  // 0. Ensure table exists (no-op after first call)
+  await ensureSoldCompsTable();
 
   // 1. Detect category
   const { category, shippingKey } = detectCategory(searchText, input.category);
