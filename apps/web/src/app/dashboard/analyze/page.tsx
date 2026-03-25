@@ -145,8 +145,8 @@ export default function AnalyzePage() {
             <span className="text-white font-semibold">Flip Card</span>
           </Link>
           <div className="flex items-center gap-4 text-sm">
+            <Link href="/dashboard" className="text-gray-400 hover:text-white transition">Dashboard</Link>
             <Link href="/" className="text-gray-400 hover:text-white transition">Home</Link>
-            <Link href="/pricing" className="text-gray-400 hover:text-white transition">Pricing</Link>
           </div>
         </div>
       </nav>
@@ -495,10 +495,10 @@ export default function AnalyzePage() {
                 Analyze Another
               </button>
               <Link
-                href="/"
+                href="/dashboard"
                 className="py-4 px-6 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium transition text-center"
               >
-                Home
+                Dashboard
               </Link>
             </div>
 

@@ -44,17 +44,17 @@ function Navbar() {
           <Link href="/pricing" className="text-gray-400 hover:text-white transition">Pricing</Link>
           <Link href="/login" className="text-gray-400 hover:text-white transition">Sign In</Link>
           <Link
-            href="/analyze"
+            href="/register"
             className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium transition"
           >
-            Analyze a Listing
+            Get Started
           </Link>
         </div>
         <Link
-          href="/analyze"
+          href="/register"
           className="sm:hidden px-4 py-2 rounded-lg bg-emerald-600 text-white text-sm font-medium"
         >
-          Analyze
+          Get Started
         </Link>
       </div>
     </nav>
@@ -80,10 +80,10 @@ function Hero() {
         </p>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-6">
           <Link
-            href="/analyze"
+            href="/register"
             className="px-8 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-lg font-semibold transition shadow-lg shadow-emerald-900/30"
           >
-            Analyze a Listing
+            Get Started Free
           </Link>
           <a
             href="#how-it-works"
@@ -281,10 +281,10 @@ function PricingTeaser() {
           Avoid one bad buy and it pays for itself.
         </p>
         <Link
-          href="/analyze"
+          href="/register"
           className="inline-block px-8 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white text-lg font-semibold transition shadow-lg shadow-emerald-900/30"
         >
-          Analyze Your First Listing
+          Get Started Free
         </Link>
         <div className="mt-4">
           <Link href="/pricing" className="text-sm text-gray-500 hover:text-gray-300 transition">
