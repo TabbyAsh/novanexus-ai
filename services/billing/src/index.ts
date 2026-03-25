@@ -21,7 +21,15 @@ const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '
 const PRICE_IDS = {
   NOVA_HUB_LITE_MONTHLY: process.env.STRIPE_PRICE_MONTHLY || 'price_nova_lite_monthly',
   NOVA_HUB_LITE_YEARLY: process.env.STRIPE_PRICE_YEARLY || 'price_nova_lite_yearly',
+  FOUNDING_MONTHLY: process.env.STRIPE_PRICE_FOUNDING || 'price_nova_founding_monthly',
 };
+
+// Map Stripe price IDs to plan names
+function planFromPriceId(priceId: string): Entitlement['plan'] {
+  if (priceId === PRICE_IDS.FOUNDING_MONTHLY) return 'FOUNDING';
+  if (priceId === PRICE_IDS.NOVA_HUB_LITE_MONTHLY || priceId === PRICE_IDS.NOVA_HUB_LITE_YEARLY) return 'LITE';
+  return 'LITE'; // default fallback
+}
 
 // ============================================
 // Types
@@ -375,8 +383,17 @@ app.post('/v1/billing/checkout-session', async (req: Request, res: Response) => 
   }
 
   try {
-    const { priceId, interval = 'monthly' } = req.body;
-    const selectedPriceId = priceId || (interval === 'yearly' ? PRICE_IDS.NOVA_HUB_LITE_YEARLY : PRICE_IDS.NOVA_HUB_LITE_MONTHLY);
+    const { priceId, interval = 'monthly', plan } = req.body;
+    let selectedPriceId = priceId;
+    if (!selectedPriceId) {
+      if (plan === 'FOUNDING' || plan === 'founding') {
+        selectedPriceId = PRICE_IDS.FOUNDING_MONTHLY;
+      } else if (interval === 'yearly') {
+        selectedPriceId = PRICE_IDS.NOVA_HUB_LITE_YEARLY;
+      } else {
+        selectedPriceId = PRICE_IDS.NOVA_HUB_LITE_MONTHLY;
+      }
+    }
 
     // Get or create entitlement to get Stripe customer ID
     const entitlement = await getOrCreateEntitlement(userId, orgId);
@@ -561,12 +578,16 @@ app.post('/webhook', async (req: Request, res: Response) => {
         if (userId && session.subscription) {
           const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
           
+          // Detect plan from the price ID on the subscription
+          const subPriceId = subscription.items?.data?.[0]?.price?.id || '';
+          const detectedPlan = planFromPriceId(subPriceId);
+
           await updateEntitlement(userId, {
-            plan: 'LITE',
+            plan: detectedPlan,
             status: 'ACTIVE',
             stripeSubscriptionId: subscription.id,
             currentPeriodEnd: new Date(subscription.current_period_end * 1000).toISOString(),
-            features: getDefaultFeatures('LITE'),
+            features: getDefaultFeatures(detectedPlan),
           });
 
           await auditLog({

@@ -91,7 +91,7 @@ export default function PricingPage() {
           'Content-Type': 'application/json',
           'Authorization': `Bearer ${token}`,
         },
-        body: JSON.stringify({ interval: billingInterval }),
+        body: JSON.stringify({ interval: billingInterval, plan: planId }),
       });
 
       const data = await res.json();
