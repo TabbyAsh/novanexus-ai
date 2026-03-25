@@ -89,6 +89,8 @@ const PUBLIC_ROUTES = [
   '/v1/value-radar/',
   // Dashboard stats
   '/v1/dashboard/',
+  // Flip Card — public decision product
+  '/v1/flip-card/',
 ];
 
 // Premium features that require paid plan (LITE or higher)
@@ -827,6 +829,14 @@ app.all('/v1/orders*', requireScopes(['store.orders']), (_req: Request, res: Res
     data: { orders: [] },
     trace: { service: 'storebot', status: 'stub' }
   });
+});
+
+// ============================================
+// Flip Card Routes -> Nova Hub (public decision product)
+// ============================================
+
+app.post('/v1/flip-card/analyze', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
 // ============================================

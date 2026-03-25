@@ -138,15 +138,17 @@ export default function PricingPage() {
         {/* Header */}
         <div className="text-center mb-12">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg" />
-            <span className="text-2xl font-bold text-white">Nova Hub Lite</span>
+            <div className="w-10 h-10 bg-emerald-600 rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold">FC</span>
+            </div>
+            <span className="text-2xl font-bold text-white">Flip Card</span>
           </Link>
           <h1 className="text-4xl font-bold text-white mb-4">
             Simple, transparent pricing
           </h1>
           <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-            Professional market analysis tools for serious traders. 
-            No guarantees, no financial advice — just powerful analytics.
+            Evaluate flipping opportunities with real data.
+            Avoid one bad buy and the subscription pays for itself.
           </p>
         </div>
 
@@ -293,14 +295,10 @@ export default function PricingPage() {
           <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-6 max-w-3xl mx-auto">
             <h4 className="text-yellow-400 font-semibold mb-2">Important Disclaimer</h4>
             <p className="text-gray-400 text-sm">
-              Nova Hub Lite is an educational and analytical tool for market research. 
-              It does not provide financial advice, investment recommendations, or guaranteed trading profits.
-              All trading involves risk, including loss of principal. Paper trading results do not guarantee
-              future performance. Please read our{' '}
-              <Link href="/legal/risk-disclosure" className="text-blue-400 hover:underline">
-                Risk Disclosure
-              </Link>{' '}
-              before subscribing.
+              Flip Card provides structured estimates for resale opportunities.
+              It is not financial advice. All estimates are based on publicly available sold data
+              and category heuristics. Actual results may vary.
+              You are responsible for your own buying and selling decisions.
             </p>
           </div>
         </div>
@@ -310,10 +308,10 @@ export default function PricingPage() {
           <h2 className="text-2xl font-bold text-white mb-8">What&apos;s Included</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { icon: '📊', title: 'Market Scanner', desc: 'RSI, MACD, Momentum indicators' },
-              { icon: '📝', title: 'Thesis Cards', desc: 'Entry, target, and stop-loss analysis' },
-              { icon: '💼', title: 'Paper Trading', desc: 'Risk-free practice environment' },
-              { icon: '📧', title: 'Alerts', desc: 'Score threshold notifications' },
+              { icon: '🔍', title: 'Real Sold Comps', desc: 'Prices from actual completed sales' },
+              { icon: '💰', title: 'Profit Calculator', desc: 'Fees, shipping, and net profit breakdown' },
+              { icon: '⚠️', title: 'Risk Flags', desc: 'Know what could go wrong before you buy' },
+              { icon: '✅', title: 'Clear Verdict', desc: 'BUY, NEGOTIATE, or PASS — no guessing' },
             ].map((item, idx) => (
               <div key={idx} className="bg-gray-900 rounded-lg p-6">
                 <div className="text-3xl mb-3">{item.icon}</div>
