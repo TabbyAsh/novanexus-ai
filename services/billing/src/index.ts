@@ -22,11 +22,13 @@ const PRICE_IDS = {
   NOVA_HUB_LITE_MONTHLY: process.env.STRIPE_PRICE_MONTHLY || 'price_nova_lite_monthly',
   NOVA_HUB_LITE_YEARLY: process.env.STRIPE_PRICE_YEARLY || 'price_nova_lite_yearly',
   FOUNDING_MONTHLY: process.env.STRIPE_PRICE_FOUNDING || 'price_nova_founding_monthly',
+  FLIP_CARD_PRO: process.env.STRIPE_PRICE_FLIP_PRO || 'price_1TG1jXIRGET1dbqS9zFdeE5b',
 };
 
 // Map Stripe price IDs to plan names
 function planFromPriceId(priceId: string): Entitlement['plan'] {
   if (priceId === PRICE_IDS.FOUNDING_MONTHLY) return 'FOUNDING';
+  if (priceId === PRICE_IDS.FLIP_CARD_PRO) return 'LITE';
   if (priceId === PRICE_IDS.NOVA_HUB_LITE_MONTHLY || priceId === PRICE_IDS.NOVA_HUB_LITE_YEARLY) return 'LITE';
   return 'LITE'; // default fallback
 }
@@ -388,10 +390,12 @@ app.post('/v1/billing/checkout-session', async (req: Request, res: Response) => 
     if (!selectedPriceId) {
       if (plan === 'FOUNDING' || plan === 'founding') {
         selectedPriceId = PRICE_IDS.FOUNDING_MONTHLY;
+      } else if (plan === 'FLIP_PRO' || plan === 'LITE') {
+        selectedPriceId = PRICE_IDS.FLIP_CARD_PRO;
       } else if (interval === 'yearly') {
         selectedPriceId = PRICE_IDS.NOVA_HUB_LITE_YEARLY;
       } else {
-        selectedPriceId = PRICE_IDS.NOVA_HUB_LITE_MONTHLY;
+        selectedPriceId = PRICE_IDS.FLIP_CARD_PRO;
       }
     }
 
