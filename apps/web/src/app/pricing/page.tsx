@@ -26,17 +26,9 @@ export default function PricingPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [checkoutLoading, setCheckoutLoading] = useState<string | null>(null);
   const [foundingSeats, setFoundingSeats] = useState<{ maxSeats: number; taken: number; remaining: number } | null>(null);
-  const [briefProof, setBriefProof] = useState<{
-    available: boolean; resolved: number; wins: number; losses: number;
-    winRate: number | null; totalTracked: number;
-    dateRange: { from: string; to: string } | null;
-    disclaimer: string; sampleSizeNote: string | null;
-  } | null>(null);
-
   useEffect(() => {
     fetchPricing();
     fetchFoundingSeats();
-    fetchBriefProof();
   }, []);
 
   const fetchPricing = async () => {
@@ -49,14 +41,6 @@ export default function PricingPage() {
     } catch (error) {
       console.error('Failed to fetch pricing:', error);
     }
-  };
-
-  const fetchBriefProof = async () => {
-    try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/v1/platform/brief-proof`);
-      const data = await res.json();
-      if (data.success && data.data) setBriefProof(data.data);
-    } catch { /* non-critical */ }
   };
 
   const fetchFoundingSeats = async () => {
@@ -138,53 +122,20 @@ export default function PricingPage() {
         {/* Header */}
         <div className="text-center mb-12">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg" />
-            <span className="text-2xl font-bold text-white">Nova Hub Lite</span>
+            <div className="w-10 h-10 bg-gradient-to-br from-cyan-500 to-purple-600 rounded-lg flex items-center justify-center">
+              <span className="text-white font-bold text-lg">N</span>
+            </div>
+            <span className="text-2xl font-bold text-white">NovaNexus</span>
           </Link>
           <h1 className="text-4xl font-bold text-white mb-4">
             Simple, transparent pricing
           </h1>
           <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-            Professional market analysis tools for serious traders. 
-            No guarantees, no financial advice — just powerful analytics.
+            Resale analytics, stock screening, and operational tools. 
+            No guarantees — just real data and transparent assumptions.
           </p>
         </div>
 
-        {/* Brief Performance Proof — only shown when real data exists */}
-        {briefProof && briefProof.available && briefProof.winRate !== null && (
-          <div className="mb-10 max-w-2xl mx-auto">
-            <div className="bg-gradient-to-r from-green-900/30 to-cyan-900/30 border border-green-500/30 rounded-2xl p-6 text-center">
-              <div className="text-xs text-green-400/70 uppercase tracking-wider mb-3">Daily Brief — Tracked Performance</div>
-              <div className="flex items-center justify-center gap-8 mb-3">
-                <div>
-                  <div className="text-3xl font-bold text-green-400">{briefProof.winRate}%</div>
-                  <div className="text-xs text-gray-400">Win Rate</div>
-                </div>
-                <div className="w-px h-10 bg-gray-700" />
-                <div>
-                  <div className="text-3xl font-bold text-white">{briefProof.resolved}</div>
-                  <div className="text-xs text-gray-400">Resolved Setups</div>
-                </div>
-                <div className="w-px h-10 bg-gray-700" />
-                <div>
-                  <div className="text-3xl font-bold text-cyan-400">{briefProof.wins}W / {briefProof.losses}L</div>
-                  <div className="text-xs text-gray-400">Win / Loss</div>
-                </div>
-              </div>
-              {briefProof.dateRange && (
-                <div className="text-xs text-gray-500 mb-2">
-                  Data from {new Date(briefProof.dateRange.from).toLocaleDateString()} to {new Date(briefProof.dateRange.to).toLocaleDateString()}
-                </div>
-              )}
-              <div className="text-xs text-gray-500 italic">{briefProof.disclaimer}</div>
-            </div>
-          </div>
-        )}
-        {briefProof && !briefProof.available && briefProof.sampleSizeNote && (
-          <div className="mb-8 text-center text-xs text-gray-500">
-            {briefProof.sampleSizeNote}
-          </div>
-        )}
 
         {/* Billing Toggle */}
         <div className="flex justify-center mb-12">
@@ -293,10 +244,10 @@ export default function PricingPage() {
           <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-6 max-w-3xl mx-auto">
             <h4 className="text-yellow-400 font-semibold mb-2">Important Disclaimer</h4>
             <p className="text-gray-400 text-sm">
-              Nova Hub Lite is an educational and analytical tool for market research. 
-              It does not provide financial advice, investment recommendations, or guaranteed trading profits.
-              All trading involves risk, including loss of principal. Paper trading results do not guarantee
-              future performance. Please read our{' '}
+              NovaNexus provides informational and analytical tools only. 
+              It does not provide financial advice, investment recommendations, or guaranteed profits.
+              All trading and resale activity involves risk, including loss of principal. Estimates do not guarantee
+              future results. Please read our{' '}
               <Link href="/legal/risk-disclosure" className="text-blue-400 hover:underline">
                 Risk Disclosure
               </Link>{' '}
@@ -305,15 +256,15 @@ export default function PricingPage() {
           </div>
         </div>
 
-        {/* FAQ or Features Section */}
+        {/* What's Included */}
         <div className="mt-16 text-center">
           <h2 className="text-2xl font-bold text-white mb-8">What&apos;s Included</h2>
           <div className="grid md:grid-cols-2 lg:grid-cols-4 gap-6">
             {[
-              { icon: '📊', title: 'Market Scanner', desc: 'RSI, MACD, Momentum indicators' },
-              { icon: '📝', title: 'Thesis Cards', desc: 'Entry, target, and stop-loss analysis' },
-              { icon: '💼', title: 'Paper Trading', desc: 'Risk-free practice environment' },
-              { icon: '📧', title: 'Alerts', desc: 'Score threshold notifications' },
+              { icon: '💰', title: 'Flip Card', desc: 'Resale analysis with real sold comps' },
+              { icon: '📈', title: 'Stock Screening', desc: 'Pattern detection & paper trading' },
+              { icon: '🏪', title: 'Marketplace Radar', desc: 'Cross-platform deal scoring' },
+              { icon: '📧', title: 'Daily Alerts', desc: 'Flip opportunities delivered daily' },
             ].map((item, idx) => (
               <div key={idx} className="bg-gray-900 rounded-lg p-6">
                 <div className="text-3xl mb-3">{item.icon}</div>

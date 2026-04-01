@@ -142,7 +142,7 @@ export default function LoginPage() {
             </span>
           </Link>
           <h1 className="mt-8 text-3xl font-bold text-white">Welcome back</h1>
-          <p className="mt-2 text-gray-400">Sign in to access your trading dashboard</p>
+          <p className="mt-2 text-gray-400">Sign in to your account</p>
         </div>
 
         {/* Security badge */}
@@ -243,11 +243,11 @@ export default function LoginPage() {
             </motion.button>
           </form>
 
-          {/* Demo credentials hint */}
+          {/* First time hint */}
           <div className="mt-6 p-4 bg-cyan-500/10 border border-cyan-500/20 rounded-xl">
-            <p className="text-cyan-400 text-sm font-medium mb-1">🚀 First time?</p>
+            <p className="text-cyan-400 text-sm font-medium mb-1">New here?</p>
             <p className="text-gray-400 text-xs">
-              Create a free account to explore AI-powered trading intelligence.
+              Create a free account to get started.
             </p>
           </div>
         </motion.div>

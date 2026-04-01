@@ -51,6 +51,8 @@ export interface FlipCardOutput {
   confidence_score: number;
   risk_score: number;
   risk_flags: string[];
+  roi_percent: number;
+  est_days_to_sell: string;
   verdict: 'BUY' | 'NEGOTIATE LOWER' | 'PASS';
   rationale_summary: string;
   negotiation_target_price: number | null;
@@ -546,7 +548,11 @@ export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOut
     }
   }
 
-  // 13. Rationale
+  // 13. ROI + sell time
+  const roiPercent = buy_price > 0 ? Math.round((netMid / buy_price) * 100) : 0;
+  const estDaysToSell = estimateSellTime(shippingKey, category);
+
+  // 14. Rationale
   const rationale = generateRationale(verdict, buy_price, resaleMid, netMid, estFees, estShipping, confidence, comps.length, condition, feeTable.name, negotiationTarget);
 
   return {
@@ -565,6 +571,8 @@ export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOut
     confidence_score: confidence,
     risk_score: riskScore,
     risk_flags: riskFlags,
+    roi_percent: roiPercent,
+    est_days_to_sell: estDaysToSell,
     verdict,
     rationale_summary: rationale,
     negotiation_target_price: negotiationTarget,
@@ -577,6 +585,19 @@ export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOut
 // ============================================================================
 // Helpers
 // ============================================================================
+
+function estimateSellTime(shippingKey: string, _category: string): string {
+  const sellTimes: Record<string, string> = {
+    phones: '1–5 days', laptops: '3–10 days', gaming: '2–7 days',
+    audio: '3–10 days', electronics_small: '3–10 days', electronics_large: '7–21 days',
+    cameras: '5–14 days', shoes: '3–14 days', clothing: '7–21 days',
+    tools: '5–14 days', furniture: '7–30 days', appliances_small: '5–14 days',
+    appliances_large: '14–30 days', bikes: '7–21 days', instruments: '7–21 days',
+    collectibles: '3–14 days', sports: '7–21 days', baby: '5–14 days',
+    general: '5–14 days',
+  };
+  return sellTimes[shippingKey] || sellTimes['general'];
+}
 
 function normalizePlatformKey(platform?: string, shippingOrPickup?: string): string {
   const p = (platform || 'general').toLowerCase().replace(/\s+/g, '_');

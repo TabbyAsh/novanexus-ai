@@ -196,8 +196,8 @@ export default function RegisterPage() {
           </h1>
           <p className="mt-2 text-gray-400">
             {isFoundingFlow
-              ? 'Register to lock in $29/mo forever — Trader Intelligence, delivered daily.'
-              : 'Start your AI-powered trading journey'}
+              ? 'Full platform access. Priority support. Locked rate for life.'
+              : 'Get started with NovaNexus — free.'}
           </p>
         </div>
 
@@ -209,7 +209,7 @@ export default function RegisterPage() {
             className="mb-6 mx-auto max-w-md px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-center"
           >
             <div className="text-amber-400 font-semibold text-sm">⭐ Founding Member — $29/mo locked for life</div>
-            <div className="text-amber-400/60 text-xs mt-1">Daily Brief + full setup logic + Discord access</div>
+            <div className="text-amber-400/60 text-xs mt-1">Full platform access + priority support + early features</div>
           </motion.div>
         )}
 
@@ -228,10 +228,10 @@ export default function RegisterPage() {
         {/* Features highlight */}
         <div className="flex justify-center gap-6 mb-6 text-xs text-gray-400">
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Pre-market daily brief' : 'Free trial'}
+            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Full platform access' : 'Free to start'}
           </span>
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Structured setups' : 'No credit card'}
+            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Priority support' : 'No credit card'}
           </span>
           <span className="flex items-center gap-1">
             <span className="text-green-400">✓</span> Cancel anytime
@@ -287,7 +287,7 @@ export default function RegisterPage() {
                 value={orgName}
                 onChange={(e) => setOrgName(e.target.value)}
                 className="w-full px-4 py-3.5 bg-gray-900/50 border border-gray-700 rounded-xl text-white placeholder-gray-500 focus:outline-none focus:border-purple-500 focus:ring-2 focus:ring-purple-500/20 transition-all"
-                placeholder="Your company or trading desk name"
+                placeholder="Organization (optional)"
                 disabled={isLoading}
               />
             </div>

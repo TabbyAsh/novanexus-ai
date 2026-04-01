@@ -3,10 +3,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-// ============================================================================
-// Types
-// ============================================================================
-
+// ─── Types ───────────────────────────────────────────────────────────
 interface FlipCard {
   item_title: string;
   item_category: string;
@@ -23,6 +20,8 @@ interface FlipCard {
   confidence_score: number;
   risk_score: number;
   risk_flags: string[];
+  roi_percent?: number;
+  est_days_to_sell?: string;
   verdict: 'BUY' | 'NEGOTIATE LOWER' | 'PASS';
   rationale_summary: string;
   negotiation_target_price: number | null;
@@ -41,15 +40,24 @@ const CATEGORIES = [
   'Large Appliances', 'Bikes', 'Collectibles', 'Sports & Fitness', 'Baby', 'Other',
 ] as const;
 
-// ============================================================================
-// Component
-// ============================================================================
+// ─── Helpers ─────────────────────────────────────────────────────────
+const fmt = (n: number) => {
+  const abs = Math.abs(n);
+  const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(abs);
+  return n < 0 ? `-${formatted}` : formatted;
+};
 
+function confidenceLabel(score: number): string {
+  if (score >= 70) return 'High';
+  if (score >= 40) return 'Moderate';
+  return 'Low';
+}
+
+// ─── Component ───────────────────────────────────────────────────────
 export default function AnalyzePage() {
   const [step, setStep] = useState<Step>('input');
   const [result, setResult] = useState<FlipCard | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [processingStep, setProcessingStep] = useState(0);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -61,29 +69,12 @@ export default function AnalyzePage() {
   const [platform, setPlatform] = useState('eBay');
   const [location, setLocation] = useState('');
 
-  const fmt = (n: number) => {
-    const abs = Math.abs(n);
-    const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(abs);
-    return n < 0 ? `-${formatted}` : formatted;
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!title.trim() || !buyPrice) return;
 
     setStep('processing');
     setError(null);
-    setProcessingStep(0);
-
-    // Meaningful progress steps
-    const steps = [
-      { delay: 300, step: 1 },
-      { delay: 800, step: 2 },
-      { delay: 1200, step: 3 },
-    ];
-    for (const s of steps) {
-      setTimeout(() => setProcessingStep(s.step), s.delay);
-    }
 
     try {
       const res = await fetch('/api/proxy/v1/flip-card/analyze', {
@@ -104,11 +95,8 @@ export default function AnalyzePage() {
       const data = await res.json();
 
       if (data.success && data.data) {
-        setProcessingStep(4);
-        setTimeout(() => {
-          setResult(data.data);
-          setStep('result');
-        }, 400);
+        setResult(data.data);
+        setStep('result');
       } else {
         setError(data.error?.message || 'Analysis failed. Please try again.');
         setStep('input');
@@ -134,19 +122,24 @@ export default function AnalyzePage() {
   };
 
   return (
-    <div className="min-h-screen bg-gray-950 text-white">
+    <div className="min-h-screen bg-[#0a0a0f] text-white">
       {/* Nav */}
-      <nav className="border-b border-gray-800 px-6 py-4">
+      <nav className="border-b border-white/5 px-6 py-4 backdrop-blur-xl bg-[#0a0a0f]/80">
         <div className="max-w-3xl mx-auto flex items-center justify-between">
-          <Link href="/" className="flex items-center gap-2">
-            <div className="w-8 h-8 rounded-lg bg-emerald-600 flex items-center justify-center">
-              <span className="text-white font-bold text-sm">FC</span>
+          <Link href="/" className="flex items-center gap-2.5">
+            <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
+              <span className="text-white font-bold text-sm">N</span>
             </div>
-            <span className="text-white font-semibold">Flip Card</span>
+            <div className="flex items-baseline gap-1.5">
+              <span className="text-white font-semibold">NovaNexus</span>
+              <span className="text-gray-500 text-sm">/ Flip Card</span>
+            </div>
           </Link>
           <div className="flex items-center gap-4 text-sm">
-            <Link href="/dashboard" className="text-gray-400 hover:text-white transition">Dashboard</Link>
-            <Link href="/" className="text-gray-400 hover:text-white transition">Home</Link>
+            <Link href="/login" className="text-gray-400 hover:text-white transition">Sign In</Link>
+            <Link href="/register" className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-sm font-medium hover:shadow-lg hover:shadow-cyan-500/20 transition-all">
+              Get Started
+            </Link>
           </div>
         </div>
       </nav>
@@ -158,7 +151,7 @@ export default function AnalyzePage() {
             <div className="text-center mb-10">
               <h1 className="text-3xl font-bold mb-3">Analyze a Flip</h1>
               <p className="text-gray-400">
-                Describe the item you're considering. We'll estimate resale value, costs, and give you a clear verdict.
+                Describe the item you&apos;re considering. We&apos;ll estimate resale value, costs, and give you a clear verdict.
               </p>
             </div>
 
@@ -169,242 +162,147 @@ export default function AnalyzePage() {
             )}
 
             <form onSubmit={handleSubmit} className="space-y-6">
-              {/* Item */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Item title *</label>
-                <input
-                  value={title}
-                  onChange={e => setTitle(e.target.value)}
-                  placeholder="e.g. Sony WH-1000XM5 Headphones"
-                  required
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                />
+                <input value={title} onChange={e => setTitle(e.target.value)} placeholder="e.g. Sony WH-1000XM5 Headphones" required
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition" />
               </div>
 
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Description <span className="text-gray-500">(optional)</span></label>
-                <textarea
-                  value={description}
-                  onChange={e => setDescription(e.target.value)}
-                  placeholder="Any extra details — model, color, included accessories, damage..."
-                  rows={2}
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                />
+                <textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="Any extra details — model, color, damage..." rows={2}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition" />
               </div>
 
-              {/* Price + Condition */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Asking price *</label>
                   <div className="relative">
                     <span className="absolute left-3 top-3 text-gray-500">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={buyPrice}
-                      onChange={e => setBuyPrice(e.target.value)}
-                      placeholder="0.00"
-                      required
-                      className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                    />
+                    <input type="number" step="0.01" min="0" value={buyPrice} onChange={e => setBuyPrice(e.target.value)} placeholder="0.00" required
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition" />
                   </div>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Condition</label>
-                  <select
-                    value={condition}
-                    onChange={e => setCondition(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                  >
+                  <select value={condition} onChange={e => setCondition(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition">
                     {CONDITIONS.map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
               </div>
 
-              {/* Category + Platform */}
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Category <span className="text-gray-500">(optional)</span></label>
-                  <select
-                    value={category}
-                    onChange={e => setCategory(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                  >
+                  <select value={category} onChange={e => setCategory(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition">
                     <option value="">Auto-detect</option>
                     {CATEGORIES.filter(Boolean).map(c => <option key={c} value={c}>{c}</option>)}
                   </select>
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-gray-300 mb-2">Sell on</label>
-                  <select
-                    value={platform}
-                    onChange={e => setPlatform(e.target.value)}
-                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                  >
+                  <select value={platform} onChange={e => setPlatform(e.target.value)}
+                    className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition">
                     {PLATFORMS.map(p => <option key={p} value={p}>{p}</option>)}
                   </select>
                 </div>
               </div>
 
-              {/* Shipping */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Fulfillment</label>
                 <div className="flex gap-3">
-                  <button
-                    type="button"
-                    onClick={() => setShippingOrPickup('shipping')}
-                    className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${
-                      shippingOrPickup === 'shipping'
-                        ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400'
-                        : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'
-                    }`}
-                  >
-                    Ship it
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => setShippingOrPickup('pickup')}
-                    className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${
-                      shippingOrPickup === 'pickup'
-                        ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400'
-                        : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'
-                    }`}
-                  >
-                    Local pickup
-                  </button>
+                  {(['shipping', 'pickup'] as const).map((opt) => (
+                    <button key={opt} type="button" onClick={() => setShippingOrPickup(opt)}
+                      className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${
+                        shippingOrPickup === opt
+                          ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400'
+                          : 'bg-gray-900 border-gray-700 text-gray-400 hover:border-gray-600'
+                      }`}>
+                      {opt === 'shipping' ? 'Ship it' : 'Local pickup'}
+                    </button>
+                  ))}
                 </div>
               </div>
 
-              {/* Location (optional) */}
               <div>
                 <label className="block text-sm font-medium text-gray-300 mb-2">Location <span className="text-gray-500">(optional)</span></label>
-                <input
-                  value={location}
-                  onChange={e => setLocation(e.target.value)}
-                  placeholder="e.g. Los Angeles, CA"
-                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
-                />
+                <input value={location} onChange={e => setLocation(e.target.value)} placeholder="e.g. Los Angeles, CA"
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition" />
               </div>
 
-              {/* Submit */}
-              <button
-                type="submit"
-                className="w-full py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-lg transition"
-              >
+              <button type="submit" className="w-full py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-lg transition">
                 Get My Flip Card
               </button>
-
-              <p className="text-center text-xs text-gray-500">
-                Free to use. No account required.
-              </p>
+              <p className="text-center text-xs text-gray-500">3 free analyses per day. No account required.</p>
             </form>
           </div>
         )}
 
-        {/* Processing State */}
+        {/* Processing */}
         {step === 'processing' && (
           <div className="flex flex-col items-center justify-center py-24">
             <div className="w-16 h-16 rounded-full border-4 border-emerald-500/30 border-t-emerald-500 animate-spin mb-8" />
-            <div className="space-y-3 text-center">
-              {[
-                'Evaluating opportunity...',
-                'Looking up recent sold prices...',
-                'Calculating fees and costs...',
-                'Generating your Flip Card...',
-              ].map((label, i) => (
-                <p
-                  key={label}
-                  className={`text-sm transition-all duration-300 ${
-                    processingStep >= i ? 'text-white' : 'text-gray-600'
-                  }`}
-                >
-                  {processingStep > i ? '✓' : processingStep === i ? '→' : '·'} {label}
-                </p>
-              ))}
-            </div>
+            <p className="text-gray-400">Looking up sold prices and calculating...</p>
           </div>
         )}
 
-        {/* Result: Flip Card */}
+        {/* Result */}
         {step === 'result' && result && (
           <div>
             {/* Verdict Banner */}
             <div className={`text-center py-8 px-6 rounded-2xl mb-8 ${
-              result.verdict === 'BUY'
-                ? 'bg-emerald-900/40 border-2 border-emerald-500/60'
-                : result.verdict === 'NEGOTIATE LOWER'
-                ? 'bg-amber-900/40 border-2 border-amber-500/60'
-                : 'bg-red-900/40 border-2 border-red-500/60'
+              result.verdict === 'BUY' ? 'bg-emerald-900/40 border-2 border-emerald-500/60'
+              : result.verdict === 'NEGOTIATE LOWER' ? 'bg-amber-900/40 border-2 border-amber-500/60'
+              : 'bg-red-900/40 border-2 border-red-500/60'
             }`}>
               <div className={`text-5xl font-black mb-3 ${
-                result.verdict === 'BUY'
-                  ? 'text-emerald-400'
-                  : result.verdict === 'NEGOTIATE LOWER'
-                  ? 'text-amber-400'
-                  : 'text-red-400'
+                result.verdict === 'BUY' ? 'text-emerald-400'
+                : result.verdict === 'NEGOTIATE LOWER' ? 'text-amber-400'
+                : 'text-red-400'
               }`}>
                 {result.verdict}
               </div>
               <p className="text-gray-300 max-w-xl mx-auto">{result.rationale_summary}</p>
             </div>
 
-            {/* Item Summary */}
+            {/* Item Summary + Confidence */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-4">
               <div className="flex items-start justify-between mb-2">
                 <div>
                   <h2 className="text-xl font-bold text-white">{result.item_title}</h2>
                   <p className="text-sm text-gray-400">{result.item_category} · {result.condition_assessment}</p>
                 </div>
-              <div className="text-right">
-                <div className="text-sm text-gray-400">{result.confidence_score >= 70 ? 'High' : result.confidence_score >= 40 ? 'Moderate' : 'Low'} confidence</div>
-                <div className="text-lg font-bold text-white">{result.confidence_score}%</div>
+                <div className="text-right">
+                  <div className="text-sm text-gray-400">{confidenceLabel(result.confidence_score)} confidence</div>
+                  <div className="text-lg font-bold text-white">{result.confidence_score}%</div>
+                </div>
               </div>
-              </div>
-              {/* Confidence bar */}
               <div className="w-full h-2 bg-gray-800 rounded-full overflow-hidden">
-                <div
-                  className={`h-full rounded-full transition-all ${
-                    result.confidence_score >= 60 ? 'bg-emerald-500' :
-                    result.confidence_score >= 40 ? 'bg-amber-500' : 'bg-red-500'
-                  }`}
-                  style={{ width: `${result.confidence_score}%` }}
-                />
+                <div className={`h-full rounded-full transition-all ${
+                  result.confidence_score >= 60 ? 'bg-emerald-500' : result.confidence_score >= 40 ? 'bg-amber-500' : 'bg-red-500'
+                }`} style={{ width: `${result.confidence_score}%` }} />
               </div>
             </div>
 
-            {/* Economics Breakdown */}
+            {/* Economics */}
             <div className="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-4">
               <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">Economics</h3>
               <div className="space-y-3">
                 <Row label="Your buy price" value={fmt(result.buy_price)} />
-                {(result as any).roi_percent !== undefined && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-300">Return on investment</span>
-                    <span className={`text-sm font-medium ${(result as any).roi_percent > 0 ? 'text-emerald-400' : 'text-white'}`}>{(result as any).roi_percent > 0 ? '+' : ''}{(result as any).roi_percent}%</span>
-                  </div>
+                {result.roi_percent !== undefined && (
+                  <Row label="Return on investment" value={`${result.roi_percent > 0 ? '+' : ''}${result.roi_percent}%`} highlight={result.roi_percent > 0} />
                 )}
-                {(result as any).est_days_to_sell && (
-                  <div className="flex items-center justify-between">
-                    <span className="text-sm text-gray-500">Estimated time to sell</span>
-                    <span className="text-sm text-gray-400">{(result as any).est_days_to_sell}</span>
-                  </div>
+                {result.est_days_to_sell && (
+                  <Row label="Estimated time to sell" value={result.est_days_to_sell} dim />
                 )}
                 <div className="border-t border-gray-800 pt-3">
                   <div className="text-xs text-gray-500 mb-2">Estimated resale</div>
                   <div className="grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <div className="text-sm text-gray-400">Low</div>
-                      <div className="text-lg font-semibold text-white">{fmt(result.est_resale_low)}</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-400">Mid</div>
-                      <div className="text-lg font-bold text-white">{fmt(result.est_resale_mid)}</div>
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-400">High</div>
-                      <div className="text-lg font-semibold text-white">{fmt(result.est_resale_high)}</div>
-                    </div>
+                    <div><div className="text-sm text-gray-400">Low</div><div className="text-lg font-semibold text-white">{fmt(result.est_resale_low)}</div></div>
+                    <div><div className="text-sm text-gray-400">Mid</div><div className="text-lg font-bold text-white">{fmt(result.est_resale_mid)}</div></div>
+                    <div><div className="text-sm text-gray-400">High</div><div className="text-lg font-semibold text-white">{fmt(result.est_resale_high)}</div></div>
                   </div>
                 </div>
                 <div className="border-t border-gray-800 pt-3">
@@ -414,18 +312,9 @@ export default function AnalyzePage() {
                 <div className="border-t border-gray-800 pt-3">
                   <div className="text-xs text-gray-500 mb-2">Expected net profit</div>
                   <div className="grid grid-cols-3 gap-3 text-center">
-                    <div>
-                      <div className="text-sm text-gray-400">Low</div>
-                      <ProfitValue value={result.est_net_profit_low} />
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-400">Mid</div>
-                      <ProfitValue value={result.est_net_profit_mid} bold />
-                    </div>
-                    <div>
-                      <div className="text-sm text-gray-400">High</div>
-                      <ProfitValue value={result.est_net_profit_high} />
-                    </div>
+                    <div><div className="text-sm text-gray-400">Low</div><ProfitValue value={result.est_net_profit_low} /></div>
+                    <div><div className="text-sm text-gray-400">Mid</div><ProfitValue value={result.est_net_profit_mid} bold /></div>
+                    <div><div className="text-sm text-gray-400">High</div><ProfitValue value={result.est_net_profit_high} /></div>
                   </div>
                 </div>
               </div>
@@ -439,7 +328,7 @@ export default function AnalyzePage() {
                   <div>
                     <div className="text-amber-300 font-semibold">Negotiation target</div>
                     <p className="text-gray-300 text-sm">
-                      Try to buy at <span className="text-amber-400 font-bold">{fmt(result.negotiation_target_price)}</span> or less for a solid flip.
+                      Offer <span className="text-amber-400 font-bold">{fmt(result.negotiation_target_price)}</span> or less — at that price, this becomes a solid flip.
                     </p>
                   </div>
                 </div>
@@ -451,24 +340,25 @@ export default function AnalyzePage() {
               <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">What to do next</h3>
               {result.verdict === 'BUY' && (
                 <ul className="space-y-2 text-sm text-gray-300">
-                  <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">→</span> Secure the item at {fmt(result.buy_price)} or negotiate lower</li>
-                  <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">→</span> List with clean photos and detailed description</li>
-                  <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">→</span> Price around {fmt(result.est_resale_mid)} based on sold comps</li>
+                  <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">→</span> Secure the item at {fmt(result.buy_price)} or negotiate lower for extra margin</li>
+                  <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">→</span> List on {platform} with clean photos and detailed description</li>
+                  <li className="flex items-start gap-2"><span className="text-emerald-400 mt-0.5">→</span> Price competitively around {fmt(result.est_resale_mid)} based on recent sold comps</li>
                 </ul>
               )}
               {result.verdict === 'NEGOTIATE LOWER' && (
                 <ul className="space-y-2 text-sm text-gray-300">
-                  <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">→</span> Don&apos;t buy at asking price — margin is too thin</li>
+                  <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">→</span> Don&apos;t buy at the asking price — the margin is too thin</li>
                   {result.negotiation_target_price && (
                     <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">→</span> Counter-offer at {fmt(result.negotiation_target_price)} for a worthwhile flip</li>
                   )}
-                  <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">→</span> If they won&apos;t budge, walk away</li>
+                  <li className="flex items-start gap-2"><span className="text-amber-400 mt-0.5">→</span> If they won&apos;t negotiate, walk away — there are always more deals</li>
                 </ul>
               )}
               {result.verdict === 'PASS' && (
                 <ul className="space-y-2 text-sm text-gray-300">
-                  <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">→</span> Skip this one — numbers don&apos;t work at this price</li>
-                  <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">→</span> Look for the same item cheaper or in better condition</li>
+                  <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">→</span> Skip this one — the numbers don&apos;t work at this price</li>
+                  <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">→</span> Look for the same item at a lower buy price or in better condition</li>
+                  <li className="flex items-start gap-2"><span className="text-red-400 mt-0.5">→</span> High-demand categories like phones, gaming, and audio tend to flip faster</li>
                 </ul>
               )}
             </div>
@@ -479,18 +369,15 @@ export default function AnalyzePage() {
                 <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-3">
                   Risk Flags
                   <span className={`ml-2 px-2 py-0.5 rounded text-xs ${
-                    result.risk_score >= 60 ? 'bg-red-900/50 text-red-400' :
-                    result.risk_score >= 30 ? 'bg-amber-900/50 text-amber-400' :
-                    'bg-gray-800 text-gray-400'
-                  }`}>
-                    {result.risk_score}/100
-                  </span>
+                    result.risk_score >= 60 ? 'bg-red-900/50 text-red-400'
+                    : result.risk_score >= 30 ? 'bg-amber-900/50 text-amber-400'
+                    : 'bg-gray-800 text-gray-400'
+                  }`}>{result.risk_score}/100</span>
                 </h3>
                 <ul className="space-y-2">
                   {result.risk_flags.map((flag, i) => (
                     <li key={i} className="flex items-start gap-2 text-sm text-gray-300">
-                      <span className="text-amber-500 mt-0.5">⚠</span>
-                      {flag}
+                      <span className="text-amber-500 mt-0.5">⚠</span> {flag}
                     </li>
                   ))}
                 </ul>
@@ -521,27 +408,20 @@ export default function AnalyzePage() {
                 ))}
               </ul>
               <p className="mt-4 text-xs text-gray-600 italic">
-                This is a structured estimate, not a guarantee. Actual results depend on condition, timing, local demand, and buyer negotiation. Never guaranteed profit.
+                This is a structured estimate, not a guarantee. Actual results depend on condition, timing, local demand, and buyer negotiation.
               </p>
             </div>
 
             {/* Actions */}
             <div className="flex gap-4">
-              <button
-                onClick={reset}
-                className="flex-1 py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition"
-              >
+              <button onClick={reset} className="flex-1 py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition">
                 Analyze Another
               </button>
-              <Link
-                href="/dashboard"
-                className="py-4 px-6 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium transition text-center"
-              >
-                Dashboard
+              <Link href="/register" className="py-4 px-6 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 hover:shadow-lg hover:shadow-cyan-500/20 text-white font-medium transition text-center">
+                Unlock Unlimited
               </Link>
             </div>
 
-            {/* Powered by */}
             <p className="text-center text-xs text-gray-600 mt-8">
               Powered by NovaNexus · {new Date(result.generated_at).toLocaleString()}
             </p>
@@ -552,15 +432,12 @@ export default function AnalyzePage() {
   );
 }
 
-// ============================================================================
-// Sub-components
-// ============================================================================
-
-function Row({ label, value, dim }: { label: string; value: string; dim?: boolean }) {
+// ─── Sub-components ──────────────────────────────────────────────────
+function Row({ label, value, dim, highlight }: { label: string; value: string; dim?: boolean; highlight?: boolean }) {
   return (
     <div className="flex items-center justify-between">
       <span className={dim ? 'text-sm text-gray-500' : 'text-sm text-gray-300'}>{label}</span>
-      <span className={dim ? 'text-sm text-gray-400' : 'text-sm font-medium text-white'}>{value}</span>
+      <span className={highlight ? 'text-sm font-medium text-emerald-400' : dim ? 'text-sm text-gray-400' : 'text-sm font-medium text-white'}>{value}</span>
     </div>
   );
 }

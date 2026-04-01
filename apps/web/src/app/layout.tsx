@@ -5,8 +5,8 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'Nova - AI-Orchestrated Operating System',
-  description: 'The universal life-and-business operating system that merges trading, e-commerce, and content distribution.',
+  title: 'NovaNexus — Market Intelligence & Operational Infrastructure',
+  description: 'Resale analytics, stock screening, deal scoring, and operational tools. Built on real data and transparent assumptions.',
 };
 
 export default function RootLayout({
