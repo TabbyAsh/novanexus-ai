@@ -260,9 +260,12 @@ function TryItSection() {
     setResult(null);
     setError(null);
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
+      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) headers['Authorization'] = `Bearer ${token}`;
       const res = await fetch('/api/proxy/v1/flip-card/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers,
         body: JSON.stringify({
           title: title.trim(),
           buy_price: parseFloat(price),

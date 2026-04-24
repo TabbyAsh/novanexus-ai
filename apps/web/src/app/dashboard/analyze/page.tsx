@@ -88,9 +88,12 @@ export default function AnalyzePage() {
     }
 
     try {
+      const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
+      const hdrs: Record<string, string> = { 'Content-Type': 'application/json' };
+      if (token) hdrs['Authorization'] = `Bearer ${token}`;
       const res = await fetch('/api/proxy/v1/flip-card/analyze', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: hdrs,
         body: JSON.stringify({
           title: title.trim(),
           description: description.trim() || undefined,
