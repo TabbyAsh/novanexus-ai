@@ -839,6 +839,14 @@ app.post('/v1/flip-card/analyze', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+app.get('/v1/flip-card/stats', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.get('/v1/flip-card/result/:id', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // ============================================
 // Marketplace & Appraisal Routes -> Nova Hub (Phase 5.3)
 // ============================================

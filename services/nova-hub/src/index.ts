@@ -34,7 +34,7 @@ import {
   sortTradeCards,
   filterByBoard,
 } from './screener-engine';
-import { computeFlipCard, type FlipCardInput } from './flip-card';
+import { computeFlipCard, type FlipCardInput, logFlipEvent, getFlipStats, storeAnalysis, getStoredAnalysis } from './flip-card';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -6423,6 +6423,8 @@ app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
   if (!isAuthenticated) {
     const usage = getFlipCardUsage(clientIp);
     if (usage.remaining <= 0) {
+      // Log rate limit hit
+      logFlipEvent('rate_limit_hit', clientIp).catch(() => {});
       return res.status(429).json({
         success: false,
         error: {
@@ -6472,10 +6474,19 @@ app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
     }
     const usage = isAuthenticated ? { remaining: -1, limit: -1 } : getFlipCardUsage(clientIp);
 
+    // Store analysis for sharing + generate shareable ID
+    const analysisId = generateId().slice(0, 12);
+    storeAnalysis(analysisId, input, flipCard, clientIp, userId).catch(() => {});
+
+    // Log funnel event
+    logFlipEvent('analyzed', clientIp, userId, { verdict: flipCard.verdict, confidence: flipCard.confidence_score }).catch(() => {});
+
     res.json({
       success: true,
       data: {
         ...flipCard,
+        analysis_id: analysisId,
+        share_url: `/result/${analysisId}`,
         _usage: isAuthenticated ? { unlimited: true } : { remaining: usage.remaining, limit: usage.limit, signupUrl: '/register' },
       },
     });
@@ -6485,6 +6496,29 @@ app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
       success: false,
       error: { code: 'ANALYSIS_FAILED', message: 'Failed to generate Flip Card. Please try again.' },
     });
+  }
+});
+
+// GET /v1/flip-card/stats — public, returns analysis counts for social proof
+app.get('/v1/flip-card/stats', async (_req: Request, res: Response) => {
+  try {
+    const stats = await getFlipStats();
+    res.json({ success: true, data: stats });
+  } catch {
+    res.json({ success: true, data: { totalAnalyses: 0, todayAnalyses: 0 } });
+  }
+});
+
+// GET /v1/flip-card/result/:id — public, retrieve a stored analysis for sharing
+app.get('/v1/flip-card/result/:id', async (req: Request, res: Response) => {
+  try {
+    const analysis = await getStoredAnalysis(req.params.id);
+    if (!analysis) {
+      return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Analysis not found' } });
+    }
+    res.json({ success: true, data: analysis });
+  } catch {
+    res.status(500).json({ success: false, error: { code: 'RETRIEVAL_FAILED', message: 'Failed to retrieve analysis' } });
   }
 });
 

@@ -58,6 +58,8 @@ export default function AnalyzePage() {
   const [step, setStep] = useState<Step>('input');
   const [result, setResult] = useState<FlipCard | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -96,6 +98,7 @@ export default function AnalyzePage() {
 
       if (data.success && data.data) {
         setResult(data.data);
+        setAnalysisId(data.data.analysis_id || null);
         setStep('result');
       } else {
         setError(data.error?.message || 'Analysis failed. Please try again.');
@@ -417,6 +420,18 @@ export default function AnalyzePage() {
               <button onClick={reset} className="flex-1 py-4 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition">
                 Analyze Another
               </button>
+              {analysisId && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/result/${analysisId}`);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="py-4 px-6 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium transition"
+                >
+                  {copied ? '✓ Copied!' : 'Share'}
+                </button>
+              )}
               <Link href="/register" className="py-4 px-6 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 hover:shadow-lg hover:shadow-cyan-500/20 text-white font-medium transition text-center">
                 Unlock Unlimited
               </Link>

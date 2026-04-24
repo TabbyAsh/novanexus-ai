@@ -50,6 +50,8 @@ export default function AnalyzePage() {
   const [result, setResult] = useState<FlipCard | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [processingStep, setProcessingStep] = useState(0);
+  const [analysisId, setAnalysisId] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
 
   // Form state
   const [title, setTitle] = useState('');
@@ -105,6 +107,7 @@ export default function AnalyzePage() {
 
       if (data.success && data.data) {
         setProcessingStep(4);
+        if (data.data.analysis_id) setAnalysisId(data.data.analysis_id);
         setTimeout(() => {
           setResult(data.data);
           setStep('result');
@@ -533,6 +536,18 @@ export default function AnalyzePage() {
               >
                 Analyze Another
               </button>
+              {analysisId && (
+                <button
+                  onClick={() => {
+                    navigator.clipboard.writeText(`${window.location.origin}/result/${analysisId}`);
+                    setCopied(true);
+                    setTimeout(() => setCopied(false), 2000);
+                  }}
+                  className="py-4 px-6 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white font-medium transition"
+                >
+                  {copied ? '✓ Copied!' : 'Share'}
+                </button>
+              )}
               <Link
                 href="/dashboard"
                 className="py-4 px-6 rounded-lg bg-gray-800 hover:bg-gray-700 text-gray-300 font-medium transition text-center"

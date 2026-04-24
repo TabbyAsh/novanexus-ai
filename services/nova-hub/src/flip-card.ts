@@ -181,6 +181,20 @@ function detectCategory(title: string, userCategory?: string): { category: strin
 let lastEbayFetch = 0;
 const EBAY_MIN_INTERVAL_MS = 3000;
 let tableEnsured = false;
+let eventsTableEnsured = false;
+let analysesTableEnsured = false;
+
+// ─── User-Agent Rotation Pool ────────────────────────────────────────
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:128.0) Gecko/20100101 Firefox/128.0',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0',
+  'Mozilla/5.0 (iPhone; CPU iPhone OS 18_4 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Mobile/15E148 Safari/604.1',
+];
+function randomUA(): string { return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)]; }
 
 async function ensureSoldCompsTable(): Promise<void> {
   if (tableEnsured) return;
@@ -272,7 +286,7 @@ async function scrapeEbaySoldComps(searchQuery: string): Promise<SoldComp[]> {
   try {
     const res = await fetch(url, {
       headers: {
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/125.0.0.0 Safari/537.36',
+        'User-Agent': randomUA(),
         'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9',
         'Accept-Language': 'en-US,en;q=0.9',
       },
@@ -377,11 +391,118 @@ async function scrapeEbaySoldComps(searchQuery: string): Promise<SoldComp[]> {
       }
     }
 
-    logger.info(`eBay scrape: ${comps.length} comps for "${searchQuery}"`);
+    if (comps.length === 0) {
+      logger.warn('eBay scrape: 0 comps extracted — HTML structure may have changed', {
+        query: searchQuery,
+        htmlLength: html.length,
+        hasCardPrice: html.includes('s-card__price'),
+        hasItemWrapper: html.includes('s-item__wrapper'),
+      });
+    } else {
+      logger.info(`eBay scrape: ${comps.length} comps for "${searchQuery}"`);
+    }
     return comps;
   } catch (err) {
     logger.warn('eBay scrape failed', { error: (err as Error).message, query: searchQuery });
     return [];
+  }
+}
+
+// ============================================================================
+// Event Logging (funnel instrumentation)
+// ============================================================================
+
+async function ensureEventsTable(): Promise<void> {
+  if (eventsTableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS flip_events (
+        id SERIAL PRIMARY KEY,
+        event VARCHAR(50) NOT NULL,
+        ip VARCHAR(50),
+        user_id VARCHAR(100),
+        details JSONB,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+    eventsTableEnsured = true;
+  } catch { /* best effort */ }
+}
+
+export async function logFlipEvent(event: string, ip?: string, userId?: string, details?: Record<string, unknown>): Promise<void> {
+  await ensureEventsTable();
+  try {
+    await query(
+      'INSERT INTO flip_events (event, ip, user_id, details) VALUES ($1, $2, $3, $4)',
+      [event, ip || null, userId || null, details ? JSON.stringify(details) : null]
+    );
+  } catch { /* best effort */ }
+}
+
+export async function getFlipStats(): Promise<{ totalAnalyses: number; todayAnalyses: number }> {
+  await ensureEventsTable();
+  try {
+    const total = await queryOne<{ count: string }>(
+      "SELECT COUNT(*) as count FROM flip_events WHERE event = 'analyzed'"
+    );
+    const today = await queryOne<{ count: string }>(
+      "SELECT COUNT(*) as count FROM flip_events WHERE event = 'analyzed' AND created_at > CURRENT_DATE"
+    );
+    return {
+      totalAnalyses: parseInt(total?.count || '0', 10),
+      todayAnalyses: parseInt(today?.count || '0', 10),
+    };
+  } catch {
+    return { totalAnalyses: 0, todayAnalyses: 0 };
+  }
+}
+
+// ============================================================================
+// Stored Analyses (for shareable results)
+// ============================================================================
+
+async function ensureAnalysesTable(): Promise<void> {
+  if (analysesTableEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS flip_analyses (
+        id VARCHAR(20) PRIMARY KEY,
+        input_json JSONB NOT NULL,
+        result_json JSONB NOT NULL,
+        ip VARCHAR(50),
+        user_id VARCHAR(100),
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+    analysesTableEnsured = true;
+  } catch { /* best effort */ }
+}
+
+export async function storeAnalysis(id: string, input: FlipCardInput, result: FlipCardOutput, ip?: string, userId?: string): Promise<void> {
+  await ensureAnalysesTable();
+  try {
+    await query(
+      'INSERT INTO flip_analyses (id, input_json, result_json, ip, user_id) VALUES ($1, $2, $3, $4, $5)',
+      [id, JSON.stringify(input), JSON.stringify(result), ip || null, userId || null]
+    );
+  } catch (err) {
+    logger.warn('Failed to store analysis', { error: (err as Error).message });
+  }
+}
+
+export async function getStoredAnalysis(id: string): Promise<{ input: FlipCardInput; result: FlipCardOutput; createdAt: string } | null> {
+  await ensureAnalysesTable();
+  try {
+    const row = await queryOne<{ input_json: string; result_json: string; created_at: string }>(
+      'SELECT input_json, result_json, created_at FROM flip_analyses WHERE id = $1',
+      [id]
+    );
+    if (!row) return null;
+    return {
+      input: JSON.parse(row.input_json),
+      result: JSON.parse(row.result_json),
+      createdAt: row.created_at,
+    };
+  } catch {
+    return null;
   }
 }
 
