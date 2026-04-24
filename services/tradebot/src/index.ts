@@ -11,6 +11,7 @@ import { generateId, nowTimestamp, HTTP_STATUS } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { RegimeType } from '@nova/nexus-core';
 import { NexusTrader, type NexusDecisionCard } from './nexus-trader';
+import { getAdaptiveEngine, type TradeOutcome, type VolRegime } from './adaptive-thresholds';
 
 const PORT = parseInt(process.env.PORT || '3010', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
@@ -760,15 +761,19 @@ class ScannerEngine {
 
   private applySlippage(price: number, side: 'BUY' | 'SELL', integrity?: CandleIntegrity): { price: number; slippageBps: number } {
     if (!Number.isFinite(price)) return { price, slippageBps: 0 };
-    let slippageBps = PAPER_TRADE_BASE_SLIPPAGE_BPS;
 
+    // ── ATE-driven adaptive slippage (volatility-scaled, non-linear) ──
+    const ate = getAdaptiveEngine();
+    let slippageBps = ate.getAdaptiveParams().slippageBps;
+
+    // Add integrity-based adjustments on top of ATE baseline
     if (integrity) {
       const latency = integrity.latency_class.toLowerCase();
       if (latency === 'medium') slippageBps += 2;
-      if (latency === 'high') slippageBps += 6;
-      if (latency === 'stale') slippageBps += 10;
-      if (integrity.confidence_score < 0.5) slippageBps += 5;
-      if (integrity.confidence_score < 0.3) slippageBps += 8;
+      if (latency === 'high') slippageBps += 5;
+      if (latency === 'stale') slippageBps += 8;
+      if (integrity.confidence_score < 0.5) slippageBps += 3;
+      if (integrity.confidence_score < 0.3) slippageBps += 5;
     }
 
     slippageBps = Math.min(PAPER_TRADE_MAX_SLIPPAGE_BPS, Math.max(0, slippageBps));
@@ -878,6 +883,12 @@ class ScannerEngine {
         const volumeSpike = typeof quote.volume === 'number' && quote.volume > 5_000_000;
         const smaCross = computeSmaCross(indicators);
 
+        // Feed price into ATE for volatility estimation
+        try {
+          const ate = getAdaptiveEngine();
+          ate.ingestPrice(quote.price, quote.symbol);
+        } catch { /* best-effort */ }
+
         return { symbol: quote.symbol, quote, indicators, integrity: indicators?.integrity, rsi, macdVal, momentum, volumeSpike, smaCross };
       })
     );
@@ -959,14 +970,18 @@ class ScannerEngine {
       || regimePrimary === RegimeType.UNKNOWN;
 
     // Scoring profile: adjust weights/thresholds by regime without changing output shape.
+    // ── ATE-driven baseline thresholds (replaces static defaults) ──
+    const ate = getAdaptiveEngine();
+    const ateParams = ate.getAdaptiveParams();
+
     let bullBias = 1;
     let bearBias = 1;
     let rsiWeight = 1;
     let momentumWeight = 1;
-    let dampener = 1;
+    let dampener = ateParams.scoreDampener;
 
-    let buyThreshold = 65;
-    let sellThreshold = 35;
+    let buyThreshold = ateParams.signalThreshold;
+    let sellThreshold = 100 - ateParams.signalThreshold; // Mirror
 
     if (isBull && !isBear) {
       bullBias *= 1.1;
@@ -1106,16 +1121,20 @@ class ThesisGenerator {
   generate(scanResult: ScannerResult): ThesisCard {
     const isLong = scanResult.signal === 'BUY';
     const entryPrice = scanResult.quote.price;
-    // Deterministic default risk template (2:1 reward:risk)
-    const targetPercent = isLong ? 0.06 : -0.06;
-    const stopPercent = isLong ? -0.03 : 0.03;
+    const side: 'BUY' | 'SELL' = isLong ? 'BUY' : 'SELL';
 
-    const targetPrice = Math.round(entryPrice * (1 + targetPercent) * 100) / 100;
-    const stopLoss = Math.round(entryPrice * (1 + stopPercent) * 100) / 100;
+    // ── Adaptive stops/targets from ATE (volatility-scaled, not fixed %) ──
+    const ate = getAdaptiveEngine();
+    const { stopLoss: ateStop, targetPrice: ateTarget } = ate.computeStopTarget(
+      scanResult.symbol, entryPrice, side
+    );
+
+    const targetPrice = ateTarget;
+    const stopLoss = ateStop;
 
     const potentialGain = Math.abs(targetPrice - entryPrice);
     const potentialLoss = Math.abs(stopLoss - entryPrice);
-    const riskRewardRatio = Math.round((potentialGain / potentialLoss) * 100) / 100;
+    const riskRewardRatio = potentialLoss > 0 ? Math.round((potentialGain / potentialLoss) * 100) / 100 : 2;
 
     const reasoning: string[] = [];
     if (scanResult.indicators.rsi !== undefined) {
@@ -1264,6 +1283,32 @@ class PaperTradingSimulator {
     trade.pnlPercent = Math.round(((grossPnl - totalFees) / (trade.entryPrice * trade.quantity)) * 10000) / 100;
     trade.status = 'CLOSED';
     trade.closedAt = nowTimestamp();
+
+    // ── Feed outcome back to ATE for adaptive learning ──
+    try {
+      const ate = getAdaptiveEngine();
+      const volState = ate.getVolatilityState();
+      const outcome: TradeOutcome = {
+        symbol: trade.symbol,
+        side: trade.side,
+        entryPrice: trade.entryPrice,
+        exitPrice: fillPrice,
+        pnlPercent: trade.pnlPercent,
+        holdingPeriodMs: Date.now() - new Date(trade.openedAt).getTime(),
+        actualSlippageBps: (trade.entrySlippageBps || 0) + slippageBps,
+        hitStop: exitPrice !== undefined && (
+          (trade.side === 'BUY' && fillPrice <= trade.entryPrice * 0.97) ||
+          (trade.side === 'SELL' && fillPrice >= trade.entryPrice * 1.03)
+        ),
+        hitTarget: exitPrice !== undefined && (
+          (trade.side === 'BUY' && fillPrice >= trade.entryPrice * 1.05) ||
+          (trade.side === 'SELL' && fillPrice <= trade.entryPrice * 0.95)
+        ),
+        volRegimeAtEntry: volState.regime as VolRegime,
+        timestamp: Date.now(),
+      };
+      ate.recordOutcome(outcome);
+    } catch { /* feedback is best-effort */ }
 
     if (trade.side === 'BUY') {
       this.portfolio.cash += exitNotional - exitFee;
@@ -2118,6 +2163,24 @@ interface Alert {
 }
 
 const alerts: Map<string, Alert> = new Map();
+
+// ============================================================================
+// Adaptive Threshold Engine — Diagnostics
+// ============================================================================
+
+app.get('/api/adaptive-thresholds', (_req: Request, res: Response) => {
+  const ate = getAdaptiveEngine();
+  res.json({ success: true, data: ate.getDiagnostics() });
+});
+
+app.get('/api/adaptive-thresholds/:symbol', (req: Request, res: Response) => {
+  const ate = getAdaptiveEngine();
+  const symbol = req.params.symbol.toUpperCase();
+  const params = ate.getAdaptiveParams(symbol);
+  const atr = ate.getATR(symbol);
+  const vol = ate.getVolatilityState();
+  res.json({ success: true, data: { symbol, params, atr, volatility: vol } });
+});
 
 app.get('/api/alerts', (_req: Request, res: Response) => {
   res.json({ success: true, data: { alerts: Array.from(alerts.values()) } });
