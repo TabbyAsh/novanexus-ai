@@ -285,57 +285,73 @@ async function scrapeEbaySoldComps(searchQuery: string): Promise<SoldComp[]> {
     }
 
     const html = await res.text();
-
-    // Extract prices from eBay sold listing results
     const comps: SoldComp[] = [];
 
-    // Pattern 1: s-item blocks with price spans
-    const itemBlocks = html.split(/class="s-item__wrapper/g).slice(1, 30);
-    for (const block of itemBlocks) {
-      try {
-        // Extract title
-        const titleMatch = block.match(/class="s-item__title"[^>]*>(?:<span[^>]*>)?([^<]+)/);
-        const title = titleMatch?.[1]?.trim();
-        if (!title || title === 'Shop on eBay' || title.length < 5) continue;
-
-        // Extract price
-        const priceMatch = block.match(/class="s-item__price"[^>]*>\s*\$?([\d,]+\.\d{2})/);
-        if (!priceMatch) continue;
-        const price = parseFloat(priceMatch[1].replace(/,/g, ''));
-        if (price <= 0 || price > 100000) continue;
-
-        // Extract link
-        const linkMatch = block.match(/href="(https:\/\/www\.ebay\.com\/itm\/[^"]+)"/);
-
-        // Extract condition if available
-        const condMatch = block.match(/SECONDARY_INFO"[^>]*>([^<]+)/);
-
+    // ── Strategy 1: New eBay HTML (2025+) ── s-card__price based ──
+    // eBay now uses su-styled-text with s-card__price class
+    // "positive bold" = sold price, "positive strikethrough" = original price (skip)
+    const cardPriceRegex = /su-styled-text positive bold[^"]*s-card__price">\$?([\d,]+\.\d{2})/g;
+    let cpm;
+    while ((cpm = cardPriceRegex.exec(html)) && comps.length < 30) {
+      const price = parseFloat(cpm[1].replace(/,/g, ''));
+      // Filter out promo card prices (typically < $25 for "Shop on eBay" cards)
+      if (price >= 5 && price < 100000) {
         comps.push({
-          item_title: title,
+          item_title: searchQuery,
           sold_price: price,
-          condition: condMatch?.[1]?.trim() || null,
+          condition: null,
           sold_date: null,
           source: 'ebay',
-          source_url: linkMatch?.[1] || null,
+          source_url: null,
         });
-      } catch { /* skip malformed block */ }
+      }
     }
 
-    // Fallback pattern: raw price extraction if block parsing failed
+    // ── Strategy 2: Legacy eBay HTML ── s-item blocks ──
+    if (comps.length === 0) {
+      const itemBlocks = html.split(/class="s-item__wrapper/g).slice(1, 30);
+      for (const block of itemBlocks) {
+        try {
+          const titleMatch = block.match(/class="s-item__title"[^>]*>(?:<span[^>]*>)?([^<]+)/);
+          const title = titleMatch?.[1]?.trim();
+          if (!title || title === 'Shop on eBay' || title.length < 5) continue;
+
+          const priceMatch = block.match(/class="s-item__price"[^>]*>\s*\$?([\d,]+\.\d{2})/);
+          if (!priceMatch) continue;
+          const price = parseFloat(priceMatch[1].replace(/,/g, ''));
+          if (price <= 0 || price > 100000) continue;
+
+          const linkMatch = block.match(/href="(https:\/\/www\.ebay\.com\/itm\/[^"]+)"/);
+          const condMatch = block.match(/SECONDARY_INFO"[^>]*>([^<]+)/);
+
+          comps.push({
+            item_title: title,
+            sold_price: price,
+            condition: condMatch?.[1]?.trim() || null,
+            sold_date: null,
+            source: 'ebay',
+            source_url: linkMatch?.[1] || null,
+          });
+        } catch { /* skip malformed block */ }
+      }
+    }
+
+    // ── Strategy 3: Raw price extraction ── last resort ──
     if (comps.length === 0) {
       const priceRegex = /\$([\d,]+\.\d{2})/g;
       const rawPrices: number[] = [];
       let m;
-      while ((m = priceRegex.exec(html)) && rawPrices.length < 25) {
+      while ((m = priceRegex.exec(html)) && rawPrices.length < 40) {
         const p = parseFloat(m[1].replace(/,/g, ''));
-        if (p > 1 && p < 100000) rawPrices.push(p);
+        if (p > 5 && p < 100000) rawPrices.push(p);
       }
 
-      // Cluster prices to filter out navigation/UI prices
       if (rawPrices.length >= 3) {
-        const median = rawPrices.sort((a, b) => a - b)[Math.floor(rawPrices.length / 2)];
-        const relevant = rawPrices.filter(p => p >= median * 0.3 && p <= median * 3);
-        for (const p of relevant.slice(0, 15)) {
+        // Remove outliers: filter to within 2x of median
+        const sorted = rawPrices.sort((a, b) => a - b);
+        const median = sorted[Math.floor(sorted.length / 2)];
+        const relevant = sorted.filter(p => p >= median * 0.3 && p <= median * 2.5);
+        for (const p of relevant.slice(0, 20)) {
           comps.push({
             item_title: searchQuery,
             sold_price: p,
@@ -345,6 +361,19 @@ async function scrapeEbaySoldComps(searchQuery: string): Promise<SoldComp[]> {
             source_url: null,
           });
         }
+      }
+    }
+
+    // Filter out obvious promo/junk prices: accessories, promo cards, unrelated items
+    if (comps.length > 5) {
+      const prices = comps.map(c => c.sold_price).sort((a, b) => a - b);
+      const median = prices[Math.floor(prices.length / 2)];
+      // Remove anything below 25% of median (likely accessories or promo junk)
+      // and anything above 3x median (likely bundles or wrong items)
+      const filtered = comps.filter(c => c.sold_price >= median * 0.25 && c.sold_price <= median * 3);
+      if (filtered.length >= 3) {
+        comps.length = 0;
+        comps.push(...filtered);
       }
     }
 
@@ -461,13 +490,26 @@ export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOut
   }
 
   // 4. Apply condition adjustment
+  // Only apply condition penalty when using heuristics (no real comp data).
+  // When we have real comps, the sold prices already reflect real-world condition mix.
+  // "Good" is the most common condition on eBay — no adjustment needed.
   const condMultiplier = CONDITION_MULTIPLIERS[condition] || 0.75;
-  if (condition !== 'New' && condition !== 'Like New') {
-    // Only adjust downward if comps likely include mixed conditions
-    resaleLow = Math.round(resaleLow * condMultiplier * 100) / 100;
-    resaleMid = Math.round(resaleMid * condMultiplier * 100) / 100;
-    resaleHigh = Math.round(resaleHigh * condMultiplier * 100) / 100;
-    assumptions.push(`Resale adjusted for "${condition}" condition (${Math.round(condMultiplier * 100)}% of typical price)`);
+  const hasRealComps = comps.length >= 3;
+  if (!hasRealComps && condition !== 'New' && condition !== 'Like New') {
+    // Heuristic-only: apply a softer penalty (sqrt blend — less aggressive)
+    const softMultiplier = Math.sqrt(condMultiplier); // Good: 0.75 → 0.87, Fair: 0.60 → 0.77
+    resaleLow = Math.round(resaleLow * softMultiplier * 100) / 100;
+    resaleMid = Math.round(resaleMid * softMultiplier * 100) / 100;
+    resaleHigh = Math.round(resaleHigh * softMultiplier * 100) / 100;
+    assumptions.push(`Resale adjusted for "${condition}" condition (${Math.round(softMultiplier * 100)}% of typical price)`);
+  } else if (hasRealComps && (condition === 'Poor' || condition === 'For Parts')) {
+    // Only penalize Poor/For Parts even with real comps — these are genuinely below market
+    resaleLow = Math.round(resaleLow * 0.65 * 100) / 100;
+    resaleMid = Math.round(resaleMid * 0.65 * 100) / 100;
+    resaleHigh = Math.round(resaleHigh * 0.65 * 100) / 100;
+    assumptions.push(`Resale adjusted for "${condition}" condition (65% of sold comps price)`);
+  } else if (hasRealComps && condition !== 'New' && condition !== 'Like New') {
+    assumptions.push(`Sold comps reflect real market conditions — no additional adjustment for "${condition}"`);
   }
 
   // 5. Compute platform fees
@@ -529,10 +571,11 @@ export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOut
   confidence = Math.max(5, Math.min(95, Math.round(confidence)));
 
   // 11. Verdict
+  // Thresholds: BUY if 15%+ ROI with decent confidence, NEGOTIATE if any profit potential
   let verdict: FlipCardOutput['verdict'];
-  if (netMid > buy_price * 0.20 && confidence >= 40) {
+  if (netMid > buy_price * 0.15 && confidence >= 35) {
     verdict = 'BUY';
-  } else if (netMid > 0 && netHigh > buy_price * 0.15) {
+  } else if (netMid > 0 || netHigh > buy_price * 0.10) {
     verdict = 'NEGOTIATE LOWER';
   } else {
     verdict = 'PASS';
