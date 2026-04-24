@@ -159,8 +159,13 @@ export default function AnalyzePage() {
             </div>
 
             {error && (
-              <div className="mb-6 p-4 rounded-lg bg-red-900/30 border border-red-700/50 text-red-300 text-sm">
+              <div className="mb-6 p-4 rounded-lg bg-red-900/30 border border-red-700/50 text-red-300 text-sm text-center">
                 {error}
+                {error.includes('free') && (
+                  <Link href="/register" className="block mt-2 text-cyan-400 hover:text-cyan-300 font-medium">
+                    Sign up for unlimited access →
+                  </Link>
+                )}
               </div>
             )}
 

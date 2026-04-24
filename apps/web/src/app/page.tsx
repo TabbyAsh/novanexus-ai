@@ -252,11 +252,13 @@ function TryItSection() {
   const [shipping, setShipping] = useState<'shipping' | 'pickup'>('shipping');
   const [loading, setLoading] = useState(false);
   const [result, setResult] = useState<any>(null);
+  const [error, setError] = useState<string | null>(null);
 
   const analyze = async () => {
     if (!title.trim() || !price) return;
     setLoading(true);
     setResult(null);
+    setError(null);
     try {
       const res = await fetch('/api/proxy/v1/flip-card/analyze', {
         method: 'POST',
@@ -270,8 +272,14 @@ function TryItSection() {
         }),
       });
       const data = await res.json();
-      if (data.success) setResult(data.data);
-    } catch { /* fail silently */ } finally {
+      if (data.success) {
+        setResult(data.data);
+      } else {
+        setError(data.error?.message || 'Analysis failed. Please try again.');
+      }
+    } catch {
+      setError('Could not reach the server. Please try again.');
+    } finally {
       setLoading(false);
     }
   };
@@ -400,6 +408,18 @@ function TryItSection() {
                   </div>
                 </div>
               </div>
+
+              {/* Error */}
+              {error && (
+                <div className="p-3 rounded-lg bg-red-900/30 border border-red-700/40 text-red-300 text-sm text-center">
+                  {error}
+                  {error.includes('free') && (
+                    <Link href="/register" className="block mt-2 text-cyan-400 hover:text-cyan-300 font-medium">
+                      Sign up for unlimited access →
+                    </Link>
+                  )}
+                </div>
+              )}
 
               {/* Submit */}
               <button
