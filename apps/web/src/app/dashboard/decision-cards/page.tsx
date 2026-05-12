@@ -1,390 +1,536 @@
 'use client';
 
-import { useEffect, useState, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
+import { useCallback, useMemo, useState } from 'react';
+import type { FormEvent } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { api } from '@/lib/api';
+import {
+  ConfidenceSection,
+  DecisionSummarySection,
+  FinancialSection,
+  LearningSection,
+  MarketIntelSection,
+  OpportunitySection,
+} from '@/components/dashboard/NexusDecisionCardSections';
 
-// ============================================================
-// Life Cards — Zero input. Instant intelligence. Play your hand.
-// ============================================================
+type NexusAction = 'BUY' | 'SELL' | 'SKIP' | 'WAIT' | 'OFFER';
+type OutcomeStatus = 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'ABANDONED';
 
-type LifeCard = {
+type NexusCardResource = {
   id: string;
-  symbol: string;
-  verdict: 'Strong Buy' | 'Buy' | 'Lean Buy' | 'Hold' | 'Avoid';
-  confidence: number;
-  type: 'bullish' | 'bearish';
-  pattern: string;
-  price: number | null;
-  entry: number;
-  target: number;
-  stopLoss: number;
-  riskReward: number;
-  probabilityOfProfit: number;
-  expectedReturn: number;
-  maxDownside: number;
-  opportunityCost: string;
-  reasoning: string;
-  played: boolean;
-};
-
-function signalToLifeCard(signal: any, index: number): LifeCard {
-  const confidence = Math.round(signal.confidence ?? 50);
-  const entry = signal.entry ?? signal.price ?? 0;
-  const target = signal.target ?? entry * 1.05;
-  const stopLoss = signal.stopLoss ?? entry * 0.97;
-  const riskReward = signal.riskReward ?? ((target - entry) / Math.max(entry - stopLoss, 0.01));
-  const expectedReturn = entry > 0 ? ((target - entry) / entry) * 100 : 0;
-  const maxDownside = entry > 0 ? ((entry - stopLoss) / entry) * 100 : 3;
-
-  const baseProbability = confidence * 0.7 + Math.min(riskReward * 10, 30);
-  const probabilityOfProfit = Math.min(95, Math.max(15, Math.round(baseProbability)));
-
-  let verdict: LifeCard['verdict'];
-  if (signal.type === 'bearish') {
-    verdict = confidence >= 60 ? 'Avoid' : 'Hold';
-  } else if (confidence >= 75 && riskReward >= 2) {
-    verdict = 'Strong Buy';
-  } else if (confidence >= 60 && riskReward >= 1.5) {
-    verdict = 'Buy';
-  } else if (confidence >= 45) {
-    verdict = 'Lean Buy';
-  } else if (confidence >= 30) {
-    verdict = 'Hold';
-  } else {
-    verdict = 'Avoid';
-  }
-
-  const opportunityCost = expectedReturn > 5
-    ? `Passing means missing a potential ${expectedReturn.toFixed(1)}% move`
-    : expectedReturn > 2
-    ? `Moderate upside — consider position sizing`
-    : `Small edge — opportunity cost is low`;
-
-  const reasoning = signal.reasoning
-    || `${signal.pattern || 'Technical pattern'} detected with ${confidence}% confidence. Risk/reward ratio of ${riskReward.toFixed(1)}:1.`;
-
-  return {
-    id: `lc-${index}-${signal.symbol}`,
-    symbol: signal.symbol,
-    verdict,
-    confidence,
-    type: signal.type || 'bullish',
-    pattern: signal.pattern || 'momentum',
-    price: signal.price ?? null,
-    entry: Math.round(entry * 100) / 100,
-    target: Math.round(target * 100) / 100,
-    stopLoss: Math.round(stopLoss * 100) / 100,
-    riskReward: Math.round(riskReward * 10) / 10,
-    probabilityOfProfit,
-    expectedReturn: Math.round(expectedReturn * 10) / 10,
-    maxDownside: Math.round(maxDownside * 10) / 10,
-    opportunityCost,
-    reasoning,
-    played: false,
+  status: string;
+  action: string;
+  confidencePct: number;
+  volatilityLevel: string;
+  latestVersion: number;
+  card?: {
+    opportunity?: Record<string, unknown>;
+    marketIntel?: Record<string, unknown>;
+    financialModel?: Record<string, unknown>;
+    decision?: Record<string, unknown>;
+    confidence?: Record<string, unknown>;
   };
-}
-
-const VERDICT_STYLES: Record<string, { bg: string; text: string; ring: string; glow: string }> = {
-  'Strong Buy': { bg: 'bg-emerald-500/15', text: 'text-emerald-400', ring: 'ring-emerald-500/50', glow: 'shadow-[0_0_30px_rgba(16,185,129,0.15)]' },
-  'Buy': { bg: 'bg-green-500/15', text: 'text-green-400', ring: 'ring-green-500/40', glow: 'shadow-[0_0_20px_rgba(34,197,94,0.1)]' },
-  'Lean Buy': { bg: 'bg-cyan-500/15', text: 'text-cyan-400', ring: 'ring-cyan-500/40', glow: '' },
-  'Hold': { bg: 'bg-yellow-500/15', text: 'text-yellow-400', ring: 'ring-yellow-500/30', glow: '' },
-  'Avoid': { bg: 'bg-red-500/15', text: 'text-red-400', ring: 'ring-red-500/30', glow: '' },
+  latestLearning?: Record<string, unknown> | null;
+  createdAt: string;
+  updatedAt: string;
 };
 
-function ConfidenceRing({ value, size = 64 }: { value: number; size?: number }) {
-  const radius = (size - 8) / 2;
-  const circumference = 2 * Math.PI * radius;
-  const filled = (value / 100) * circumference;
-  const color = value >= 70 ? '#10b981' : value >= 45 ? '#eab308' : '#ef4444';
+type ObserveFormState = {
+  title: string;
+  category: string;
+  condition: string;
+  askingPrice: string;
+  estimatedFees: string;
+  estimatedShipping: string;
+  estimatedRefurbishment: string;
+  estimatedStorage: string;
+  expectedHoldDays: string;
+  soldComps: string;
+  location: string;
+  sourceType: string;
+  sourceUrl: string;
+  notes: string;
+};
 
-  return (
-    <svg width={size} height={size} className="transform -rotate-90">
-      <circle cx={size / 2} cy={size / 2} r={radius} stroke="rgba(255,255,255,0.08)" strokeWidth="4" fill="none" />
-      <circle cx={size / 2} cy={size / 2} r={radius} stroke={color} strokeWidth="4" fill="none"
-        strokeDasharray={`${filled} ${circumference - filled}`} strokeLinecap="round" className="transition-all duration-700" />
-      <text x={size / 2} y={size / 2 + 1} textAnchor="middle" dominantBaseline="central"
-        className="fill-white font-bold" fontSize={size * 0.25} transform={`rotate(90, ${size / 2}, ${size / 2})`}>
-        {value}%
-      </text>
-    </svg>
-  );
+type OutcomeFormState = {
+  executionId: string;
+  realizedSalePrice: string;
+  realizedTotalCost: string;
+  realizedNetProfit: string;
+  realizedHoldDays: string;
+  outcomeStatus: OutcomeStatus;
+  notes: string;
+};
+
+const initialObserveForm: ObserveFormState = {
+  title: '',
+  category: '',
+  condition: '',
+  askingPrice: '',
+  estimatedFees: '',
+  estimatedShipping: '',
+  estimatedRefurbishment: '',
+  estimatedStorage: '',
+  expectedHoldDays: '',
+  soldComps: '',
+  location: '',
+  sourceType: 'MARKETPLACE',
+  sourceUrl: '',
+  notes: '',
+};
+
+const initialOutcomeForm: OutcomeFormState = {
+  executionId: '',
+  realizedSalePrice: '',
+  realizedTotalCost: '',
+  realizedNetProfit: '',
+  realizedHoldDays: '',
+  outcomeStatus: 'PROFIT',
+  notes: '',
+};
+
+function toNumber(value: string): number | undefined {
+  if (!value.trim()) return undefined;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : undefined;
 }
 
-function MetricBar({ label, value, max, unit, color }: { label: string; value: number; max: number; unit: string; color: string }) {
-  const pct = Math.min(100, (Math.abs(value) / max) * 100);
-  return (
-    <div className="space-y-1">
-      <div className="flex justify-between text-xs">
-        <span className="text-gray-500">{label}</span>
-        <span className="text-gray-300">{value > 0 ? '+' : ''}{value}{unit}</span>
-      </div>
-      <div className="h-1.5 bg-gray-800 rounded-full overflow-hidden">
-        <div className={`h-full rounded-full ${color} transition-all duration-500`} style={{ width: `${pct}%` }} />
-      </div>
-    </div>
-  );
+function formatDate(value: string) {
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleString();
 }
 
-const PLACEHOLDER_CARDS: LifeCard[] = [
-  {
-    id: 'placeholder-1', symbol: '—', verdict: 'Hold', confidence: 0, type: 'bullish',
-    pattern: 'Awaiting data', price: null, entry: 0, target: 0, stopLoss: 0,
-    riskReward: 0, probabilityOfProfit: 0, expectedReturn: 0, maxDownside: 0,
-    opportunityCost: 'Connect to Nova Intelligence to receive live cards',
-    reasoning: 'Waiting for market data connection. Your Life Cards will appear automatically once the intelligence engine is online.',
-    played: false,
-  },
-];
-
-export default function LifeCardsPage() {
-  const [cards, setCards] = useState<LifeCard[]>([]);
-  const [loading, setLoading] = useState(true);
+export default function DecisionCardsPage() {
+  const [observeForm, setObserveForm] = useState<ObserveFormState>(initialObserveForm);
+  const [outcomeForm, setOutcomeForm] = useState<OutcomeFormState>(initialOutcomeForm);
+  const [executeAction, setExecuteAction] = useState<NexusAction>('BUY');
+  const [offerPrice, setOfferPrice] = useState('');
+  const [activeCardId, setActiveCardId] = useState<string | null>(null);
+  const [card, setCard] = useState<NexusCardResource | null>(null);
+  const [learningSnapshots, setLearningSnapshots] = useState<Array<Record<string, unknown>>>([]);
+  const [lastExecutionId, setLastExecutionId] = useState<string | null>(null);
+  const [loadingCard, setLoadingCard] = useState(false);
+  const [submittingObserve, setSubmittingObserve] = useState(false);
+  const [executingCard, setExecutingCard] = useState(false);
+  const [loggingOutcome, setLoggingOutcome] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const [playMessage, setPlayMessage] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
 
-  const loadCards = useCallback(async () => {
-    setLoading(true);
+  const cardTimeline = useMemo(() => {
+    if (!card) return [];
+    return [
+      { label: 'Created', value: formatDate(card.createdAt) },
+      { label: 'Updated', value: formatDate(card.updatedAt) },
+      { label: 'Version', value: String(card.latestVersion) },
+      { label: 'Card ID', value: card.id },
+    ];
+  }, [card]);
+
+  const loadCardDetails = useCallback(async (cardId: string) => {
+    setLoadingCard(true);
     setError(null);
     try {
-      const result = await api.runScreener({ maxSymbols: 20, minConfidence: 20, signalType: 'all' });
-      if (result.success && result.data?.signals?.length) {
-        const lifeCards = result.data.signals
-          .slice(0, 12)
-          .map((s: any, i: number) => signalToLifeCard(s, i))
-          .sort((a: LifeCard, b: LifeCard) => b.confidence - a.confidence);
-        setCards(lifeCards);
-      } else {
-        setCards(PLACEHOLDER_CARDS);
+      const [cardResult, learningResult] = await Promise.all([
+        api.getNexusDecisionCard(cardId),
+        api.getNexusLearning(cardId),
+      ]);
+
+      if (!cardResult.success || !cardResult.data) {
+        setError(cardResult.error?.message || 'Failed to load decision card');
+        return;
       }
-    } catch {
-      setCards(PLACEHOLDER_CARDS);
-      setError('Intelligence engine connecting — cards will appear when online');
+
+      setActiveCardId(cardId);
+      setCard(cardResult.data as unknown as NexusCardResource);
+      setLearningSnapshots(learningResult.success && learningResult.data?.snapshots ? learningResult.data.snapshots : []);
     } finally {
-      setLoading(false);
+      setLoadingCard(false);
     }
   }, []);
 
-  useEffect(() => { loadCards(); }, [loadCards]);
+  const onObserve = async (event: FormEvent) => {
+    event.preventDefault();
+    setSubmittingObserve(true);
+    setError(null);
+    setSuccess(null);
 
-  const playCard = async (card: LifeCard) => {
-    if (card.id.startsWith('placeholder')) return;
-    setPlayMessage(null);
     try {
-      const result = await api.createPaperTradeFromSignal({
-        symbol: card.symbol,
-        type: card.type,
-        entry: card.entry,
-        target: card.target,
-        stopLoss: card.stopLoss,
-        confidence: card.confidence,
-        reasoning: card.reasoning,
-      });
-      if (result.success) {
-        setCards(prev => prev.map(c => c.id === card.id ? { ...c, played: true } : c));
-        setPlayMessage(`✅ ${card.symbol} paper trade opened at $${card.entry}`);
-      } else {
-        setPlayMessage(`Could not execute: ${result.error?.message || 'Try again'}`);
+      const askingPrice = toNumber(observeForm.askingPrice);
+      if (askingPrice === undefined) {
+        setError('Asking price is required.');
+        return;
       }
-    } catch {
-      setPlayMessage('Paper trade unavailable — backend connecting');
+
+      const soldComps = observeForm.soldComps
+        .split(',')
+        .map((entry) => Number(entry.trim()))
+        .filter((entry) => Number.isFinite(entry));
+
+      const result = await api.observeOpportunity({
+        title: observeForm.title,
+        category: observeForm.category || undefined,
+        condition: observeForm.condition || undefined,
+        askingPrice,
+        estimatedFees: toNumber(observeForm.estimatedFees),
+        estimatedShipping: toNumber(observeForm.estimatedShipping),
+        estimatedRefurbishment: toNumber(observeForm.estimatedRefurbishment),
+        estimatedStorage: toNumber(observeForm.estimatedStorage),
+        expectedHoldDays: toNumber(observeForm.expectedHoldDays),
+        soldComps: soldComps.length ? soldComps : undefined,
+        location: observeForm.location || undefined,
+        sourceType: observeForm.sourceType || undefined,
+        sourceUrl: observeForm.sourceUrl || undefined,
+        notes: observeForm.notes || undefined,
+      });
+
+      if (!result.success || !result.data?.cardId) {
+        setError(result.error?.message || 'Unable to observe opportunity.');
+        return;
+      }
+
+      await loadCardDetails(result.data.cardId);
+      setSuccess(`Decision card created: ${result.data.cardId}`);
+      setObserveForm((previous) => ({ ...previous, soldComps: '', notes: '' }));
+    } finally {
+      setSubmittingObserve(false);
     }
   };
 
-  const dismissCard = (cardId: string) => {
-    setCards(prev => prev.filter(c => c.id !== cardId));
+  const onExecute = async () => {
+    if (!activeCardId) return;
+    setExecutingCard(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const result = await api.executeNexusDecisionCard(activeCardId, {
+        action: executeAction,
+        offerPrice: executeAction === 'OFFER' ? toNumber(offerPrice) : undefined,
+      });
+
+      if (!result.success || !result.data) {
+        setError(result.error?.message || 'Execution failed.');
+        return;
+      }
+
+      setLastExecutionId(result.data.executionId);
+      setOutcomeForm((previous) => ({ ...previous, executionId: result.data?.executionId || previous.executionId }));
+      await loadCardDetails(activeCardId);
+      setSuccess(`Execution recorded (${result.data.status}).`);
+    } finally {
+      setExecutingCard(false);
+    }
+  };
+
+  const onLogOutcome = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!activeCardId) return;
+    setLoggingOutcome(true);
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const result = await api.logNexusOutcome(activeCardId, {
+        executionId: outcomeForm.executionId || lastExecutionId || undefined,
+        realizedSalePrice: toNumber(outcomeForm.realizedSalePrice),
+        realizedTotalCost: toNumber(outcomeForm.realizedTotalCost),
+        realizedNetProfit: toNumber(outcomeForm.realizedNetProfit),
+        realizedHoldDays: toNumber(outcomeForm.realizedHoldDays),
+        outcomeStatus: outcomeForm.outcomeStatus,
+        notes: outcomeForm.notes || undefined,
+      });
+
+      if (!result.success) {
+        setError(result.error?.message || 'Outcome logging failed.');
+        return;
+      }
+
+      await loadCardDetails(activeCardId);
+      setSuccess('Outcome logged and learning snapshot updated.');
+      setOutcomeForm((previous) => ({ ...initialOutcomeForm, executionId: previous.executionId || lastExecutionId || '' }));
+    } finally {
+      setLoggingOutcome(false);
+    }
   };
 
   return (
     <DashboardLayout>
       <div className="space-y-6">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold text-white">Life Cards</h1>
-            <p className="text-gray-400 mt-1">Your hand of opportunities. Read the card. Play or pass.</p>
+            <h1 className="text-3xl font-bold text-white">Decision Cards</h1>
+            <p className="text-gray-400 mt-1">Observe opportunities, execute decisions, and learn from outcomes.</p>
           </div>
-          <button
-            onClick={loadCards}
-            disabled={loading}
-            className="px-5 py-2.5 rounded-xl bg-gradient-to-r from-cyan-600 to-purple-600 text-white font-medium hover:from-cyan-500 hover:to-purple-500 transition-all disabled:opacity-50"
-          >
-            {loading ? 'Dealing...' : '🔄 Deal New Hand'}
-          </button>
+          {activeCardId && (
+            <button
+              onClick={() => loadCardDetails(activeCardId)}
+              disabled={loadingCard}
+              className="px-4 py-2 rounded-lg bg-gray-800 text-gray-200 hover:bg-gray-700 transition disabled:opacity-60"
+            >
+              {loadingCard ? 'Refreshing…' : 'Refresh Card'}
+            </button>
+          )}
         </div>
 
-        {playMessage && (
-          <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }}
-            className="p-4 rounded-xl bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-sm">
-            {playMessage}
-          </motion.div>
-        )}
-
         {error && (
-          <div className="p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/30 text-yellow-300 text-sm">
+          <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
             {error}
           </div>
         )}
-
-        {loading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            {[1, 2, 3].map(i => (
-              <div key={i} className="h-80 rounded-2xl bg-gray-900/60 border border-gray-800 animate-pulse" />
-            ))}
+        {success && (
+          <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-green-300 text-sm">
+            {success}
           </div>
-        ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-6">
-            <AnimatePresence mode="popLayout">
-              {cards.map((card) => {
-                const style = VERDICT_STYLES[card.verdict] || VERDICT_STYLES['Hold'];
-                const isExpanded = expandedId === card.id;
-                const isPlaceholder = card.id.startsWith('placeholder');
+        )}
 
-                return (
-                  <motion.div
-                    key={card.id}
-                    layout
-                    initial={{ opacity: 0, scale: 0.95 }}
-                    animate={{ opacity: 1, scale: 1 }}
-                    exit={{ opacity: 0, scale: 0.9, x: 100 }}
-                    transition={{ duration: 0.3 }}
-                    onClick={() => setExpandedId(isExpanded ? null : card.id)}
-                    className={`relative rounded-2xl border cursor-pointer transition-all duration-300 ${style.bg} ${style.glow} ${
-                      isExpanded ? `ring-2 ${style.ring}` : 'border-gray-800 hover:border-gray-600'
-                    } ${card.played ? 'opacity-60' : ''}`}
+        <form onSubmit={onObserve} className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 space-y-4">
+          <h2 className="text-lg font-semibold text-white">1) Observe Opportunity</h2>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+            <input
+              required
+              value={observeForm.title}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, title: event.target.value }))}
+              placeholder="Title"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.category}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, category: event.target.value }))}
+              placeholder="Category"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.condition}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, condition: event.target.value }))}
+              placeholder="Condition"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              required
+              value={observeForm.askingPrice}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, askingPrice: event.target.value }))}
+              placeholder="Asking Price"
+              type="number"
+              step="0.01"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.estimatedFees}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, estimatedFees: event.target.value }))}
+              placeholder="Est. Fees"
+              type="number"
+              step="0.01"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.estimatedShipping}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, estimatedShipping: event.target.value }))}
+              placeholder="Est. Shipping"
+              type="number"
+              step="0.01"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.estimatedRefurbishment}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, estimatedRefurbishment: event.target.value }))}
+              placeholder="Est. Refurbishment"
+              type="number"
+              step="0.01"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.estimatedStorage}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, estimatedStorage: event.target.value }))}
+              placeholder="Est. Storage"
+              type="number"
+              step="0.01"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.expectedHoldDays}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, expectedHoldDays: event.target.value }))}
+              placeholder="Expected Hold Days"
+              type="number"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <input
+              value={observeForm.location}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, location: event.target.value }))}
+              placeholder="Location"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+            <select
+              value={observeForm.sourceType}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, sourceType: event.target.value }))}
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            >
+              <option value="MARKETPLACE">MARKETPLACE</option>
+              <option value="PRIVATE">PRIVATE</option>
+              <option value="WHOLESALE">WHOLESALE</option>
+              <option value="OTHER">OTHER</option>
+            </select>
+            <input
+              value={observeForm.sourceUrl}
+              onChange={(event) => setObserveForm((previous) => ({ ...previous, sourceUrl: event.target.value }))}
+              placeholder="Source URL"
+              className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+            />
+          </div>
+          <input
+            value={observeForm.soldComps}
+            onChange={(event) => setObserveForm((previous) => ({ ...previous, soldComps: event.target.value }))}
+            placeholder="Sold comps (comma-separated prices)"
+            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+          />
+          <textarea
+            value={observeForm.notes}
+            onChange={(event) => setObserveForm((previous) => ({ ...previous, notes: event.target.value }))}
+            placeholder="Notes"
+            rows={2}
+            className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+          />
+          <button
+            type="submit"
+            disabled={submittingObserve}
+            className="px-5 py-2.5 rounded-lg bg-cyan-600 text-white hover:bg-cyan-500 transition disabled:opacity-60"
+          >
+            {submittingObserve ? 'Observing…' : 'Create Decision Card'}
+          </button>
+        </form>
+
+        {card && (
+          <>
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <OpportunitySection card={card} />
+              <MarketIntelSection card={card} />
+              <FinancialSection card={card} />
+              <DecisionSummarySection card={card} />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <ConfidenceSection card={card} />
+              <LearningSection latestLearning={card.latestLearning} snapshots={learningSnapshots} />
+            </div>
+
+            <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <section className="bg-gray-900/80 border border-gray-800 rounded-2xl p-5">
+                <h3 className="text-lg font-semibold text-white mb-3">2) Execute Decision</h3>
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <select
+                    value={executeAction}
+                    onChange={(event) => setExecuteAction(event.target.value as NexusAction)}
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
                   >
-                    <div className="p-5 pb-3">
-                      <div className="flex items-start justify-between">
-                        <div>
-                          <div className="flex items-center gap-3">
-                            <span className="text-2xl font-bold text-white">{card.symbol}</span>
-                            <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${style.bg} ${style.text} border border-current/20`}>
-                              {card.verdict}
-                            </span>
-                          </div>
-                          <p className="text-sm text-gray-500 mt-1 capitalize">{card.pattern}</p>
-                        </div>
-                        {!isPlaceholder && <ConfidenceRing value={card.confidence} size={56} />}
-                      </div>
-                    </div>
+                    <option value="BUY">BUY</option>
+                    <option value="SELL">SELL</option>
+                    <option value="SKIP">SKIP</option>
+                    <option value="WAIT">WAIT</option>
+                    <option value="OFFER">OFFER</option>
+                  </select>
+                  <input
+                    value={offerPrice}
+                    onChange={(event) => setOfferPrice(event.target.value)}
+                    placeholder="Offer Price (if OFFER)"
+                    type="number"
+                    step="0.01"
+                    disabled={executeAction !== 'OFFER'}
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white disabled:opacity-50"
+                  />
+                  <button
+                    type="button"
+                    onClick={onExecute}
+                    disabled={executingCard}
+                    className="rounded-lg bg-purple-600 text-white hover:bg-purple-500 transition disabled:opacity-60"
+                  >
+                    {executingCard ? 'Executing…' : 'Execute'}
+                  </button>
+                </div>
+                {lastExecutionId && (
+                  <p className="text-xs text-gray-400 mt-3">Latest execution: {lastExecutionId}</p>
+                )}
+              </section>
 
-                    {!isPlaceholder && (
-                      <>
-                        <div className="px-5 pb-3 space-y-2">
-                          <MetricBar label="Profit Probability" value={card.probabilityOfProfit} max={100} unit="%" color="bg-emerald-500" />
-                          <MetricBar label="Expected Return" value={card.expectedReturn} max={20} unit="%" color="bg-cyan-500" />
-                          <MetricBar label="Max Downside" value={-card.maxDownside} max={15} unit="%" color="bg-red-500" />
-                        </div>
+              <form onSubmit={onLogOutcome} className="bg-gray-900/80 border border-gray-800 rounded-2xl p-5 space-y-3">
+                <h3 className="text-lg font-semibold text-white">3) Log Outcome</h3>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                  <input
+                    value={outcomeForm.executionId}
+                    onChange={(event) => setOutcomeForm((previous) => ({ ...previous, executionId: event.target.value }))}
+                    placeholder="Execution ID (optional)"
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                  />
+                  <select
+                    value={outcomeForm.outcomeStatus}
+                    onChange={(event) => setOutcomeForm((previous) => ({ ...previous, outcomeStatus: event.target.value as OutcomeStatus }))}
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                  >
+                    <option value="PROFIT">PROFIT</option>
+                    <option value="LOSS">LOSS</option>
+                    <option value="BREAKEVEN">BREAKEVEN</option>
+                    <option value="ABANDONED">ABANDONED</option>
+                  </select>
+                  <input
+                    value={outcomeForm.realizedSalePrice}
+                    onChange={(event) => setOutcomeForm((previous) => ({ ...previous, realizedSalePrice: event.target.value }))}
+                    placeholder="Realized Sale Price"
+                    type="number"
+                    step="0.01"
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                  />
+                  <input
+                    value={outcomeForm.realizedTotalCost}
+                    onChange={(event) => setOutcomeForm((previous) => ({ ...previous, realizedTotalCost: event.target.value }))}
+                    placeholder="Realized Total Cost"
+                    type="number"
+                    step="0.01"
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                  />
+                  <input
+                    value={outcomeForm.realizedNetProfit}
+                    onChange={(event) => setOutcomeForm((previous) => ({ ...previous, realizedNetProfit: event.target.value }))}
+                    placeholder="Realized Net Profit"
+                    type="number"
+                    step="0.01"
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                  />
+                  <input
+                    value={outcomeForm.realizedHoldDays}
+                    onChange={(event) => setOutcomeForm((previous) => ({ ...previous, realizedHoldDays: event.target.value }))}
+                    placeholder="Realized Hold Days"
+                    type="number"
+                    className="bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                  />
+                </div>
+                <textarea
+                  value={outcomeForm.notes}
+                  onChange={(event) => setOutcomeForm((previous) => ({ ...previous, notes: event.target.value }))}
+                  placeholder="Outcome notes"
+                  rows={2}
+                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2 text-white"
+                />
+                <button
+                  type="submit"
+                  disabled={loggingOutcome}
+                  className="px-5 py-2.5 rounded-lg bg-green-600 text-white hover:bg-green-500 transition disabled:opacity-60"
+                >
+                  {loggingOutcome ? 'Logging…' : 'Log Outcome'}
+                </button>
+              </form>
+            </div>
 
-                        <div className="px-5 pb-3 flex items-center gap-4 text-xs text-gray-400">
-                          <span>R:R <span className="text-white font-medium">{card.riskReward}:1</span></span>
-                          {card.price != null && <span>Price <span className="text-white font-medium">${card.price.toFixed(2)}</span></span>}
-                          <span>Entry <span className="text-white font-medium">${card.entry.toFixed(2)}</span></span>
-                          <span>Target <span className="text-white font-medium">${card.target.toFixed(2)}</span></span>
-                        </div>
-                      </>
-                    )}
-
-                    <AnimatePresence>
-                      {isExpanded && (
-                        <motion.div
-                          initial={{ height: 0, opacity: 0 }}
-                          animate={{ height: 'auto', opacity: 1 }}
-                          exit={{ height: 0, opacity: 0 }}
-                          transition={{ duration: 0.2 }}
-                          className="overflow-hidden"
-                        >
-                          <div className="px-5 pb-4 space-y-3 border-t border-white/5 pt-3">
-                            <div>
-                              <p className="text-xs text-gray-500 mb-1">Intelligence</p>
-                              <p className="text-sm text-gray-300">{card.reasoning}</p>
-                            </div>
-                            <div>
-                              <p className="text-xs text-gray-500 mb-1">Opportunity Cost</p>
-                              <p className="text-sm text-gray-300">{card.opportunityCost}</p>
-                            </div>
-
-                            {!isPlaceholder && (
-                              <div className="flex gap-3 pt-2">
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); playCard(card); }}
-                                  disabled={card.played}
-                                  className={`flex-1 py-2.5 rounded-xl font-medium text-sm transition-all ${
-                                    card.played
-                                      ? 'bg-gray-800 text-gray-500 cursor-not-allowed'
-                                      : 'bg-gradient-to-r from-emerald-600 to-cyan-600 text-white hover:from-emerald-500 hover:to-cyan-500'
-                                  }`}
-                                >
-                                  {card.played ? '✅ Played' : '🃏 Play This Card'}
-                                </button>
-                                <button
-                                  onClick={(e) => { e.stopPropagation(); dismissCard(card.id); }}
-                                  className="px-4 py-2.5 rounded-xl bg-gray-800 text-gray-400 hover:bg-gray-700 hover:text-gray-200 text-sm transition-all"
-                                >
-                                  Pass
-                                </button>
-                              </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
-
-                    {card.played && (
-                      <div className="absolute top-3 right-3 text-xs px-2 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30">
-                        In Play
-                      </div>
-                    )}
-                  </motion.div>
-                );
-              })}
-            </AnimatePresence>
-          </div>
+            <section className="bg-gray-900/80 border border-gray-800 rounded-2xl p-5">
+              <h3 className="text-lg font-semibold text-white mb-3">Card Metadata</h3>
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
+                {cardTimeline.map((entry) => (
+                  <div key={entry.label} className="flex items-center justify-between bg-gray-950 border border-gray-800 rounded-lg px-3 py-2">
+                    <span className="text-gray-500">{entry.label}</span>
+                    <span className="text-white font-medium">{entry.value}</span>
+                  </div>
+                ))}
+              </div>
+            </section>
+          </>
         )}
-
-        {!loading && cards.length === 0 && (
-          <div className="text-center py-16">
-            <p className="text-4xl mb-4">🃏</p>
-            <p className="text-xl font-semibold text-white">No cards in your hand</p>
-            <p className="text-gray-400 mt-2">Hit &ldquo;Deal New Hand&rdquo; to scan for opportunities</p>
-          </div>
-        )}
-
-        <div className="bg-gray-900/60 border border-gray-800 rounded-2xl p-6">
-          <h3 className="text-sm font-semibold text-gray-400 uppercase tracking-wider mb-4">How Life Cards Work</h3>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
-            <div className="flex items-start gap-3">
-              <span className="text-lg">🔭</span>
-              <div>
-                <p className="text-white font-medium">Nova Scans</p>
-                <p className="text-gray-500">AI screens the entire market for patterns and setups</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="text-lg">🃏</span>
-              <div>
-                <p className="text-white font-medium">Cards Dealt</p>
-                <p className="text-gray-500">Each opportunity becomes a card with a clear verdict</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="text-lg">📊</span>
-              <div>
-                <p className="text-white font-medium">You Decide</p>
-                <p className="text-gray-500">Probability, risk, reward — everything on one card</p>
-              </div>
-            </div>
-            <div className="flex items-start gap-3">
-              <span className="text-lg">⚡</span>
-              <div>
-                <p className="text-white font-medium">One Tap</p>
-                <p className="text-gray-500">Play the card to open a paper trade instantly</p>
-              </div>
-            </div>
-          </div>
-        </div>
       </div>
     </DashboardLayout>
   );
