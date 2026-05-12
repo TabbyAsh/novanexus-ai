@@ -35,6 +35,7 @@ import {
   filterByBoard,
 } from './screener-engine';
 import { computeFlipCard, type FlipCardInput, logFlipEvent, getFlipStats, storeAnalysis, getStoredAnalysis } from './flip-card';
+import { buildFlipDecisionCard, computeOutcomeLearning, type FlipOpportunityInput } from './decision-infrastructure';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -10625,6 +10626,414 @@ app.post('/v1/command/governance/:setupType', authMiddleware, async (req: Authen
     });
   }
 });
+
+// ============================================
+// Nova Nexus Decision Infrastructure (Phases 1-3)
+// Observe -> Decide -> Execute -> Log -> Learn
+// ============================================
+
+type NexusDecisionCardRow = {
+  id: string;
+  org_id: string | null;
+  user_id: string | null;
+  opportunity_id: string;
+  vertical: string;
+  decision_action: string;
+  confidence_pct: string | number;
+  volatility_level: string;
+  latest_version: number;
+  status: string;
+  created_at: string;
+  updated_at: string;
+};
+
+type NexusDecisionVersionRow = {
+  id: string;
+  decision_card_id: string;
+  version_no: number;
+  card_json: string;
+  assumptions_json: string | null;
+  uncertainty_json: string | null;
+  financial_json: string | null;
+  execution_json: string | null;
+  model_tag: string | null;
+  created_at: string;
+};
+
+app.post('/v1/nexus/observe', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const opportunity = (req.body?.opportunity || req.body) as FlipOpportunityInput;
+
+  if (!opportunity || !opportunity.title || !Number.isFinite(Number(opportunity.askingPrice))) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'title and askingPrice are required for observation' },
+    });
+  }
+
+  const card = buildFlipDecisionCard(opportunity);
+  const opportunityId = generateId();
+  const decisionCardId = generateId();
+
+  await query(
+    `INSERT INTO nexus_opportunities (id, org_id, user_id, source_type, source_url, raw_input_json, observed_at)
+     VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+    [
+      opportunityId,
+      orgId,
+      userId,
+      opportunity.sourceType || 'marketplace_listing',
+      opportunity.sourceUrl || null,
+      JSON.stringify(opportunity),
+    ]
+  );
+
+  const cardRow = await queryOne<NexusDecisionCardRow>(
+    `INSERT INTO nexus_decision_cards (
+       id, org_id, user_id, opportunity_id, vertical, decision_action,
+       confidence_pct, volatility_level, latest_version, status
+     )
+     VALUES ($1, $2, $3, $4, 'flip_cards', $5, $6, $7, 1, 'OPEN')
+     RETURNING *`,
+    [
+      decisionCardId,
+      orgId,
+      userId,
+      opportunityId,
+      card.decision.action,
+      card.confidence.confidencePct,
+      card.confidence.volatility,
+    ]
+  );
+
+  await query(
+    `INSERT INTO nexus_decision_card_versions (
+       id, decision_card_id, version_no, card_json,
+       assumptions_json, uncertainty_json, financial_json, execution_json, model_tag
+     )
+     VALUES ($1, $2, 1, $3, $4, $5, $6, $7, $8)`,
+    [
+      generateId(),
+      decisionCardId,
+      JSON.stringify(card),
+      JSON.stringify(card.confidence.assumptions),
+      JSON.stringify({
+        explanation: card.confidence.uncertaintyExplanation,
+        missing: card.confidence.missingInformation,
+        volatility: card.confidence.volatility,
+      }),
+      JSON.stringify(card.financials),
+      JSON.stringify(card.execution),
+      'nexus.flip.v1',
+    ]
+  );
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      cardId: cardRow?.id || decisionCardId,
+      opportunityId,
+      decision: card.decision,
+      confidence: card.confidence,
+      card,
+    },
+  });
+});
+
+app.get('/v1/nexus/decision-cards/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.user!;
+  const { id } = req.params;
+
+  const cardRow = await queryOne<NexusDecisionCardRow>(
+    `SELECT * FROM nexus_decision_cards
+     WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+
+  if (!cardRow) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision card not found' },
+    });
+  }
+
+  const version = await queryOne<NexusDecisionVersionRow>(
+    `SELECT * FROM nexus_decision_card_versions
+     WHERE decision_card_id = $1 AND version_no = $2`,
+    [id, cardRow.latest_version]
+  );
+
+  const outcomes = await query<{
+    id: string;
+    outcome_status: string;
+    realized_net_profit: string | number | null;
+    realized_hold_days: number | null;
+    logged_at: string;
+  }>(
+    `SELECT id, outcome_status, realized_net_profit, realized_hold_days, logged_at
+     FROM nexus_decision_outcomes
+     WHERE decision_card_id = $1
+     ORDER BY logged_at DESC
+     LIMIT 10`,
+    [id]
+  );
+
+  const latestLearning = await queryOne<{
+    calibration_error_pct: string | number | null;
+    learning_json: string | null;
+    created_at: string;
+  }>(
+    `SELECT calibration_error_pct, learning_json, created_at
+     FROM nexus_learning_snapshots
+     WHERE decision_card_id = $1
+     ORDER BY created_at DESC
+     LIMIT 1`,
+    [id]
+  );
+
+  res.json({
+    success: true,
+    data: {
+      id: cardRow.id,
+      status: cardRow.status,
+      action: cardRow.decision_action,
+      confidencePct: Number(cardRow.confidence_pct),
+      volatilityLevel: cardRow.volatility_level,
+      latestVersion: cardRow.latest_version,
+      card: version?.card_json ? JSON.parse(version.card_json) : null,
+      outcomes: outcomes.rows.map((row) => ({
+        id: row.id,
+        status: row.outcome_status,
+        realizedNetProfit: row.realized_net_profit !== null ? Number(row.realized_net_profit) : null,
+        realizedHoldDays: row.realized_hold_days,
+        loggedAt: row.logged_at,
+      })),
+      latestLearning: latestLearning
+        ? {
+          calibrationErrorPct: latestLearning.calibration_error_pct !== null ? Number(latestLearning.calibration_error_pct) : null,
+          learning: latestLearning.learning_json ? JSON.parse(latestLearning.learning_json) : null,
+          createdAt: latestLearning.created_at,
+        }
+        : null,
+      createdAt: cardRow.created_at,
+      updatedAt: cardRow.updated_at,
+    },
+  });
+});
+
+app.post('/v1/nexus/decision-cards/:id/execute', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  const { id } = req.params;
+  const { action, offerPrice, executionPayload, status } = req.body || {};
+
+  const cardRow = await queryOne<NexusDecisionCardRow>(
+    `SELECT * FROM nexus_decision_cards WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+
+  if (!cardRow) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision card not found' },
+    });
+  }
+
+  const executionId = generateId();
+  await query(
+    `INSERT INTO nexus_decision_executions (
+      id, decision_card_id, user_id, action, offer_price, execution_payload_json, status, executed_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
+    [
+      executionId,
+      id,
+      userId,
+      String(action || cardRow.decision_action).toUpperCase(),
+      Number.isFinite(Number(offerPrice)) ? Number(offerPrice) : null,
+      JSON.stringify(executionPayload || {}),
+      String(status || 'EXECUTED').toUpperCase(),
+    ]
+  );
+
+  await query(
+    `UPDATE nexus_decision_cards
+     SET status = $2, updated_at = NOW()
+     WHERE id = $1`,
+    [id, 'EXECUTING']
+  );
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      executionId,
+      cardId: id,
+      status: 'EXECUTING',
+    },
+  });
+});
+
+app.post('/v1/nexus/decision-cards/:id/outcome', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.user!;
+  const { id } = req.params;
+  const {
+    executionId,
+    realizedSalePrice,
+    realizedTotalCost,
+    realizedNetProfit,
+    realizedHoldDays,
+    outcomeStatus,
+    notes,
+    metadata,
+  } = req.body || {};
+
+  const cardRow = await queryOne<NexusDecisionCardRow>(
+    `SELECT * FROM nexus_decision_cards WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+  if (!cardRow) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision card not found' },
+    });
+  }
+
+  const version = await queryOne<NexusDecisionVersionRow>(
+    `SELECT * FROM nexus_decision_card_versions WHERE decision_card_id = $1 AND version_no = $2`,
+    [id, cardRow.latest_version]
+  );
+
+  if (!version?.card_json) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Cannot compute learning without card payload' },
+    });
+  }
+
+  const parsedCard = JSON.parse(version.card_json);
+  const sale = Number(realizedSalePrice || 0);
+  const totalCost = Number(realizedTotalCost || 0);
+  const net = Number.isFinite(Number(realizedNetProfit))
+    ? Number(realizedNetProfit)
+    : roundTo2(sale - totalCost);
+  const holdDays = Number.isFinite(Number(realizedHoldDays)) ? Number(realizedHoldDays) : null;
+  const status = String(outcomeStatus || (net >= 0 ? 'PROFIT' : 'LOSS')).toUpperCase();
+
+  const outcomeId = generateId();
+  await query(
+    `INSERT INTO nexus_decision_outcomes (
+      id, decision_card_id, execution_id, outcome_status,
+      realized_sale_price, realized_total_cost, realized_net_profit, realized_hold_days,
+      notes, metadata_json, logged_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NOW())`,
+    [
+      outcomeId,
+      id,
+      executionId || null,
+      status,
+      Number.isFinite(sale) ? sale : null,
+      Number.isFinite(totalCost) ? totalCost : null,
+      net,
+      holdDays,
+      notes || null,
+      JSON.stringify(metadata || {}),
+    ]
+  );
+
+  const learning = computeOutcomeLearning(parsedCard, {
+    realizedNetProfit: net,
+    holdDays: holdDays || undefined,
+  });
+
+  const snapshotId = generateId();
+  await query(
+    `INSERT INTO nexus_learning_snapshots (
+      id, org_id, user_id, decision_card_id, predicted_json, actual_json,
+      learning_json, calibration_error_pct, created_at
+    )
+    VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())`,
+    [
+      snapshotId,
+      cardRow.org_id,
+      cardRow.user_id,
+      id,
+      JSON.stringify({
+        expectedNet: parsedCard?.financials?.netCash?.mid ?? null,
+        expectedRoiPct: parsedCard?.financials?.expectedRoiPct ?? null,
+        expectedHoldDays: parsedCard?.marketIntelligence?.expectedDaysToSale?.mid ?? null,
+      }),
+      JSON.stringify({
+        realizedNetProfit: net,
+        realizedHoldDays: holdDays,
+        outcomeStatus: status,
+      }),
+      JSON.stringify(learning),
+      learning.calibrationErrorPct,
+    ]
+  );
+
+  await query(`UPDATE nexus_decision_cards SET status = 'CLOSED', updated_at = NOW() WHERE id = $1`, [id]);
+
+  res.status(HTTP_STATUS.CREATED).json({
+    success: true,
+    data: {
+      outcomeId,
+      learningSnapshotId: snapshotId,
+      learning,
+      cardStatus: 'CLOSED',
+    },
+  });
+});
+
+app.get('/v1/nexus/decision-cards/:id/learning', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.user!;
+  const { id } = req.params;
+
+  const cardRow = await queryOne<NexusDecisionCardRow>(
+    `SELECT id FROM nexus_decision_cards WHERE id = $1 AND (org_id IS NULL OR org_id = $2)`,
+    [id, orgId]
+  );
+  if (!cardRow) {
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: ERROR_CODES.NOT_FOUND, message: 'Decision card not found' },
+    });
+  }
+
+  const snapshots = await query<{
+    id: string;
+    predicted_json: string;
+    actual_json: string;
+    learning_json: string;
+    calibration_error_pct: string | number;
+    created_at: string;
+  }>(
+    `SELECT id, predicted_json, actual_json, learning_json, calibration_error_pct, created_at
+     FROM nexus_learning_snapshots
+     WHERE decision_card_id = $1
+     ORDER BY created_at DESC`,
+    [id]
+  );
+
+  res.json({
+    success: true,
+    data: {
+      cardId: id,
+      snapshots: snapshots.rows.map((row) => ({
+        id: row.id,
+        predicted: JSON.parse(row.predicted_json),
+        actual: JSON.parse(row.actual_json),
+        learning: JSON.parse(row.learning_json),
+        calibrationErrorPct: Number(row.calibration_error_pct),
+        createdAt: row.created_at,
+      })),
+    },
+  });
+});
+
+function roundTo2(value: number): number {
+  return Math.round(value * 100) / 100;
+}
 
 // ============================================
 // Start Server

@@ -1716,6 +1716,85 @@ class ApiClient {
   }
 
   // ==========================================================================
+  // Nova Nexus Decision Infrastructure (Observe -> Decide -> Execute -> Learn)
+  // ==========================================================================
+  async observeOpportunity(opportunity: {
+    title: string;
+    category?: string;
+    condition?: string;
+    askingPrice: number;
+    estimatedFees?: number;
+    estimatedShipping?: number;
+    estimatedRefurbishment?: number;
+    estimatedStorage?: number;
+    expectedHoldDays?: number;
+    soldComps?: number[];
+    location?: string;
+    sourceType?: string;
+    sourceUrl?: string;
+    notes?: string;
+  }) {
+    return this.request<{ cardId: string; opportunityId: string; decision: any; confidence: any; card: any }>(
+      'POST',
+      '/v1/nexus/observe',
+      { opportunity }
+    );
+  }
+
+  async getNexusDecisionCard(cardId: string) {
+    return this.request<{
+      id: string;
+      status: string;
+      action: string;
+      confidencePct: number;
+      volatilityLevel: string;
+      latestVersion: number;
+      card: any;
+      outcomes: any[];
+      latestLearning: any;
+      createdAt: string;
+      updatedAt: string;
+    }>('GET', `/v1/nexus/decision-cards/${cardId}`);
+  }
+
+  async executeNexusDecisionCard(cardId: string, payload: {
+    action?: 'BUY' | 'SELL' | 'SKIP' | 'WAIT' | 'OFFER';
+    offerPrice?: number;
+    executionPayload?: Record<string, unknown>;
+    status?: 'PLANNED' | 'EXECUTED' | 'FAILED' | 'CANCELLED';
+  }) {
+    return this.request<{ executionId: string; cardId: string; status: string }>(
+      'POST',
+      `/v1/nexus/decision-cards/${cardId}/execute`,
+      payload
+    );
+  }
+
+  async logNexusOutcome(cardId: string, payload: {
+    executionId?: string;
+    realizedSalePrice?: number;
+    realizedTotalCost?: number;
+    realizedNetProfit?: number;
+    realizedHoldDays?: number;
+    outcomeStatus?: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'ABANDONED';
+    notes?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.request<{ outcomeId: string; learningSnapshotId: string; learning: any; cardStatus: string }>(
+      'POST',
+      `/v1/nexus/decision-cards/${cardId}/outcome`,
+      payload
+    );
+  }
+
+  async getNexusLearning(cardId: string) {
+    return this.request<{ cardId: string; snapshots: any[] }>(
+      'GET',
+      `/v1/nexus/decision-cards/${cardId}/learning`
+    );
+  }
+
+  // ==========================================================================
   // Manifesto: Agent Engine
   // ==========================================================================
   async getAgentDefinitions() {
