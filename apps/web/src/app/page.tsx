@@ -4,7 +4,6 @@ import { motion, useScroll, useTransform } from 'framer-motion';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useRef, useState } from 'react';
-import ZeroPointField from '@/components/effects/ZeroPointField';
 import {
   CreditCard, TrendingUp, ShoppingBag, Radio,
   FlaskConical, Shield, ArrowRight, ChevronDown,
@@ -122,7 +121,7 @@ function Navbar() {
       initial={{ y: -100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
       transition={{ duration: 0.6 }}
-      className="fixed top-0 left-0 right-0 z-50 px-6 py-4 backdrop-blur-xl bg-black/80 border-b border-white/[0.06]"
+      className="fixed top-0 left-0 right-0 z-50 px-6 py-4 backdrop-blur-xl bg-[#0a0a0f]/70 border-b border-white/5"
     >
       <div className="max-w-7xl mx-auto flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3">
@@ -161,7 +160,15 @@ function Navbar() {
 // ═════════════════════════════════════════════════════════════════════
 function HeroSection() {
   return (
-    <section className="relative min-h-screen flex items-center px-6 pt-24 pb-16">
+    <section className="relative min-h-screen flex items-center px-6 pt-24 pb-16 overflow-hidden">
+      {/* Background nebula */}
+      <div className="absolute inset-0 -z-10 overflow-hidden">
+        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full opacity-20 blur-[120px]"
+          style={{ background: 'radial-gradient(circle, #7c3aed 0%, transparent 70%)' }} />
+        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full opacity-15 blur-[100px]"
+          style={{ background: 'radial-gradient(circle, #00f5ff 0%, transparent 70%)' }} />
+      </div>
+
       <div className="max-w-7xl mx-auto w-full grid lg:grid-cols-2 gap-12 items-center">
         {/* Left — Text */}
         <motion.div
@@ -856,21 +863,25 @@ function Footer() {
 // ═════════════════════════════════════════════════════════════════════
 export default function HomePage() {
   return (
-    <main className="relative min-h-screen bg-black text-white overflow-x-hidden">
-      {/* Quantum vacuum — the void beneath everything */}
-      <ZeroPointField />
+    <main className="relative min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+      {/* Subtle grid background */}
+      <div
+        className="fixed inset-0 -z-10 opacity-[0.02] pointer-events-none"
+        style={{
+          backgroundImage:
+            'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
+          backgroundSize: '60px 60px',
+        }}
+      />
 
-      {/* Content floats above the void */}
-      <div className="relative" style={{ zIndex: 1 }}>
-        <Navbar />
-        <HeroSection />
-        <LiveProofStrip />
-        <TryItSection />
-        <DivisionsSection />
-        <MissionSection />
-        <PricingTeaser />
-        <Footer />
-      </div>
+      <Navbar />
+      <HeroSection />
+      <LiveProofStrip />
+      <TryItSection />
+      <DivisionsSection />
+      <MissionSection />
+      <PricingTeaser />
+      <Footer />
     </main>
   );
 }
