@@ -1014,6 +1014,9 @@ app.all('/v1/alerts*', (req: Request, res: Response) => {
 app.all('/v1/screener*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
+app.all('/v1/scanner*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
 app.all('/v1/alpaca*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
