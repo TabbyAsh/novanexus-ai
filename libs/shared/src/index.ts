@@ -1,4 +1,5 @@
 export * from './types';
+export * from './vlh-types';
 export * from './utils';
 export * from './constants';
 export * from './db';

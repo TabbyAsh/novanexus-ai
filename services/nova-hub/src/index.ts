@@ -35,7 +35,13 @@ import {
   filterByBoard,
 } from './screener-engine';
 import { computeFlipCard, type FlipCardInput, logFlipEvent, getFlipStats, storeAnalysis, getStoredAnalysis } from './flip-card';
-import { buildFlipDecisionCard, computeOutcomeLearning, type FlipOpportunityInput } from './decision-infrastructure';
+import { runMarketplaceScan, getScanOpportunities, type ScanConfig } from './scanner';
+import {
+  buildFlipDecisionCard,
+  computeOutcomeLearning,
+  type DecisionEngineCalibrationProfile,
+} from './decision-infrastructure';
+import { ingestFlipOpportunityInput } from './nexus-ingestion';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -6412,6 +6418,322 @@ function incrementFlipCardUsage(ip: string): void {
   if (entry) entry.count++;
 }
 
+app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
+  const userId = req.headers['x-user-id'] as string;
+  const isAuthenticated = !!userId;
+  const clientIp = req.headers['x-forwarded-for'] as string || req.ip || 'unknown';
+  if (!isAuthenticated) {
+    const usage = getFlipCardUsage(clientIp);
+    if (usage.remaining <= 0) {
+      logFlipEvent('rate_limit_hit', clientIp).catch(() => {});
+      return res.status(429).json({
+        success: false,
+        error: {
+          code: 'FREE_LIMIT_REACHED',
+          message: `You've used all ${FREE_DAILY_LIMIT} free analyses today. Sign up for unlimited access.`,
+          signupUrl: '/register',
+          resetsIn: '24 hours',
+        },
+      });
+    }
+  }
+  const titleInput = req.body?.itemName ?? req.body?.title;
+  const title = typeof titleInput === 'string' ? titleInput.trim() : '';
+  const buyPriceRaw = req.body?.askingPrice ?? req.body?.buy_price ?? req.body?.buyPrice;
+  const buyPrice = Number(buyPriceRaw);
+
+  if (!title || !Number.isFinite(buyPrice) || buyPrice < 0) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'itemName/title and askingPrice are required.' },
+    });
+  }
+
+  const parseManualComps = (raw: unknown): number[] => {
+    if (Array.isArray(raw)) {
+      return raw
+        .map((value) => Number(value))
+        .filter((value) => Number.isFinite(value) && value > 0);
+    }
+    if (typeof raw === 'string') {
+      return raw
+        .split(/[,\n]/)
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value) && value > 0);
+    }
+    return [];
+  };
+
+  const conditionInput = typeof req.body?.condition === 'string' ? req.body.condition : '';
+  const resolvedCondition = VALID_CONDITIONS.includes(conditionInput) ? conditionInput : 'Good';
+  const shippingMode: 'shipping' | 'pickup' =
+    req.body?.shippingMode === 'pickup' || req.body?.shipping_or_pickup === 'pickup' ? 'pickup' : 'shipping';
+  const targetPlatformInput = req.body?.targetPlatform ?? req.body?.target_platform;
+  const targetPlatform = typeof targetPlatformInput === 'string' ? targetPlatformInput.trim() : 'eBay';
+  const descriptionInput = req.body?.description ?? req.body?.notes;
+  const description = typeof descriptionInput === 'string' ? descriptionInput.trim() : undefined;
+  const categoryInput = req.body?.category;
+  const category = typeof categoryInput === 'string' && categoryInput.trim() ? categoryInput.trim() : undefined;
+  const locationInput = req.body?.location;
+  const location = typeof locationInput === 'string' && locationInput.trim() ? locationInput.trim() : undefined;
+  const manualComps = parseManualComps(req.body?.manualComps ?? req.body?.soldComps);
+  const input: FlipCardInput = {
+    title,
+    description,
+    buy_price: buyPrice,
+    condition: resolvedCondition as FlipCardInput['condition'],
+    category,
+    shipping_or_pickup: shippingMode,
+    target_platform: targetPlatform,
+    location,
+  };
+
+  try {
+    const flipCard = await computeFlipCard(input);
+
+    let resaleLow = flipCard.est_resale_low;
+    let resaleMid = flipCard.est_resale_mid;
+    let resaleHigh = flipCard.est_resale_high;
+
+    if (manualComps.length >= 3) {
+      const sorted = [...manualComps].sort((a, b) => a - b);
+      const lowIndex = Math.max(0, Math.floor((sorted.length - 1) * 0.2));
+      const highIndex = Math.max(0, Math.floor((sorted.length - 1) * 0.8));
+      resaleLow = roundTo2(sorted[lowIndex]);
+      resaleHigh = roundTo2(sorted[highIndex]);
+      resaleMid = roundTo2(sorted.reduce((sum, value) => sum + value, 0) / sorted.length);
+    }
+    const safeNumber = (value: unknown): number | null =>
+      typeof value === 'number' && Number.isFinite(value) ? value : null;
+    const isNumber = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
+    const clamp = (value: number, min: number, max: number) => Math.max(min, Math.min(max, value));
+    const fmtMoney = (value: number) => `$${roundTo2(value)}`;
+
+    const liveCompCount = (flipCard.comp_sources || [])
+      .map((source) => Number(source?.count))
+      .filter((count) => Number.isFinite(count) && count > 0)
+      .reduce((sum, count) => sum + count, 0);
+    const compCount = manualComps.length > 0 ? manualComps.length : liveCompCount;
+    const hasComparableData = compCount > 0;
+    const hasStrongComparableData = compCount >= 3;
+
+    const estimatedFeesInput = Number(req.body?.estimatedFees);
+    const estimatedShippingInput = Number(req.body?.estimatedShipping);
+    const estimatedFees =
+      Number.isFinite(estimatedFeesInput) && estimatedFeesInput >= 0
+        ? roundTo2(estimatedFeesInput)
+        : roundTo2(Math.max(0, flipCard.est_platform_fees));
+    const estimatedShipping: number | null =
+      shippingMode === 'pickup'
+        ? 0
+        : Number.isFinite(estimatedShippingInput) && estimatedShippingInput >= 0
+          ? roundTo2(estimatedShippingInput)
+          : isNumber(flipCard.est_shipping_cost) && flipCard.est_shipping_cost > 0
+            ? roundTo2(flipCard.est_shipping_cost)
+            : null;
+
+    let expectedResaleLow: number | null = roundTo2(resaleLow);
+    let expectedResaleHigh: number | null = roundTo2(resaleHigh);
+    let fastSalePrice: number | null = expectedResaleLow;
+    let expectedNetProfitLow: number | null = null;
+    let expectedNetProfitHigh: number | null = null;
+    let expectedNetProfitMid: number | null = null;
+    let maxBuyPrice: number | null = null;
+    const unavailableReasons: string[] = [];
+
+    if (!hasComparableData) {
+      expectedResaleLow = null;
+      expectedResaleHigh = null;
+      fastSalePrice = null;
+      unavailableReasons.push('Resale estimates unavailable because no comparable sold listings were provided or found.');
+    }
+    if (shippingMode === 'shipping' && estimatedShipping === null) {
+      unavailableReasons.push('Shipping estimate unavailable because shipping details or dimensions were not provided.');
+    }
+
+    if (
+      isNumber(expectedResaleLow) &&
+      isNumber(expectedResaleHigh) &&
+      isNumber(estimatedFees) &&
+      isNumber(estimatedShipping)
+    ) {
+      expectedNetProfitLow = roundTo2(expectedResaleLow - buyPrice - estimatedFees - estimatedShipping);
+      expectedNetProfitHigh = roundTo2(expectedResaleHigh - buyPrice - estimatedFees - estimatedShipping);
+      expectedNetProfitMid = roundTo2((expectedNetProfitLow + expectedNetProfitHigh) / 2);
+
+      const riskBuffer =
+        flipCard.risk_score >= 70 ? 20 :
+        flipCard.risk_score >= 40 ? 12 :
+        6;
+      const minimumDesiredProfit = Math.max(15, roundTo2(buyPrice * 0.12));
+      if (isNumber(fastSalePrice)) {
+        maxBuyPrice = roundTo2(Math.max(0, fastSalePrice - estimatedFees - estimatedShipping - minimumDesiredProfit - riskBuffer));
+      }
+    } else {
+      unavailableReasons.push('Net profit and max buy price are unavailable until resale and cost inputs are reliable.');
+    }
+
+    const spreadPct = hasComparableData && resaleMid > 0
+      ? (Math.max(0, resaleHigh - resaleLow) / Math.max(1, resaleMid))
+      : 1;
+    const compCountScore =
+      compCount >= 6 ? 0.58 :
+      compCount >= 3 ? 0.45 :
+      compCount >= 1 ? 0.25 :
+      0;
+    const priceSpreadScore =
+      spreadPct <= 0.25 ? 0.2 :
+      spreadPct <= 0.5 ? 0.14 :
+      spreadPct <= 0.9 ? 0.08 :
+      0.03;
+    const titleSimilarityScore = hasStrongComparableData ? 0.1 : hasComparableData ? 0.05 : 0.01;
+    const conditionMatchScore = conditionInput ? 0.08 : 0.03;
+    const riskPenalty = clamp((flipCard.risk_score / 100) * 0.22, 0, 0.22);
+    const dataGapPenalty = hasComparableData ? 0 : 0.25;
+    let confidence = roundTo2(clamp(
+      compCountScore + priceSpreadScore + titleSimilarityScore + conditionMatchScore - riskPenalty - dataGapPenalty,
+      0.05,
+      0.95
+    ));
+    if (!hasComparableData) {
+      confidence = Math.min(confidence, 0.2);
+    }
+
+    const riskComposite = flipCard.risk_score + (!hasComparableData ? 20 : 0) + (confidence < 0.35 ? 10 : 0);
+    const riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' =
+      riskComposite >= 70 ? 'HIGH' : riskComposite >= 40 ? 'MEDIUM' : 'LOW';
+
+    let decision: 'BUY' | 'PASS' | 'WATCH' | 'NEGOTIATE' = 'WATCH';
+    if (!isNumber(expectedNetProfitLow) || !isNumber(expectedNetProfitHigh) || !isNumber(maxBuyPrice)) {
+      decision = 'WATCH';
+    } else if (expectedNetProfitLow >= 25 && confidence >= 0.65 && buyPrice <= maxBuyPrice) {
+      decision = 'BUY';
+    } else if (buyPrice > maxBuyPrice && expectedNetProfitHigh > 0) {
+      decision = 'NEGOTIATE';
+    } else if (expectedNetProfitHigh > 0) {
+      decision = 'WATCH';
+    } else {
+      decision = 'PASS';
+    }
+
+    const reasons: string[] = [];
+    if (manualComps.length > 0) {
+      reasons.push(`Manual comps supplied: ${manualComps.length}.`);
+    } else if (liveCompCount > 0) {
+      reasons.push(`Auto comps detected from data sources: ${liveCompCount}.`);
+    } else {
+      reasons.push('No sold comps available yet; decision confidence is limited until comparable sales are added.');
+    }
+    if (isNumber(expectedNetProfitLow) && expectedNetProfitLow >= 25) {
+      reasons.push('Conservative resale still yields meaningful profit.');
+    } else if (isNumber(expectedNetProfitHigh) && expectedNetProfitHigh >= 15) {
+      reasons.push('Upside exists, but margin safety is limited at current ask.');
+    } else if (isNumber(expectedNetProfitHigh)) {
+      reasons.push('After costs, projected margin is too thin for a reliable flip.');
+    }
+    if (isNumber(maxBuyPrice)) {
+      reasons.push(`Safe buy ceiling is ${fmtMoney(maxBuyPrice)} based on fast-sale economics.`);
+    }
+    reasons.push(flipCard.rationale_summary);
+
+    const warnings = [...flipCard.risk_flags];
+    if (compCount > 0 && compCount < 3) {
+      warnings.push('Add at least 3 sold comps for tighter valuation confidence.');
+    }
+    warnings.push(...unavailableReasons);
+
+    const sellerQuestions = [
+      `Any known defects, repairs, or missing parts on this ${title}?`,
+      'Can you confirm all original accessories/chargers are included?',
+      'Can you share a short video proving the item works as expected?',
+      shippingMode === 'shipping' ? 'Can you provide package dimensions/weight for accurate shipping cost?' : 'Are you flexible if I can pick up today?',
+    ];
+    const negotiationScript =
+      decision === 'NEGOTIATE' && isNumber(maxBuyPrice)
+        ? `I'm ready to buy today. Based on recent sold comps and resale costs, I can offer ${fmtMoney(maxBuyPrice)} cash right now.`
+        : decision === 'BUY' && isNumber(maxBuyPrice)
+          ? `Looks good overall. If you can do ${fmtMoney(Math.min(buyPrice, maxBuyPrice))}, I can close this deal today.`
+          : decision === 'PASS'
+            ? `At this price I'd have to pass. If you're open to a lower number, message me and I'll reconsider.`
+            : 'Before deciding, I need a few details to tighten the estimate and reduce risk.';
+
+    const listingTitle = `${title} - ${resolvedCondition}`.slice(0, 120);
+    const listingDescription = [
+      `Condition: ${resolvedCondition}.`,
+      isNumber(expectedResaleLow) && isNumber(expectedResaleHigh)
+        ? `Estimated resale range: ${fmtMoney(expectedResaleLow)}-${fmtMoney(expectedResaleHigh)}.`
+        : 'Resale estimate pending additional comparable sold data.',
+      isNumber(fastSalePrice) ? `Suggested fast-sale price: ${fmtMoney(fastSalePrice)}.` : null,
+      isNumber(expectedNetProfitLow) && isNumber(expectedNetProfitHigh)
+        ? `Expected net profit range: ${fmtMoney(expectedNetProfitLow)} to ${fmtMoney(expectedNetProfitHigh)}.`
+        : null,
+      location ? `Local context: ${location}.` : null,
+    ]
+      .filter(Boolean)
+      .join(' ');
+
+    if (!isAuthenticated) {
+      incrementFlipCardUsage(clientIp);
+    }
+    const usage = isAuthenticated ? { remaining: -1, limit: -1 } : getFlipCardUsage(clientIp);
+
+    const analysisId = generateId().slice(0, 12);
+    storeAnalysis(analysisId, input, flipCard, clientIp, userId).catch(() => {});
+    logFlipEvent('analyzed', clientIp, userId, { verdict: flipCard.verdict, confidence: flipCard.confidence_score }).catch(() => {});
+
+    const appraisalPayload = {
+      decision,
+      maxBuyPrice,
+      expectedResaleLow,
+      expectedResaleHigh,
+      fastSalePrice,
+      estimatedFees: safeNumber(estimatedFees),
+      estimatedShipping,
+      expectedNetProfitLow,
+      expectedNetProfitHigh,
+      expectedNetProfitMid,
+      riskLevel,
+      risk: riskLevel,
+      confidence,
+      reasons,
+      warnings,
+      sellerQuestions,
+      negotiationScript,
+      listingTitle,
+      listingDescription,
+      unavailableReasons,
+      confidenceBreakdown: {
+        compCount,
+        spreadPct: roundTo2(spreadPct),
+        compCountScore: roundTo2(compCountScore),
+        priceSpreadScore: roundTo2(priceSpreadScore),
+        titleSimilarityScore: roundTo2(titleSimilarityScore),
+        conditionMatchScore: roundTo2(conditionMatchScore),
+        riskPenalty: roundTo2(riskPenalty),
+      },
+      source: manualComps.length > 0 ? 'manual_comps' : hasComparableData ? 'auto_comps' : 'no_comps',
+    };
+
+    return res.json({
+      success: true,
+      data: {
+        ...flipCard,
+        analysis_id: analysisId,
+        share_url: `/result/${analysisId}`,
+        _usage: isAuthenticated ? { unlimited: true } : { remaining: usage.remaining, limit: usage.limit, signupUrl: '/register' },
+        appraisal: appraisalPayload,
+        ...appraisalPayload,
+      },
+    });
+  } catch (error) {
+    logger.error('Flip appraiser failed', error as Error);
+    return res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'APPRAISAL_FAILED', message: 'Failed to generate appraisal. Please try again.' },
+    });
+  }
+});
+
 app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
   const { title, description, buy_price, condition, category, shipping_or_pickup, target_platform, location } = req.body || {};
 
@@ -6500,18 +6822,16 @@ app.post('/v1/flip-card/analyze', async (req: Request, res: Response) => {
   }
 });
 
-// GET /v1/flip-card/stats — public, returns analysis counts for social proof
-app.get('/v1/flip-card/stats', async (_req: Request, res: Response) => {
+const handleFlipStats = async (_req: Request, res: Response) => {
   try {
     const stats = await getFlipStats();
     res.json({ success: true, data: stats });
   } catch {
     res.json({ success: true, data: { totalAnalyses: 0, todayAnalyses: 0 } });
   }
-});
+};
 
-// GET /v1/flip-card/result/:id — public, retrieve a stored analysis for sharing
-app.get('/v1/flip-card/result/:id', async (req: Request, res: Response) => {
+const handleFlipResult = async (req: Request, res: Response) => {
   try {
     const analysis = await getStoredAnalysis(req.params.id);
     if (!analysis) {
@@ -6521,7 +6841,13 @@ app.get('/v1/flip-card/result/:id', async (req: Request, res: Response) => {
   } catch {
     res.status(500).json({ success: false, error: { code: 'RETRIEVAL_FAILED', message: 'Failed to retrieve analysis' } });
   }
-});
+};
+
+// Canonical + legacy aliases for stats/result sharing endpoints
+app.get('/v1/flip/stats', handleFlipStats);
+app.get('/v1/flip-card/stats', handleFlipStats);
+app.get('/v1/flip/result/:id', handleFlipResult);
+app.get('/v1/flip-card/result/:id', handleFlipResult);
 
 // ============================================
 // Marketplace/Appraisal API (Phase 5.3 - Keyless)
@@ -10659,19 +10985,104 @@ type NexusDecisionVersionRow = {
   model_tag: string | null;
   created_at: string;
 };
+type NexusCalibrationSnapshotRow = {
+  predicted_json: string | Record<string, unknown> | null;
+  learning_json: string | Record<string, unknown> | null;
+  calibration_error_pct: string | number | null;
+};
+
+function clampNexus(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+async function getNexusCalibrationProfile(orgId: string, userId: string): Promise<DecisionEngineCalibrationProfile | null> {
+  const snapshots = await query<NexusCalibrationSnapshotRow>(
+    `SELECT predicted_json, learning_json, calibration_error_pct
+     FROM nexus_learning_snapshots
+     WHERE org_id = $1 AND user_id = $2
+     ORDER BY created_at DESC
+     LIMIT 50`,
+    [orgId, userId]
+  );
+
+  if (!snapshots.rows.length) {
+    return null;
+  }
+
+  const predictionBiases: number[] = [];
+  const calibrationErrors: number[] = [];
+  const confidenceDeltas: number[] = [];
+
+  for (const row of snapshots.rows) {
+    const predicted = parseDecisionJson<Record<string, unknown>>(row.predicted_json, {});
+    const learning = parseDecisionJson<Record<string, unknown>>(row.learning_json, {});
+
+    const expectedNet = Number((predicted as any)?.expectedNet);
+    const predictionError = Number((learning as any)?.predictionError);
+    const confidenceDelta = Number((learning as any)?.confidenceDeltaPct);
+    const calibrationError = Number((learning as any)?.calibrationErrorPct ?? row.calibration_error_pct);
+
+    if (Number.isFinite(expectedNet) && Math.abs(expectedNet) >= 1 && Number.isFinite(predictionError)) {
+      predictionBiases.push((predictionError / Math.abs(expectedNet)) * 100);
+    }
+    if (Number.isFinite(confidenceDelta)) {
+      confidenceDeltas.push(confidenceDelta);
+    }
+    if (Number.isFinite(calibrationError)) {
+      calibrationErrors.push(calibrationError);
+    }
+  }
+
+  if (!predictionBiases.length && !calibrationErrors.length && !confidenceDeltas.length) {
+    return null;
+  }
+
+  const average = (values: number[]) =>
+    values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0;
+
+  return {
+    sampleSize: snapshots.rows.length,
+    meanPredictionBiasPct: roundTo2(clampNexus(average(predictionBiases), -35, 35)),
+    meanCalibrationErrorPct: roundTo2(clampNexus(average(calibrationErrors), 0, 300)),
+    meanConfidenceDeltaPct: roundTo2(clampNexus(average(confidenceDeltas), -100, 100)),
+  };
+}
 
 app.post('/v1/nexus/observe', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId, orgId } = req.user!;
-  const opportunity = (req.body?.opportunity || req.body) as FlipOpportunityInput;
-
-  if (!opportunity || !opportunity.title || !Number.isFinite(Number(opportunity.askingPrice))) {
-    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+  const decisionQuota = await checkQuota(userId, 'decision_card');
+  if (!decisionQuota.allowed) {
+    const usageSnapshot = await getUsageSnapshot(userId);
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
       success: false,
-      error: { code: ERROR_CODES.INVALID_INPUT, message: 'title and askingPrice are required for observation' },
+      error: {
+        code: 'QUOTA_EXCEEDED',
+        message: decisionQuota.message || 'Daily decision card limit reached.',
+        requiredPlan: usageSnapshot.plan === 'FREE' ? 'LITE' : 'PRO',
+        limit: usageSnapshot.limits.daily_decision_cards,
+        used: usageSnapshot.usage.decisionCards,
+        remaining: decisionQuota.remaining,
+        upgradeUrl: '/pricing',
+      },
     });
   }
+  const rawOpportunity = req.body?.opportunity || req.body;
+  const ingested = ingestFlipOpportunityInput(rawOpportunity);
 
-  const card = buildFlipDecisionCard(opportunity);
+  if ('errors' in ingested) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: {
+        code: ERROR_CODES.INVALID_INPUT,
+        message: 'Invalid observation payload. title and askingPrice are required.',
+        details: { ingestionErrors: ingested.errors },
+      },
+    });
+  }
+  const opportunity = ingested.opportunity;
+  const calibration = await getNexusCalibrationProfile(orgId, userId);
+
+  const card = buildFlipDecisionCard(opportunity, { calibration });
   const opportunityId = generateId();
   const decisionCardId = generateId();
 
@@ -10684,7 +11095,11 @@ app.post('/v1/nexus/observe', authMiddleware, async (req: AuthenticatedRequest, 
       userId,
       opportunity.sourceType || 'marketplace_listing',
       opportunity.sourceUrl || null,
-      JSON.stringify(opportunity),
+      JSON.stringify({
+        ingestion: ingested.ingestion,
+        raw: ingested.rawInput,
+        normalized: opportunity,
+      }),
     ]
   );
 
@@ -10719,14 +11134,18 @@ app.post('/v1/nexus/observe', authMiddleware, async (req: AuthenticatedRequest, 
       JSON.stringify(card.confidence.assumptions),
       JSON.stringify({
         explanation: card.confidence.uncertaintyExplanation,
+        drivers: card.confidence.uncertaintyDrivers,
         missing: card.confidence.missingInformation,
         volatility: card.confidence.volatility,
+        confidenceBounds: card.confidence.confidenceBounds,
       }),
       JSON.stringify(card.financials),
       JSON.stringify(card.execution),
-      'nexus.flip.v1',
+      'nexus.flip.v2',
     ]
   );
+  await incrementUsage(userId, 'decision_card');
+  const usageSnapshot = await getUsageSnapshot(userId);
 
   res.status(HTTP_STATUS.CREATED).json({
     success: true,
@@ -10735,7 +11154,14 @@ app.post('/v1/nexus/observe', authMiddleware, async (req: AuthenticatedRequest, 
       opportunityId,
       decision: card.decision,
       confidence: card.confidence,
+      ingestion: ingested.ingestion,
+      calibration,
       card,
+      usage: {
+        plan: usageSnapshot.plan,
+        remaining: usageSnapshot.remaining,
+        upgradeUrl: '/pricing',
+      },
     },
   });
 });
@@ -11029,6 +11455,107 @@ app.get('/v1/nexus/decision-cards/:id/learning', authMiddleware, async (req: Aut
       })),
     },
   });
+});
+
+// ============================================
+// Marketplace Scanner API
+// ============================================
+
+/**
+ * POST /v1/scanner/run
+ * Trigger a live Craigslist scan for the authenticated user.
+ * Nova scans configured cities, scores every listing, persists the best
+ * as Decision Cards, runs governance, and returns ranked opportunities.
+ *
+ * This is the engine: it makes Nova active, not passive.
+ */
+app.post('/v1/scanner/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+
+  const body = req.body || {};
+  const cities: string[] | undefined =
+    Array.isArray(body.cities) && body.cities.length > 0
+      ? body.cities.slice(0, 10)  // cap at 10 cities per request
+      : undefined;
+
+  const config: ScanConfig = {
+    cities,
+    maxAskingPrice:          Number(body.maxPrice) > 0    ? Number(body.maxPrice)    : undefined,
+    minExpectedProfitDollars: Number(body.minProfit) >= 0 ? Number(body.minProfit)   : undefined,
+    minConfidencePct:         Number(body.minConfidence) >= 0 ? Number(body.minConfidence) : undefined,
+    maxOpportunities:         Number(body.maxResults) > 0 ? Number(body.maxResults)  : undefined,
+    userId,
+    orgId,
+  };
+
+  try {
+    const result = await runMarketplaceScan(config);
+
+    res.json({
+      success: true,
+      data: {
+        summary: {
+          totalFetched:         result.totalFetched,
+          totalEvaluated:       result.totalEvaluated,
+          opportunitiesFound:   result.opportunitiesFound,
+          decisionCardsCreated: result.decisionCardsCreated,
+          durationMs:           result.durationMs,
+          ranAt:                result.ranAt,
+          cities:               result.cities,
+        },
+        opportunities: result.opportunities,
+      },
+    });
+  } catch (err) {
+    logger.error('Scanner run failed', err as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: {
+        code: 'SCANNER_FAILED',
+        message: (err as Error).message || 'Scanner encountered an error.',
+      },
+    });
+  }
+});
+
+/**
+ * GET /v1/scanner/opportunities
+ * Fetch the latest scanner-generated Decision Cards for this user.
+ * Returns opportunities found in the last 48 hours, ranked by confidence.
+ */
+app.get('/v1/scanner/opportunities', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+
+  const limit          = Math.min(Number(req.query.limit)      || 25, 100);
+  const minConf        = Number(req.query.minConfidence)        || 0;
+  const actionFilter   = typeof req.query.action === 'string' ? req.query.action.toUpperCase() : 'all';
+
+  try {
+    const opportunities = await getScanOpportunities({
+      userId,
+      orgId,
+      limit,
+      minConfidencePct: minConf,
+      actionFilter: ['BUY', 'OFFER', 'all'].includes(actionFilter) ? actionFilter : 'all',
+    });
+
+    res.json({
+      success: true,
+      data: {
+        opportunities,
+        count: opportunities.length,
+        note: opportunities.length === 0
+          ? 'No opportunities found in the last 48 hours. Run POST /v1/scanner/run to generate fresh results.'
+          : undefined,
+      },
+    });
+  } catch (err) {
+    logger.error('Get scan opportunities failed', err as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'SCAN_QUERY_FAILED', message: (err as Error).message },
+    });
+  }
 });
 
 function roundTo2(value: number): number {
