@@ -20,6 +20,12 @@ export interface FlipOpportunityInput {
   sourceUrl?: string;
   notes?: string;
 }
+export interface DecisionEngineCalibrationProfile {
+  sampleSize: number;
+  meanPredictionBiasPct: number;
+  meanCalibrationErrorPct: number;
+  meanConfidenceDeltaPct: number;
+}
 
 export interface DecisionCardComputation {
   opportunity: {
@@ -37,6 +43,10 @@ export interface DecisionCardComputation {
     expectedDaysToSale: { low: number; mid: number; high: number };
     demandMomentum: 'RISING' | 'STABLE' | 'SOFTENING';
     listingSaturation: 'LOW' | 'MEDIUM' | 'HIGH';
+    activeListingSaturationScore: number;
+    competitionDensityScore: number;
+    regionalDemandVariancePct: number;
+    sellThroughVelocity: 'FAST' | 'MODERATE' | 'SLOW';
   };
   financials: {
     askingPrice: number;
@@ -44,14 +54,20 @@ export interface DecisionCardComputation {
     costs: {
       fees: number;
       shipping: number;
+      taxes: number;
       refurbishment: number;
       storage: number;
+      holdCost: number;
     };
     netCash: { low: number; mid: number; high: number };
     expectedRoiPct: number;
     downsideRisk: number;
+    downsideRiskPct: number;
     opportunityCost: number;
     riskAdjustedValue: number;
+    expectedTotalCost: number;
+    expectedNetProfit: number;
+    expectedSalePrice: number;
   };
   decision: {
     action: DecisionAction;
@@ -62,8 +78,10 @@ export interface DecisionCardComputation {
     confidencePct: number;
     volatility: VolatilityLevel;
     uncertaintyExplanation: string[];
+    uncertaintyDrivers: string[];
     missingInformation: string[];
     assumptions: string[];
+    confidenceBounds: { low: number; mid: number; high: number };
   };
   execution: {
     suggestedOffer: number | null;
@@ -73,6 +91,22 @@ export interface DecisionCardComputation {
     bestPlatform: string;
     repricingRule: string;
     stopLossRule: string;
+  };
+  marketIntel: {
+    localDemandBand: 'HIGH' | 'MEDIUM' | 'LOW';
+    averageComparablePrice: number;
+    comparableSpreadPct: number;
+    estimatedDaysToSell: number;
+    priceTrend: 'RISING' | 'STABLE' | 'SOFTENING';
+  };
+  financialModel: {
+    expectedSalePrice: number;
+    expectedTotalCost: number;
+    expectedNetProfit: number;
+    expectedRoiPct: number;
+    maxDownside: number;
+    opportunityCost: number;
+    riskAdjustedValue: number;
   };
 }
 
@@ -116,7 +150,10 @@ function inferListingSaturation(liquidityScore: number): 'LOW' | 'MEDIUM' | 'HIG
   return 'HIGH';
 }
 
-export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCardComputation {
+export function buildFlipDecisionCard(
+  input: FlipOpportunityInput,
+  options?: { calibration?: DecisionEngineCalibrationProfile | null }
+): DecisionCardComputation {
   const title = String(input.title || '').trim();
   const category = (input.category || 'General Resale').trim();
   const condition = (input.condition || 'Unknown').trim();
@@ -153,18 +190,20 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
 
   const fees = round2(Number(input.estimatedFees ?? soldMid * 0.12));
   const shipping = round2(Number(input.estimatedShipping ?? Math.max(6, soldMid * 0.04)));
+  const taxes = round2(soldMid * 0.02);
   const refurbishment = round2(Number(input.estimatedRefurbishment ?? 0));
   const storage = round2(Number(input.estimatedStorage ?? 0));
+  const holdMid = Math.max(2, Math.round(Number(input.expectedHoldDays ?? (input.liquidityHint ? 30 - input.liquidityHint / 4 : 14))));
+  const holdCost = round2(Math.max(0, askingPrice * 0.0008 * holdMid));
 
   assumptions.push(`Fees assumed at ${round2((fees / Math.max(soldMid, 1)) * 100)}% of midpoint resale.`);
   assumptions.push(`Shipping estimate ${shipping.toFixed(2)} reflects blended carrier baseline for the category.`);
 
-  const netLow = round2(soldLow - askingPrice - (soldLow * 0.12) - shipping - refurbishment - storage);
-  const netMid = round2(soldMid - askingPrice - fees - shipping - refurbishment - storage);
-  const netHigh = round2(soldHigh - askingPrice - (soldHigh * 0.12) - shipping - refurbishment - storage);
-  const expectedRoiPct = askingPrice > 0 ? round2((netMid / askingPrice) * 100) : 0;
+  let netLow = round2(soldLow - askingPrice - (soldLow * 0.12) - shipping - refurbishment - storage - holdCost);
+  let netMid = round2(soldMid - askingPrice - fees - shipping - taxes - refurbishment - storage - holdCost);
+  let netHigh = round2(soldHigh - askingPrice - (soldHigh * 0.12) - shipping - taxes - refurbishment - storage - holdCost);
+  let expectedRoiPct = askingPrice > 0 ? round2((netMid / askingPrice) * 100) : 0;
 
-  const holdMid = Math.max(2, Math.round(Number(input.expectedHoldDays ?? (input.liquidityHint ? 30 - input.liquidityHint / 4 : 14))));
   const holdRange = {
     low: Math.max(1, Math.round(holdMid * 0.5)),
     mid: holdMid,
@@ -173,23 +212,13 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
 
   const annualAlt = Number(input.alternativeAnnualReturnRate ?? 0.1);
   const opportunityCost = round2(askingPrice * annualAlt * (holdRange.mid / 365));
-  const downsideRisk = round2(Math.min(0, netLow));
-  const riskAdjustedValue = round2(netMid + downsideRisk - opportunityCost);
+  let downsideRisk = round2(Math.min(0, netLow));
+  let downsideRiskPct = askingPrice > 0 ? round2((Math.abs(downsideRisk) / askingPrice) * 100) : 0;
+  let riskAdjustedValue = round2(netMid + downsideRisk - opportunityCost);
+  const expectedTotalCost = round2(askingPrice + fees + shipping + taxes + refurbishment + storage + holdCost);
 
   const spreadPct = soldMid > 0 ? (soldHigh - soldLow) / soldMid : 1;
   const volatility = classifyVolatility(spreadPct);
-
-  let confidencePct = Number(input.confidenceHint ?? 0);
-  if (!confidencePct) {
-    const baseFromComps = soldComps.length >= 10 ? 78 : soldComps.length >= 5 ? 64 : soldComps.length >= 3 ? 52 : 36;
-    const completenessPenalty = missing.length * 6;
-    confidencePct = clamp(baseFromComps - completenessPenalty, 12, 92);
-  }
-
-  if (volatility === 'HIGH') uncertainty.push('Price dispersion is high; realized sale price may deviate materially from midpoint.');
-  if (soldComps.length < 3) uncertainty.push('Comparable sale evidence is thin; forecast range carries elevated uncertainty.');
-  if (holdRange.high >= 25) uncertainty.push('Longer expected holding period increases market and inventory risk.');
-
   const liquidityScore = clamp(
     Math.round(
       Number(input.liquidityHint ?? (soldComps.length >= 8 ? 78 : soldComps.length >= 4 ? 58 : 35))
@@ -198,10 +227,59 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
     5,
     95
   );
+  const activeListingSaturationScore = clamp(100 - liquidityScore + (volatility === 'HIGH' ? 8 : 0), 5, 95);
+  const competitionDensityScore = clamp(Math.round(activeListingSaturationScore * 0.7 + (soldComps.length < 5 ? 18 : 8)), 5, 95);
+  const regionalDemandVariancePct = round2(clamp((100 - liquidityScore) * 0.35, 2, 35));
+  const sellThroughVelocity: 'FAST' | 'MODERATE' | 'SLOW' =
+    holdRange.mid <= 7 ? 'FAST' : holdRange.mid <= 18 ? 'MODERATE' : 'SLOW';
 
-  const shouldBuy = riskAdjustedValue > 0 && expectedRoiPct >= 18 && confidencePct >= 55;
-  const shouldOffer = !shouldBuy && netMid > 0 && confidencePct >= 35;
-  const shouldWait = confidencePct < 35 || missing.length >= 3;
+  const calibration = options?.calibration || null;
+  if (calibration && calibration.sampleSize >= 3) {
+    const netFactor = 1 + clamp(calibration.meanPredictionBiasPct / 100, -0.35, 0.35);
+    netLow = round2(netLow * netFactor);
+    netMid = round2(netMid * netFactor);
+    netHigh = round2(netHigh * netFactor);
+    expectedRoiPct = askingPrice > 0 ? round2((netMid / askingPrice) * 100) : 0;
+    downsideRisk = round2(Math.min(0, netLow));
+    downsideRiskPct = askingPrice > 0 ? round2((Math.abs(downsideRisk) / askingPrice) * 100) : 0;
+    riskAdjustedValue = round2(netMid + downsideRisk - opportunityCost);
+    assumptions.push(
+      `Outcome feedback applied from ${calibration.sampleSize} prior outcomes (bias ${round2(calibration.meanPredictionBiasPct)}%, calibration error ${round2(calibration.meanCalibrationErrorPct)}%).`
+    );
+  }
+
+  let confidencePct = Number(input.confidenceHint ?? 0);
+  if (!confidencePct) {
+    const baseFromComps = soldComps.length >= 10 ? 78 : soldComps.length >= 5 ? 64 : soldComps.length >= 3 ? 52 : 36;
+    const completenessPenalty = missing.length * 6;
+    confidencePct = clamp(baseFromComps - completenessPenalty, 12, 92);
+  }
+  if (calibration && calibration.sampleSize >= 3) {
+    const confidenceShift = clamp(
+      calibration.meanConfidenceDeltaPct * 0.12 - calibration.meanCalibrationErrorPct * 0.05,
+      -18,
+      10
+    );
+    confidencePct = clamp(confidencePct + confidenceShift, 8, 95);
+    if (confidenceShift < 0) {
+      uncertainty.push('Recent outcome drift lowered confidence while model recalibrates.');
+    }
+  }
+  if (volatility === 'HIGH') uncertainty.push('Price dispersion is high; realized sale price may deviate materially from midpoint.');
+  if (soldComps.length < 3) uncertainty.push('Comparable sale evidence is thin; forecast range carries elevated uncertainty.');
+  if (holdRange.high >= 25) uncertainty.push('Longer expected holding period increases market and inventory risk.');
+  if (competitionDensityScore >= 70) uncertainty.push('Competitive listing density is elevated; margin compression risk is higher.');
+  if (regionalDemandVariancePct >= 20) uncertainty.push('Regional demand variance is high; local outcomes can diverge from aggregate comps.');
+
+  const confidenceBounds = {
+    low: clamp(round2(confidencePct - (volatility === 'HIGH' ? 22 : volatility === 'MEDIUM' ? 14 : 9)), 5, 95),
+    mid: round2(confidencePct),
+    high: clamp(round2(confidencePct + (soldComps.length >= 8 ? 8 : 4)), 5, 98),
+  };
+
+  const shouldBuy = riskAdjustedValue > 0 && expectedRoiPct >= 18 && confidenceBounds.mid >= 55;
+  const shouldOffer = !shouldBuy && netMid > 0 && confidenceBounds.mid >= 35;
+  const shouldWait = confidenceBounds.mid < 35 || missing.length >= 3;
 
   let action: DecisionAction = 'SKIP';
   let offerPrice: number | null = null;
@@ -216,8 +294,8 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
 
   const rationale: string[] = [
     `Expected net midpoint is ${netMid.toFixed(2)} with ROI ${expectedRoiPct.toFixed(2)}%.`,
-    `Downside case is ${netLow.toFixed(2)} and opportunity cost is ${opportunityCost.toFixed(2)}.`,
-    `Risk-adjusted value is ${riskAdjustedValue.toFixed(2)} at ${confidencePct.toFixed(0)}% confidence.`,
+    `Downside case is ${netLow.toFixed(2)} (${downsideRiskPct.toFixed(2)}% risk) and opportunity cost is ${opportunityCost.toFixed(2)}.`,
+    `Risk-adjusted value is ${riskAdjustedValue.toFixed(2)} with confidence bounds ${confidenceBounds.low.toFixed(0)}-${confidenceBounds.high.toFixed(0)}%.`,
   ];
 
   const listingTitle = `${title} | ${condition} | ${category}`.slice(0, 120);
@@ -226,7 +304,6 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
     `Category: ${category}.`,
     `Inspected and priced from recent sold comparables.`,
   ].join(' ');
-
   const suggestedOffer = action === 'OFFER' ? offerPrice : action === 'BUY' ? askingPrice : null;
   const bestPlatform = shipping > 0 ? 'eBay' : 'Facebook Marketplace Local';
   const negotiationScript = suggestedOffer !== null
@@ -238,7 +315,7 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
       title,
       category,
       condition,
-      identificationConfidence: clamp(Math.round(confidencePct + (soldComps.length >= 5 ? 5 : 0)), 5, 95),
+      identificationConfidence: clamp(Math.round(confidenceBounds.mid + (soldComps.length >= 5 ? 5 : 0)), 5, 95),
       sourceType,
       sourceUrl: input.sourceUrl,
       location: input.location,
@@ -249,16 +326,24 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
       expectedDaysToSale: holdRange,
       demandMomentum: inferDemandMomentum(liquidityScore),
       listingSaturation: inferListingSaturation(liquidityScore),
+      activeListingSaturationScore,
+      competitionDensityScore,
+      regionalDemandVariancePct,
+      sellThroughVelocity,
     },
     financials: {
       askingPrice,
       grossResale: { low: soldLow, mid: soldMid, high: soldHigh },
-      costs: { fees, shipping, refurbishment, storage },
+      costs: { fees, shipping, taxes, refurbishment, storage, holdCost },
       netCash: { low: netLow, mid: netMid, high: netHigh },
       expectedRoiPct,
       downsideRisk,
+      downsideRiskPct,
       opportunityCost,
       riskAdjustedValue,
+      expectedTotalCost,
+      expectedNetProfit: netMid,
+      expectedSalePrice: soldMid,
     },
     decision: {
       action,
@@ -266,11 +351,13 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
       rationale,
     },
     confidence: {
-      confidencePct: round2(confidencePct),
+      confidencePct: confidenceBounds.mid,
       volatility,
       uncertaintyExplanation: uncertainty,
+      uncertaintyDrivers: uncertainty,
       missingInformation: missing,
       assumptions,
+      confidenceBounds,
     },
     execution: {
       suggestedOffer,
@@ -280,6 +367,22 @@ export function buildFlipDecisionCard(input: FlipOpportunityInput): DecisionCard
       bestPlatform,
       repricingRule: 'If unsold after midpoint hold window, reprice down by 4-6%.',
       stopLossRule: 'Exit at or before downside threshold if market evidence weakens.',
+    },
+    marketIntel: {
+      localDemandBand: liquidityScore >= 70 ? 'HIGH' : liquidityScore >= 45 ? 'MEDIUM' : 'LOW',
+      averageComparablePrice: soldMid,
+      comparableSpreadPct: round2(spreadPct * 100),
+      estimatedDaysToSell: holdRange.mid,
+      priceTrend: inferDemandMomentum(liquidityScore),
+    },
+    financialModel: {
+      expectedSalePrice: soldMid,
+      expectedTotalCost,
+      expectedNetProfit: netMid,
+      expectedRoiPct,
+      maxDownside: Math.abs(downsideRisk),
+      opportunityCost,
+      riskAdjustedValue,
     },
   };
 }
@@ -291,6 +394,7 @@ export function computeOutcomeLearning(
   predictionError: number;
   absoluteError: number;
   calibrationErrorPct: number;
+  confidenceDeltaPct: number;
   summary: string[];
 } {
   const predicted = card.financials.netCash.mid;
@@ -299,6 +403,9 @@ export function computeOutcomeLearning(
   const denom = Math.max(1, Math.abs(predicted));
   const calibrationErrorPct = round2((absoluteError / denom) * 100);
   const holdDays = Number(actual.holdDays ?? card.marketIntelligence.expectedDaysToSale.mid);
+  const realizedDirection = actual.realizedNetProfit >= 0 ? 1 : -1;
+  const predictedDirection = predicted >= 0 ? 1 : -1;
+  const confidenceDeltaPct = round2((realizedDirection === predictedDirection ? 1 : -1) * Math.min(100, calibrationErrorPct));
 
   const summary = [
     `Predicted net ${predicted.toFixed(2)} vs realized ${actual.realizedNetProfit.toFixed(2)}.`,
@@ -310,6 +417,7 @@ export function computeOutcomeLearning(
     predictionError,
     absoluteError,
     calibrationErrorPct,
+    confidenceDeltaPct,
     summary,
   };
 }
