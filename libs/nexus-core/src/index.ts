@@ -276,6 +276,38 @@ export {
 } from './platform';
 
 // ============================================================================
+// VLH — Value Loop Hub Intelligence Layer (DB-backed)
+// ============================================================================
+
+// GovernanceEngine: reads vlh_loop_policies from DB, evaluates cards,
+//   writes auditable GovernanceChecks.
+// LearningEngine: persists outcome snapshots, aggregates CalibrationProfile.
+// ActionPlanBuilder: converts DecisionCardComputation into vlh_action_plans.
+// createSharedDbAdapter: wires VLHPersistenceAdapter to @nova/shared db helpers.
+export {
+  GovernanceEngine,
+  LearningEngine,
+  ActionPlanBuilder,
+  createSharedDbAdapter,
+  type GovernanceCheckInput,
+  type GovernanceCheckOutput,
+  type GovernanceEntityType,
+  type GovernanceResultValue,
+  type EnforcementModeValue,
+  type PolicyDefinition,
+  type PolicyRuleSet,
+  type PolicyCheckResult,
+  type LearningOutcomeInput,
+  type LearningResult,
+  type CalibrationProfile,
+  type ActionPlanInput,
+  type ActionStepInput,
+  type VLHPersistenceAdapter,
+  type TransactionClient,
+  type QueryResult,
+} from './vlh';
+
+// ============================================================================
 // NEXUS - The unified system
 // ============================================================================
 

@@ -530,3 +530,49 @@ export interface KillSwitchState {
   enabledBy?: UUID;
   reason?: string;
 }
+
+// ============================================
+// Nova Nexus Decision Infrastructure
+// ============================================
+
+export const NexusDecisionActionSchema = z.enum(['BUY', 'SELL', 'SKIP', 'WAIT', 'OFFER']);
+export type NexusDecisionAction = z.infer<typeof NexusDecisionActionSchema>;
+
+export const NexusVolatilitySchema = z.enum(['LOW', 'MEDIUM', 'HIGH']);
+export type NexusVolatility = z.infer<typeof NexusVolatilitySchema>;
+
+export interface NexusOpportunity {
+  id: UUID;
+  orgId?: UUID | null;
+  userId?: UUID | null;
+  sourceType: string;
+  sourceUrl?: string | null;
+  rawInput: Record<string, unknown>;
+  observedAt: Timestamp;
+}
+
+export interface NexusDecisionCard {
+  id: UUID;
+  opportunityId: UUID;
+  vertical: string;
+  action: NexusDecisionAction;
+  confidencePct: number;
+  volatility: NexusVolatility;
+  status: 'OPEN' | 'EXECUTING' | 'CLOSED' | 'ARCHIVED';
+  latestVersion: number;
+  createdAt: Timestamp;
+  updatedAt: Timestamp;
+}
+
+export interface NexusDecisionOutcome {
+  id: UUID;
+  decisionCardId: UUID;
+  executionId?: UUID | null;
+  outcomeStatus: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'ABANDONED';
+  realizedSalePrice?: number | null;
+  realizedTotalCost?: number | null;
+  realizedNetProfit?: number | null;
+  realizedHoldDays?: number | null;
+  notes?: string | null;
+  loggedAt: Timestamp;
+}

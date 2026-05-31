@@ -26,7 +26,16 @@ function getApiBase(): string {
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
-  error?: { code: string; message: string; details?: Record<string, unknown> };
+  error?: {
+    code: string;
+    message: string;
+    details?: Record<string, unknown>;
+    requiredPlan?: string;
+    limit?: number;
+    used?: number;
+    remaining?: number;
+    upgradeUrl?: string;
+  };
   meta?: { page?: number; pageSize?: number; total?: number };
 }
 type CandleIntegrity = {
@@ -53,6 +62,33 @@ type UsageSnapshot = {
   usage: Record<string, number>;
   remaining: Record<string, number>;
   upgradeUrl?: string;
+};
+
+export type ScanOpportunity = {
+  decisionCardId: string;
+  opportunityId: string;
+  title: string;
+  askingPrice: number;
+  city: string;
+  sourceUrl: string;
+  /** flip-engine action: BUY | OFFER | WAIT | SKIP */
+  action: string;
+  /** VLH recommendation: execute | wait | pass */
+  recommendation: string;
+  expectedNetProfit: number;
+  expectedRoiPct: number;
+  confidencePct: number;
+  riskScore: number;
+  dataCompleteness: string;
+  governanceResult: string;
+  category: string;
+  negotiationScript: string;
+  suggestedOffer: number | null;
+  listingTitle: string;
+  bestPlatform: string;
+  compSource: 'db_cache' | 'heuristic';
+  compCount: number;
+  opportunityScore: number;
 };
 
 type GuidedFlowResponse = {
@@ -1716,6 +1752,96 @@ class ApiClient {
   }
 
   // ==========================================================================
+  // Nova Nexus Decision Infrastructure (Observe -> Decide -> Execute -> Learn)
+  // ==========================================================================
+  async observeOpportunity(opportunity: {
+    title: string;
+    category?: string;
+    condition?: string;
+    askingPrice: number;
+    estimatedFees?: number;
+    estimatedShipping?: number;
+    estimatedRefurbishment?: number;
+    estimatedStorage?: number;
+    expectedHoldDays?: number;
+    soldComps?: number[];
+    location?: string;
+    sourceType?: string;
+    sourceUrl?: string;
+    notes?: string;
+  }) {
+    return this.request<{
+      cardId: string;
+      opportunityId: string;
+      decision: any;
+      confidence: any;
+      card: any;
+      usage?: {
+        plan: string;
+        remaining: Record<string, number>;
+        upgradeUrl?: string;
+      };
+    }>(
+      'POST',
+      '/v1/nexus/observe',
+      { opportunity }
+    );
+  }
+
+  async getNexusDecisionCard(cardId: string) {
+    return this.request<{
+      id: string;
+      status: string;
+      action: string;
+      confidencePct: number;
+      volatilityLevel: string;
+      latestVersion: number;
+      card: any;
+      outcomes: any[];
+      latestLearning: any;
+      createdAt: string;
+      updatedAt: string;
+    }>('GET', `/v1/nexus/decision-cards/${cardId}`);
+  }
+
+  async executeNexusDecisionCard(cardId: string, payload: {
+    action?: 'BUY' | 'SELL' | 'SKIP' | 'WAIT' | 'OFFER';
+    offerPrice?: number;
+    executionPayload?: Record<string, unknown>;
+    status?: 'PLANNED' | 'EXECUTED' | 'FAILED' | 'CANCELLED';
+  }) {
+    return this.request<{ executionId: string; cardId: string; status: string }>(
+      'POST',
+      `/v1/nexus/decision-cards/${cardId}/execute`,
+      payload
+    );
+  }
+
+  async logNexusOutcome(cardId: string, payload: {
+    executionId?: string;
+    realizedSalePrice?: number;
+    realizedTotalCost?: number;
+    realizedNetProfit?: number;
+    realizedHoldDays?: number;
+    outcomeStatus?: 'PROFIT' | 'LOSS' | 'BREAKEVEN' | 'ABANDONED';
+    notes?: string;
+    metadata?: Record<string, unknown>;
+  }) {
+    return this.request<{ outcomeId: string; learningSnapshotId: string; learning: any; cardStatus: string }>(
+      'POST',
+      `/v1/nexus/decision-cards/${cardId}/outcome`,
+      payload
+    );
+  }
+
+  async getNexusLearning(cardId: string) {
+    return this.request<{ cardId: string; snapshots: any[] }>(
+      'GET',
+      `/v1/nexus/decision-cards/${cardId}/learning`
+    );
+  }
+
+  // ==========================================================================
   // Manifesto: Agent Engine
   // ==========================================================================
   async getAgentDefinitions() {
@@ -1826,6 +1952,50 @@ class ApiClient {
   // ==========================================================================
   // Dashboard — Aggregate stats
   // ==========================================================================
+  // ==========================================================================
+  // Marketplace Scanner — Active Opportunity Discovery
+  // ==========================================================================
+
+  /** Run a live Craigslist scan for flip opportunities. May take up to 60s. */
+  async runScanner(params?: {
+    cities?: string[];
+    maxPrice?: number;
+    minProfit?: number;
+    minConfidence?: number;
+    maxResults?: number;
+  }) {
+    return this.request<{
+      summary: {
+        totalFetched: number;
+        totalEvaluated: number;
+        opportunitiesFound: number;
+        decisionCardsCreated: number;
+        durationMs: number;
+        ranAt: string;
+        cities: string[];
+      };
+      opportunities: ScanOpportunity[];
+    }>('POST', '/v1/scanner/run', params || {});
+  }
+
+  /** Fetch scanner-generated opportunities from the last 48 hours. */
+  async getScannerOpportunities(params?: {
+    limit?: number;
+    minConfidence?: number;
+    action?: string;
+  }) {
+    const qs = new URLSearchParams();
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (typeof params?.minConfidence === 'number') qs.set('minConfidence', String(params.minConfidence));
+    if (params?.action && params.action !== 'all') qs.set('action', params.action);
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<{
+      opportunities: ScanOpportunity[];
+      count: number;
+      note?: string;
+    }>('GET', `/v1/scanner/opportunities${query}`);
+  }
+
   async getDashboardStats() {
     return this.request<{
       sectors: {

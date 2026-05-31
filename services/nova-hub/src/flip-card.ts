@@ -157,7 +157,7 @@ const CATEGORY_PATTERNS: { pattern: RegExp; category: string; shippingKey: strin
   { pattern: /router|modem|hard drive|ssd|ram|gpu|graphics card|cpu|processor/i, category: 'Computer Parts', shippingKey: 'electronics_small' },
 ];
 
-function detectCategory(title: string, userCategory?: string): { category: string; shippingKey: string } {
+export function detectCategory(title: string, userCategory?: string): { category: string; shippingKey: string } {
   if (userCategory) {
     const lower = userCategory.toLowerCase();
     for (const cp of CATEGORY_PATTERNS) {
@@ -223,7 +223,7 @@ async function ensureSoldCompsTable(): Promise<void> {
   }
 }
 
-function normalizeQuery(title: string): string {
+export function normalizeQuery(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9\s]/g, '')
@@ -231,7 +231,7 @@ function normalizeQuery(title: string): string {
     .trim();
 }
 
-function queryHash(normalized: string): string {
+export function queryHash(normalized: string): string {
   return createHash('md5').update(normalized).digest('hex');
 }
 

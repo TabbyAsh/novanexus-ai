@@ -96,6 +96,19 @@ export const EVENT_TYPES = {
   BOT_TASK_RECEIVED: 'bot.task.received',
   BOT_TASK_COMPLETED: 'bot.task.completed',
   BOT_ERROR: 'bot.error',
+
+  // Value Loop Hub events
+  VLH_OPPORTUNITY_CREATED: 'vlh.opportunity.created',
+  VLH_OPPORTUNITY_SCORED: 'vlh.opportunity.scored',
+  VLH_DECISION_CARD_CREATED: 'vlh.decision_card.created',
+  VLH_DECISION_CARD_APPROVED: 'vlh.decision_card.approved',
+  VLH_DECISION_CARD_BLOCKED: 'vlh.decision_card.blocked',
+  VLH_GOVERNANCE_CHECK_COMPLETED: 'vlh.governance.check.completed',
+  VLH_ACTION_PLAN_CREATED: 'vlh.action_plan.created',
+  VLH_ACTION_PLAN_COMPLETED: 'vlh.action_plan.completed',
+  VLH_OUTCOME_LOGGED: 'vlh.outcome.logged',
+  VLH_LEARNING_RECORDED: 'vlh.learning.recorded',
+  VLH_LOOP_ENROLLED: 'vlh.loop.enrolled',
 } as const;
 
 // ============================================
