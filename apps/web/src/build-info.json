@@ -1,7 +1,6 @@
 {
-  "gitSha": "dev",
-  "buildTime": "2026-03-21T00:39:11.960Z",
-  "buildId": "build-1774053551960",
-  "environment": "production",
-  "vercelEnv": null
+  "sha": "8e76faeea7287d92491c8d783fe785bafa88d1e2",
+  "builtAt": "2026-05-30T21:01:29.6855052-04:00",
+  "services": ["gateway","auth","nova-hub","scanner","vlh"],
+  "migration": "024"
 }
