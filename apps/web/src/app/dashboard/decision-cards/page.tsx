@@ -1,6 +1,7 @@
 'use client';
 
-import { useCallback, useMemo, useState } from 'react';
+import Link from 'next/link';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import type { FormEvent } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { api } from '@/lib/api';
@@ -62,6 +63,23 @@ type OutcomeFormState = {
   notes: string;
 };
 
+type DecisionCardUsageSnapshot = {
+  plan: string;
+  limits: Record<string, number>;
+  usage: Record<string, number>;
+  remaining: Record<string, number>;
+  upgradeUrl?: string;
+};
+
+type QuotaNotice = {
+  message: string;
+  requiredPlan?: string;
+  upgradeUrl?: string;
+  limit?: number;
+  used?: number;
+  remaining?: number;
+};
+
 const initialObserveForm: ObserveFormState = {
   title: '',
   category: '',
@@ -115,6 +133,8 @@ export default function DecisionCardsPage() {
   const [loggingOutcome, setLoggingOutcome] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
+  const [usageSnapshot, setUsageSnapshot] = useState<DecisionCardUsageSnapshot | null>(null);
+  const [quotaNotice, setQuotaNotice] = useState<QuotaNotice | null>(null);
 
   const cardTimeline = useMemo(() => {
     if (!card) return [];
@@ -125,6 +145,17 @@ export default function DecisionCardsPage() {
       { label: 'Card ID', value: card.id },
     ];
   }, [card]);
+
+  const loadUsageSnapshot = useCallback(async () => {
+    const usageResult = await api.getUsage();
+    if (usageResult.success && usageResult.data) {
+      setUsageSnapshot(usageResult.data as unknown as DecisionCardUsageSnapshot);
+    }
+  }, []);
+
+  useEffect(() => {
+    void loadUsageSnapshot();
+  }, [loadUsageSnapshot]);
 
   const loadCardDetails = useCallback(async (cardId: string) => {
     setLoadingCard(true);
@@ -153,6 +184,7 @@ export default function DecisionCardsPage() {
     setSubmittingObserve(true);
     setError(null);
     setSuccess(null);
+    setQuotaNotice(null);
 
     try {
       const askingPrice = toNumber(observeForm.askingPrice);
@@ -184,11 +216,23 @@ export default function DecisionCardsPage() {
       });
 
       if (!result.success || !result.data?.cardId) {
+        if (result.error?.code === 'QUOTA_EXCEEDED') {
+          setQuotaNotice({
+            message: result.error.message || 'Daily decision card limit reached.',
+            requiredPlan: result.error.requiredPlan,
+            upgradeUrl: result.error.upgradeUrl || '/pricing',
+            limit: result.error.limit,
+            used: result.error.used,
+            remaining: result.error.remaining,
+          });
+        }
         setError(result.error?.message || 'Unable to observe opportunity.');
+        await loadUsageSnapshot();
         return;
       }
 
       await loadCardDetails(result.data.cardId);
+      await loadUsageSnapshot();
       setSuccess(`Decision card created: ${result.data.cardId}`);
       setObserveForm((previous) => ({ ...previous, soldComps: '', notes: '' }));
     } finally {
@@ -281,6 +325,49 @@ export default function DecisionCardsPage() {
           <div className="p-4 rounded-xl bg-green-500/10 border border-green-500/30 text-green-300 text-sm">
             {success}
           </div>
+        )}
+        {usageSnapshot && (
+          <section className="p-4 rounded-xl bg-gray-900/80 border border-gray-800">
+            <div className="flex flex-wrap items-center gap-3 text-sm">
+              <span className="inline-flex items-center rounded-full bg-gray-800 px-2.5 py-1 text-gray-200">
+                Plan: {usageSnapshot.plan}
+              </span>
+              <span className="text-gray-300">
+                Decision cards today:{' '}
+                {usageSnapshot.remaining?.decisionCards === -1
+                  ? 'Unlimited'
+                  : `${usageSnapshot.usage?.decisionCards ?? 0}/${usageSnapshot.limits?.daily_decision_cards ?? 0}`}
+              </span>
+              {usageSnapshot.remaining?.decisionCards !== -1 && (
+                <span className="text-gray-400">Remaining: {usageSnapshot.remaining?.decisionCards ?? 0}</span>
+              )}
+              {(usageSnapshot.plan === 'FREE' || usageSnapshot.plan === 'LITE') && (
+                <Link
+                  href={usageSnapshot.upgradeUrl || '/pricing'}
+                  className="text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+                >
+                  Upgrade plan
+                </Link>
+              )}
+            </div>
+          </section>
+        )}
+        {quotaNotice && (
+          <section className="p-4 rounded-xl bg-amber-500/10 border border-amber-500/30 text-amber-200 text-sm space-y-2">
+            <p>{quotaNotice.message}</p>
+            {typeof quotaNotice.limit === 'number' && typeof quotaNotice.used === 'number' && (
+              <p className="text-amber-300/90">
+                Usage today: {quotaNotice.used}/{quotaNotice.limit}
+                {typeof quotaNotice.remaining === 'number' ? ` • Remaining: ${quotaNotice.remaining}` : ''}
+              </p>
+            )}
+            <Link
+              href={quotaNotice.upgradeUrl || '/pricing'}
+              className="inline-flex text-cyan-300 hover:text-cyan-200 underline underline-offset-2"
+            >
+              {quotaNotice.requiredPlan ? `Upgrade to ${quotaNotice.requiredPlan}` : 'Upgrade now'}
+            </Link>
+          </section>
         )}
 
         <form onSubmit={onObserve} className="bg-gray-900/80 border border-gray-800 rounded-2xl p-6 space-y-4">

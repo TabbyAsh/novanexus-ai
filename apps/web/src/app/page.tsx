@@ -42,7 +42,7 @@ const DIVISIONS = [
     bg: 'from-emerald-500/10',
     status: 'Live',
     statusColor: 'bg-emerald-500/20 text-emerald-400',
-    href: '/dashboard/analyze',
+    href: '/flip',
   },
   {
     name: 'Wall Street',
@@ -263,7 +263,7 @@ function TryItSection() {
       const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
       const headers: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch('/api/proxy/v1/flip-card/analyze', {
+      const res = await fetch('/api/proxy/v1/flip/appraise', {
         method: 'POST',
         headers,
         body: JSON.stringify({
@@ -746,7 +746,7 @@ function Footer() {
           <div>
             <h4 className="text-sm font-semibold text-gray-300 mb-4">Divisions</h4>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="/dashboard/analyze" className="hover:text-white transition">Flip Card</Link></li>
+              <li><Link href="/flip" className="hover:text-white transition">Flip Card</Link></li>
               <li><Link href="/dashboard/screener" className="hover:text-white transition">Wall Street</Link></li>
               <li><Link href="/dashboard/marketplace" className="hover:text-white transition">Marketplace</Link></li>
               <li><Link href="/dashboard/social-hub" className="hover:text-white transition">Social</Link></li>

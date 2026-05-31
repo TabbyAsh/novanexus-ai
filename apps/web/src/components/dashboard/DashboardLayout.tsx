@@ -11,6 +11,7 @@ interface NavItem {
   href: string;
   icon: ReactNode;
   badge?: string;
+  locked?: boolean;
 }
 
 // ═══════════════════════════════════════════════════════
@@ -26,9 +27,9 @@ interface NavSector {
 
 const navSectors: NavSector[] = [
   {
-    name: 'COMMAND',
-    icon: '◆',
-    color: 'text-cyan-400',
+    name: 'ACTIVE',
+    icon: '⚡',
+    color: 'text-emerald-400',
     items: [
       {
         name: 'Overview',
@@ -40,6 +41,16 @@ const navSectors: NavSector[] = [
         ),
       },
       {
+        name: 'Flip Finder',
+        href: '/dashboard/scanner',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+          </svg>
+        ),
+        badge: 'LIVE',
+      },
+      {
         name: 'Flip Card',
         href: '/flip',
         icon: (
@@ -47,24 +58,31 @@ const navSectors: NavSector[] = [
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
           </svg>
         ),
-        badge: 'NEW',
+        badge: 'FREE',
       },
       {
-        name: 'Nexus',
-        href: '/dashboard/nexus',
+        name: 'Stock Screener',
+        href: '/dashboard/screener',
         icon: (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M8 8h8v8H8V8z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
           </svg>
         ),
-        badge: 'NEW',
+        badge: 'LIVE',
       },
+    ],
+  },
+  {
+    name: 'YOUR WORK',
+    icon: '📋',
+    color: 'text-gray-400',
+    items: [
       {
-        name: 'Decisions',
-        href: '/dashboard/decisions',
+        name: 'Outcomes',
+        href: '/dashboard/outcomes',
         icon: (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12h6m-6 4h6m-6-8h6m3 12H6a2 2 0 01-2-2V6a2 2 0 012-2h9l5 5v11a2 2 0 01-2 2z" />
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 18L9 11.25l4.306 4.306a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />
           </svg>
         ),
       },
@@ -78,146 +96,80 @@ const navSectors: NavSector[] = [
         ),
       },
       {
-        name: 'Agents',
-        href: '/dashboard/agents',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19 14.5M14.25 3.104c.251.023.501.05.75.082M19 14.5l-2.47 2.47a2.25 2.25 0 01-1.59.659H9.06a2.25 2.25 0 01-1.591-.659L5 14.5m14 0V17a2 2 0 01-2 2H7a2 2 0 01-2-2v-2.5" />
-          </svg>
-        ),
-        badge: 'NEW',
-      },
-      {
-        name: 'Outcomes',
-        href: '/dashboard/outcomes',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M2.25 18L9 11.25l4.306 4.306a11.95 11.95 0 015.814-5.519l2.74-1.22m0 0l-5.94-2.28m5.94 2.28l-2.28 5.941" />
-          </svg>
-        ),
-        badge: 'ROI',
-      },
-    ],
-  },
-  {
-    name: 'WALL STREET',
-    icon: '📈',
-    color: 'text-green-400',
-    items: [
-      {
-        name: 'Screener',
-        href: '/dashboard/screener',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 17L9 20l-1 1h8l-1-1-.75-3M3 13h18M5 17h14a2 2 0 002-2V5a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" />
-          </svg>
-        ),
-        badge: 'LIVE',
-      },
-      {
-        name: 'Trading',
-        href: '/dashboard/trading',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-          </svg>
-        ),
-      },
-      {
-        name: 'Simulator',
-        href: '/dashboard/simulator',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-          </svg>
-        ),
-      },
-      {
-        name: 'Strategy',
-        href: '/dashboard/strategy-performance',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 6h16M4 12h16M4 18h16M7 6v12M17 6v12" />
-          </svg>
-        ),
-      },
-      {
-        name: 'Analytics',
-        href: '/dashboard/analytics',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-          </svg>
-        ),
-      },
-    ],
-  },
-  {
-    name: 'MARKETPLACE',
-    icon: '🏪',
-    color: 'text-pink-400',
-    items: [
-      {
-        name: 'Marketplace',
-        href: '/dashboard/marketplace',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
-          </svg>
-        ),
-      },
-      {
-        name: 'Flip Finder',
-        href: '/dashboard/scanner',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0zM10 7v3m0 0v3m0-3h3m-3 0H7" />
-          </svg>
-        ),
-        badge: 'LIVE',
-      },
-      {
-        name: 'Value Radar',
-        href: '/dashboard/value-radar',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M5.636 18.364a9 9 0 010-12.728m12.728 0a9 9 0 010 12.728M9.172 15.828a5 5 0 010-7.072m5.656 0a5 5 0 010 7.072M12 12h.01" />
-          </svg>
-        ),
-        badge: 'NEW',
-      },
-    ],
-  },
-  {
-    name: 'SOCIAL',
-    icon: '📡',
-    color: 'text-purple-400',
-    items: [
-      {
-        name: 'Social Hub',
-        href: '/dashboard/social-hub',
-        icon: (
-          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
-          </svg>
-        ),
-      },
-      {
-        name: 'Content Engine',
-        href: '/dashboard/content-engine',
+        name: 'Journal',
+        href: '/dashboard/journal',
         icon: (
           <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
           </svg>
         ),
-        badge: 'NEW',
+      },
+      {
+        name: 'Daily Brief',
+        href: '/dashboard/nexus',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z" />
+          </svg>
+        ),
+      },
+    ],
+  },
+  {
+    name: 'COMING SOON',
+    icon: '🔒',
+    color: 'text-gray-600',
+    items: [
+      {
+        name: 'Marketplace',
+        href: '#',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M16 11V7a4 4 0 00-8 0v4M5 9h14l1 12H4L5 9z" />
+          </svg>
+        ),
+        badge: 'SOON',
+        locked: true,
+      },
+      {
+        name: 'Social Hub',
+        href: '#',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z" />
+          </svg>
+        ),
+        badge: 'SOON',
+        locked: true,
+      },
+      {
+        name: 'AI Agents',
+        href: '#',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.75 3.104v5.714a2.25 2.25 0 01-.659 1.591L5 14.5M9.75 3.104c-.251.023-.501.05-.75.082m.75-.082a24.301 24.301 0 014.5 0m0 0v5.714c0 .597.237 1.17.659 1.591L19 14.5M14.25 3.104c.251.023.501.05.75.082M19 14.5l-2.47 2.47a2.25 2.25 0 01-1.59.659H9.06a2.25 2.25 0 01-1.591-.659L5 14.5m14 0V17a2 2 0 01-2 2H7a2 2 0 01-2-2v-2.5" />
+          </svg>
+        ),
+        badge: 'SOON',
+        locked: true,
+      },
+      {
+        name: 'Analytics',
+        href: '#',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
+          </svg>
+        ),
+        badge: 'SOON',
+        locked: true,
       },
     ],
   },
   {
     name: 'OPS',
     icon: '⚙️',
-    color: 'text-orange-400',
+    color: 'text-gray-500',
     items: [
       {
         name: 'Safety',
@@ -420,6 +372,46 @@ function Sidebar({ collapsed, onToggle, isMobile }: { collapsed: boolean; onTogg
               {/* Sector Items */}
               {sector.items.map((item) => {
                 const isActive = pathname === item.href;
+                
+                // Badge color logic
+                const badgeClass =
+                  item.badge === 'LIVE'
+                    ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
+                    : item.badge === 'FREE'
+                    ? 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
+                    : item.badge === 'NEW'
+                    ? 'bg-green-500/20 text-green-400 border-green-500/30'
+                    : 'bg-gray-800/80 text-gray-600 border-gray-700/50'; // SOON
+
+                // Locked items — non-interactive
+                if (item.locked) {
+                  return (
+                    <div
+                      key={item.name}
+                      className="flex items-center gap-3 px-3 py-2.5 rounded-xl text-sm text-gray-700 cursor-not-allowed select-none"
+                    >
+                      <span className="flex-shrink-0 text-gray-700 opacity-50">{item.icon}</span>
+                      <AnimatePresence>
+                        {(!collapsed || isMobile) && (
+                          <motion.span
+                            initial={{ opacity: 0 }}
+                            animate={{ opacity: 1 }}
+                            exit={{ opacity: 0 }}
+                            className="font-medium whitespace-nowrap"
+                          >
+                            {item.name}
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                      {item.badge && (!collapsed || isMobile) && (
+                        <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full border ${badgeClass}`}>
+                          {item.badge}
+                        </span>
+                      )}
+                    </div>
+                  );
+                }
+
                 return (
                   <Link
                     key={item.href}
@@ -448,11 +440,7 @@ function Sidebar({ collapsed, onToggle, isMobile }: { collapsed: boolean; onTogg
                       )}
                     </AnimatePresence>
                     {item.badge && (!collapsed || isMobile) && (
-                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full border ${
-                        item.badge === 'NEW'
-                          ? 'bg-green-500/20 text-green-400 border-green-500/30'
-                          : 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30'
-                      }`}>
+                      <span className={`ml-auto text-[10px] px-1.5 py-0.5 rounded-full border ${badgeClass}`}>
                         {item.badge}
                       </span>
                     )}
@@ -502,10 +490,13 @@ function Header({ onMenuClick, isMobile }: { onMenuClick: () => void; isMobile: 
         </button>
         
         {/* Quick actions */}
-        <button className="px-3 md:px-4 py-2 rounded-xl bg-gradient-to-r from-cyan-500 to-purple-600 text-white font-medium text-sm hover:shadow-lg hover:shadow-cyan-500/25 transition-all">
-          <span className="hidden sm:inline">Quick Trade</span>
-          <span className="sm:hidden">Trade</span>
-        </button>
+        <Link
+          href="/dashboard/scanner"
+          className="px-3 md:px-4 py-2 rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 text-white font-medium text-sm hover:shadow-lg hover:shadow-emerald-500/25 transition-all"
+        >
+          <span className="hidden sm:inline">Flip Finder</span>
+          <span className="sm:hidden">Scan</span>
+        </Link>
       </div>
     </header>
   );

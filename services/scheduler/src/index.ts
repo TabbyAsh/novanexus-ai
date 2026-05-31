@@ -578,7 +578,7 @@ async function jobDailyFlipAlerts(): Promise<void> {
     for (const item of valuable) {
       try {
         const category = FLIP_ALERT_PATTERNS.find(p => p.pattern.test(item.title))?.category || 'general';
-        const res = await fetch(`${NOVA_HUB_URL}/v1/flip-card/analyze`, {
+        const res = await fetch(`${NOVA_HUB_URL}/v1/flip/appraise`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ title: item.title, buy_price: 0, condition: 'Fair', shipping_or_pickup: 'pickup', category }),

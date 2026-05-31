@@ -6,6 +6,27 @@ import Link from 'next/link';
 // ============================================================================
 // Types
 // ============================================================================
+interface FlipAppraisal {
+  decision: 'BUY' | 'PASS' | 'WATCH' | 'NEGOTIATE';
+  confidence: number;
+  maxBuyPrice: number | null;
+  expectedResaleLow: number | null;
+  expectedResaleHigh: number | null;
+  fastSalePrice: number | null;
+  estimatedFees: number | null;
+  estimatedShipping: number | null;
+  expectedNetProfitLow: number | null;
+  expectedNetProfitHigh: number | null;
+  expectedNetProfitMid?: number | null;
+  riskLevel: 'LOW' | 'MEDIUM' | 'HIGH';
+  reasons: string[];
+  warnings: string[];
+  unavailableReasons: string[];
+  sellerQuestions: string[];
+  negotiationScript: string;
+  listingTitle: string;
+  listingDescription: string;
+}
 
 interface FlipCard {
   item_title: string;
@@ -29,6 +50,7 @@ interface FlipCard {
   assumptions: string[];
   comp_sources: { source: string; count: number; freshness: string }[];
   generated_at: string;
+  appraisal?: FlipAppraisal;
 }
 
 type Step = 'input' | 'processing' | 'result';
@@ -62,12 +84,16 @@ export default function AnalyzePage() {
   const [shippingOrPickup, setShippingOrPickup] = useState<'shipping' | 'pickup'>('shipping');
   const [platform, setPlatform] = useState('eBay');
   const [location, setLocation] = useState('');
+  const [manualComps, setManualComps] = useState('');
+  const [estimatedFees, setEstimatedFees] = useState('');
+  const [estimatedShipping, setEstimatedShipping] = useState('');
 
   const fmt = (n: number) => {
     const abs = Math.abs(n);
     const formatted = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(abs);
     return n < 0 ? `-${formatted}` : formatted;
   };
+  const fmtMaybe = (n: number | null | undefined) => (typeof n === 'number' ? fmt(n) : 'Unavailable');
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -91,7 +117,13 @@ export default function AnalyzePage() {
       const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
       const hdrs: Record<string, string> = { 'Content-Type': 'application/json' };
       if (token) hdrs['Authorization'] = `Bearer ${token}`;
-      const res = await fetch('/api/proxy/v1/flip-card/analyze', {
+      const parsedManualComps = manualComps
+        .split(/[,\n]/)
+        .map((value) => Number(value.trim()))
+        .filter((value) => Number.isFinite(value) && value > 0);
+      const fees = Number(estimatedFees);
+      const shipping = Number(estimatedShipping);
+      const res = await fetch('/api/proxy/v1/flip/appraise', {
         method: 'POST',
         headers: hdrs,
         body: JSON.stringify({
@@ -103,6 +135,9 @@ export default function AnalyzePage() {
           shipping_or_pickup: shippingOrPickup,
           target_platform: platform,
           location: location.trim() || undefined,
+          manualComps: parsedManualComps.length > 0 ? parsedManualComps : undefined,
+          estimatedFees: Number.isFinite(fees) && fees >= 0 ? fees : undefined,
+          estimatedShipping: Number.isFinite(shipping) && shipping >= 0 ? shipping : undefined,
         }),
       });
 
@@ -137,6 +172,9 @@ export default function AnalyzePage() {
     setShippingOrPickup('shipping');
     setPlatform('eBay');
     setLocation('');
+    setManualComps('');
+    setEstimatedFees('');
+    setEstimatedShipping('');
   };
 
   return (
@@ -293,6 +331,51 @@ export default function AnalyzePage() {
                 />
               </div>
 
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Estimated fees <span className="text-gray-500">(optional)</span></label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3 text-gray-500">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={estimatedFees}
+                      onChange={e => setEstimatedFees(e.target.value)}
+                      placeholder="Auto-calc"
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-300 mb-2">Estimated shipping <span className="text-gray-500">(optional)</span></label>
+                  <div className="relative">
+                    <span className="absolute left-3 top-3 text-gray-500">$</span>
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={estimatedShipping}
+                      onChange={e => setEstimatedShipping(e.target.value)}
+                      placeholder={shippingOrPickup === 'pickup' ? 'Usually 0 for pickup' : 'Auto-calc'}
+                      className="w-full bg-gray-900 border border-gray-700 rounded-lg pl-7 pr-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-sm font-medium text-gray-300 mb-2">Manual sold comps <span className="text-gray-500">(optional)</span></label>
+                <textarea
+                  value={manualComps}
+                  onChange={e => setManualComps(e.target.value)}
+                  placeholder="Paste sold prices like: 145, 160, 152, 170"
+                  rows={2}
+                  className="w-full bg-gray-900 border border-gray-700 rounded-lg px-4 py-3 text-white placeholder-gray-500 focus:border-emerald-500 focus:outline-none focus:ring-1 focus:ring-emerald-500 transition"
+                />
+                <p className="mt-1 text-xs text-gray-500">Tip: Add at least 3 sold comps for tighter valuation confidence.</p>
+              </div>
+
               {/* Submit */}
               <button
                 type="submit"
@@ -335,6 +418,52 @@ export default function AnalyzePage() {
         {/* Result: Flip Card */}
         {step === 'result' && result && (
           <div>
+            {result.appraisal && (
+              <div className="bg-[#111117] border border-cyan-900/40 rounded-xl p-6 mb-4">
+                <div className="flex items-center justify-between mb-3">
+                  <h3 className="text-sm font-semibold text-cyan-300 uppercase tracking-wider">Decision Card</h3>
+                  <span className="text-sm text-cyan-200">
+                    {Math.round(result.appraisal.confidence * 100)}% confidence · {result.appraisal.riskLevel} risk
+                  </span>
+                </div>
+                <div className="grid grid-cols-2 gap-3 text-sm mb-3">
+                  <Row label="Decision" value={result.appraisal.decision} />
+                  <Row label="Max buy price" value={fmtMaybe(result.appraisal.maxBuyPrice)} />
+                  <Row label="Resale (low)" value={fmtMaybe(result.appraisal.expectedResaleLow)} />
+                  <Row label="Resale (high)" value={fmtMaybe(result.appraisal.expectedResaleHigh)} />
+                  <Row label="Fast-sale price" value={fmtMaybe(result.appraisal.fastSalePrice)} />
+                  <Row label="Fees + shipping" value={
+                    typeof result.appraisal.estimatedFees === 'number' && typeof result.appraisal.estimatedShipping === 'number'
+                      ? `${fmt(result.appraisal.estimatedFees)} + ${fmt(result.appraisal.estimatedShipping)}`
+                      : 'Unavailable'
+                  } />
+                  <Row label="Net profit (low)" value={fmtMaybe(result.appraisal.expectedNetProfitLow)} />
+                  <Row label="Net profit (high)" value={fmtMaybe(result.appraisal.expectedNetProfitHigh)} />
+                </div>
+                {result.appraisal.unavailableReasons.length > 0 && (
+                  <div className="mb-3">
+                    <div className="text-xs text-amber-300 uppercase tracking-wider mb-1">Unavailable</div>
+                    <ul className="space-y-1">
+                      {result.appraisal.unavailableReasons.map((r, i) => (
+                        <li key={i} className="text-xs text-amber-200/90">• {r}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                <div className="mb-3">
+                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Negotiation script</div>
+                  <p className="text-sm text-gray-300">{result.appraisal.negotiationScript}</p>
+                </div>
+                <div>
+                  <div className="text-xs text-gray-400 uppercase tracking-wider mb-1">Questions to ask seller</div>
+                  <ul className="space-y-1">
+                    {result.appraisal.sellerQuestions.map((q, i) => (
+                      <li key={i} className="text-sm text-gray-300">• {q}</li>
+                    ))}
+                  </ul>
+                </div>
+              </div>
+            )}
             {/* Verdict Banner */}
             <div className={`text-center py-8 px-6 rounded-2xl mb-8 ${
               result.verdict === 'BUY'

@@ -44,7 +44,7 @@ export default function SharedResultPage() {
 
   useEffect(() => {
     if (!id) return;
-    fetch(`/api/proxy/v1/flip-card/result/${id}`)
+    fetch(`/api/proxy/v1/flip/result/${id}`)
       .then(r => r.json())
       .then(data => {
         if (data.success && data.data?.result) {
@@ -70,7 +70,7 @@ export default function SharedResultPage() {
       <div className="min-h-screen bg-[#0a0a0f] text-white flex flex-col items-center justify-center gap-4">
         <h1 className="text-2xl font-bold">Analysis not found</h1>
         <p className="text-gray-400">This analysis may have expired or the link is invalid.</p>
-        <Link href="/analyze" className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition">
+        <Link href="/flip" className="px-6 py-3 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white font-medium transition">
           Run Your Own Analysis
         </Link>
       </div>
@@ -93,7 +93,7 @@ export default function SharedResultPage() {
               <span className="text-gray-500 text-sm">/ Flip Card</span>
             </div>
           </Link>
-          <Link href="/analyze" className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 text-white text-sm font-medium hover:shadow-lg transition-all">
+          <Link href="/flip" className="px-4 py-1.5 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 text-white text-sm font-medium hover:shadow-lg transition-all">
             Analyze Your Own
           </Link>
         </div>
@@ -200,7 +200,7 @@ export default function SharedResultPage() {
         {/* CTA */}
         <div className="text-center space-y-4">
           <Link
-            href="/analyze"
+            href="/flip"
             className="inline-block px-8 py-4 rounded-xl text-lg font-semibold bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-900/30 transition-all"
           >
             Run Your Own Flip Card Analysis — Free

@@ -90,6 +90,7 @@ const PUBLIC_ROUTES = [
   // Dashboard stats
   '/v1/dashboard/',
   // Flip Card — public decision product
+  '/v1/flip/',
   '/v1/flip-card/',
 ];
 
@@ -834,6 +835,9 @@ app.all('/v1/orders*', requireScopes(['store.orders']), (_req: Request, res: Res
 // ============================================
 // Flip Card Routes -> Nova Hub (public decision product)
 // ============================================
+app.all('/v1/flip/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
 
 app.post('/v1/flip-card/analyze', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
@@ -1072,6 +1076,14 @@ app.post('/billing/webhook', (req: Request, res: Response) => {
 // ============================================
 // Nova Nexus AI Routes -> TradeBot
 // ============================================
+// Decision Infrastructure lifecycle routes -> Nova Hub
+app.all('/v1/nexus/observe', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/nexus/decision-cards*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
 
 app.all('/v1/nexus/status', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/status', req, res);
