@@ -34,75 +34,75 @@ const PLATFORMS = ['eBay', 'Facebook Marketplace', 'Mercari', 'Poshmark', 'Gener
 const DIVISIONS = [
   {
     name: 'Flip Card',
-    desc: 'Evaluate resale opportunities with real sold comps, fee calculations, and a clear buy/pass verdict.',
+    desc: 'Evaluate any item instantly — real eBay sold comps, fee math, and a clear buy / negotiate / pass verdict.',
     icon: CreditCard,
     color: 'text-emerald-400',
     border: 'border-emerald-500/20 hover:border-emerald-400/50',
     glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.15)]',
     bg: 'from-emerald-500/10',
-    status: 'Live',
+    status: 'Live · Free',
     statusColor: 'bg-emerald-500/20 text-emerald-400',
     href: '/flip',
   },
   {
+    name: 'Flip Finder',
+    desc: 'Scans Craigslist across cities for items worth buying and flipping. Real listings, real verdicts, negotiation scripts included.',
+    icon: ShoppingBag,
+    color: 'text-pink-400',
+    border: 'border-pink-500/20 hover:border-pink-400/50',
+    glow: 'hover:shadow-[0_0_40px_rgba(244,114,182,0.15)]',
+    bg: 'from-pink-500/10',
+    status: 'Live',
+    statusColor: 'bg-emerald-500/20 text-emerald-400',
+    href: '/dashboard/scanner',
+  },
+  {
     name: 'Wall Street',
-    desc: 'Stock screening, momentum patterns, paper trading, and tracked outcomes.',
+    desc: 'AI momentum scanner across 500+ stocks — ranked signals with entry, target, risk/reward, and pattern context.',
     icon: TrendingUp,
     color: 'text-green-400',
     border: 'border-green-500/20 hover:border-green-400/50',
     glow: 'hover:shadow-[0_0_40px_rgba(34,197,94,0.15)]',
     bg: 'from-green-500/10',
     status: 'Live',
-    statusColor: 'bg-green-500/20 text-green-400',
+    statusColor: 'bg-emerald-500/20 text-emerald-400',
     href: '/dashboard/screener',
   },
   {
-    name: 'Marketplace',
-    desc: 'Cross-platform deal scoring, value radar, and arbitrage detection.',
-    icon: ShoppingBag,
-    color: 'text-pink-400',
-    border: 'border-pink-500/20 hover:border-pink-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(244,114,182,0.15)]',
-    bg: 'from-pink-500/10',
-    status: 'Beta',
-    statusColor: 'bg-amber-500/20 text-amber-400',
-    href: '/dashboard/marketplace',
-  },
-  {
     name: 'Social',
-    desc: 'Content scheduling, audience growth tools, and distribution planning.',
+    desc: 'Content scheduling, audience growth tools, and distribution planning for your side income brand.',
     icon: Radio,
     color: 'text-violet-400',
     border: 'border-violet-500/20 hover:border-violet-400/50',
     glow: 'hover:shadow-[0_0_40px_rgba(139,92,246,0.15)]',
     bg: 'from-violet-500/10',
     status: 'Coming Soon',
-    statusColor: 'bg-gray-500/20 text-gray-400',
-    href: '/dashboard/social-hub',
+    statusColor: 'bg-gray-500/20 text-gray-500',
+    href: '/register',
   },
   {
     name: 'Research',
-    desc: 'Experiment tracking, decision logs, and structured postmortems.',
+    desc: 'Decision logs, outcome tracking, structured postmortems, and calibration learning.',
     icon: FlaskConical,
     color: 'text-sky-400',
     border: 'border-sky-500/20 hover:border-sky-400/50',
     glow: 'hover:shadow-[0_0_40px_rgba(14,165,233,0.15)]',
     bg: 'from-sky-500/10',
     status: 'Coming Soon',
-    statusColor: 'bg-gray-500/20 text-gray-400',
-    href: '/dashboard/nexus',
+    statusColor: 'bg-gray-500/20 text-gray-500',
+    href: '/register',
   },
   {
-    name: 'Operations',
-    desc: 'Governance, safety controls, health monitoring, and compliance.',
+    name: 'Governance',
+    desc: 'Rule engine, risk controls, kill switches, and audit trail — so the platform never acts against your interests.',
     icon: Shield,
     color: 'text-amber-400',
     border: 'border-amber-500/20 hover:border-amber-400/50',
     glow: 'hover:shadow-[0_0_40px_rgba(245,158,11,0.15)]',
     bg: 'from-amber-500/10',
-    status: 'Live',
-    statusColor: 'bg-emerald-500/20 text-emerald-400',
-    href: '/dashboard/safety',
+    status: 'Coming Soon',
+    statusColor: 'bg-gray-500/20 text-gray-500',
+    href: '/register',
   },
 ];
 
@@ -177,14 +177,19 @@ function HeroSection() {
           transition={{ duration: 0.8 }}
         >
           <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white leading-[1.1] mb-6">
-            The Dawn of a{' '}
+            Find Flips.{' '}
+            <br className="hidden sm:block" />
+            Screen Stocks.{' '}
+            <br className="hidden sm:block" />
             <span className="bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-              New Light
+              Build Real Income.
             </span>
           </h1>
 
           <p className="text-xl text-gray-400 max-w-xl mb-8 leading-relaxed">
-            Market intelligence, resale analytics, and operational infrastructure — built to compound.
+            Flip Finder scans Craigslist for items worth buying.
+            Flip Card evaluates any listing in seconds.
+            Stock Screener surfaces momentum setups — all with real data.
           </p>
 
           <div className="flex flex-col sm:flex-row gap-4 mb-8">
@@ -194,22 +199,22 @@ function HeroSection() {
             >
               Try Flip Card — Free <ArrowRight className="w-4 h-4" />
             </a>
-            <a
-              href="#divisions"
-              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-medium backdrop-blur-xl bg-white/5 border border-white/10 text-white hover:bg-white/10 transition-all"
+            <Link
+              href="/dashboard/scanner"
+              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-medium backdrop-blur-xl bg-pink-500/10 border border-pink-500/20 text-pink-300 hover:bg-pink-500/20 transition-all"
             >
-              Explore the Platform
-            </a>
+              Scan for Flips <ArrowRight className="w-4 h-4" />
+            </Link>
           </div>
 
           <div className="flex items-center gap-6 text-sm text-gray-500">
             <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
               Real data
             </span>
             <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-purple-400" />
-              Transparent assumptions
+              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
+              Transparent math
             </span>
             <span className="flex items-center gap-1.5">
               <span className="w-1.5 h-1.5 rounded-full bg-pink-400" />
@@ -237,6 +242,68 @@ function HeroSection() {
       >
         <ChevronDown className="w-5 h-5" />
       </motion.div>
+    </section>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// LIVE PROOF STRIP — what’s working right now
+// ═════════════════════════════════════════════════════════════════════
+function LiveProofStrip() {
+  return (
+    <section className="relative py-8 px-6 border-y border-white/5 bg-white/[0.01]">
+      <div className="max-w-5xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true }}
+          className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-10"
+        >
+          {/* Flip Finder */}
+          <Link
+            href="/dashboard/scanner"
+            className="flex items-center gap-3 group"
+          >
+            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
+            <div>
+              <span className="text-white text-sm font-semibold group-hover:text-emerald-300 transition-colors">Flip Finder</span>
+              <span className="ml-2 text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">LIVE</span>
+              <p className="text-gray-500 text-xs mt-0.5">Craigslist scanner · auto-scored deals</p>
+            </div>
+          </Link>
+
+          <span className="hidden sm:block w-px h-8 bg-white/10" />
+
+          {/* Flip Card */}
+          <Link
+            href="/flip"
+            className="flex items-center gap-3 group"
+          >
+            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse flex-shrink-0" />
+            <div>
+              <span className="text-white text-sm font-semibold group-hover:text-cyan-300 transition-colors">Flip Card</span>
+              <span className="ml-2 text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/30 font-bold">FREE</span>
+              <p className="text-gray-500 text-xs mt-0.5">Instant analysis · real eBay comps</p>
+            </div>
+          </Link>
+
+          <span className="hidden sm:block w-px h-8 bg-white/10" />
+
+          {/* Stock Screener */}
+          <Link
+            href="/dashboard/screener"
+            className="flex items-center gap-3 group"
+          >
+            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
+            <div>
+              <span className="text-white text-sm font-semibold group-hover:text-green-300 transition-colors">Stock Screener</span>
+              <span className="ml-2 text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded border border-green-500/30 font-bold">LIVE</span>
+              <p className="text-gray-500 text-xs mt-0.5">AI signals · 500+ stocks</p>
+            </div>
+          </Link>
+        </motion.div>
+      </div>
     </section>
   );
 }
@@ -531,13 +598,13 @@ function DivisionsSection() {
           className="text-center mb-14"
         >
           <h2 className="text-3xl md:text-4xl font-bold text-white mb-3">
-            One Platform.{' '}
+            Three tools live today.{' '}
             <span className="bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-              Six Divisions.
+              Three more in development.
             </span>
           </h2>
           <p className="text-gray-400 max-w-lg mx-auto">
-            Each division compounds on the others. Use one or use them all.
+            We only ship what works. Everything below is clearly labeled — live or coming soon.
           </p>
         </motion.div>
 
@@ -742,15 +809,15 @@ function Footer() {
             </p>
           </div>
 
-          {/* Divisions */}
+          {/* Tools */}
           <div>
-            <h4 className="text-sm font-semibold text-gray-300 mb-4">Divisions</h4>
+            <h4 className="text-sm font-semibold text-gray-300 mb-4">Tools</h4>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="/flip" className="hover:text-white transition">Flip Card</Link></li>
-              <li><Link href="/dashboard/screener" className="hover:text-white transition">Wall Street</Link></li>
-              <li><Link href="/dashboard/marketplace" className="hover:text-white transition">Marketplace</Link></li>
-              <li><Link href="/dashboard/social-hub" className="hover:text-white transition">Social</Link></li>
-              <li><Link href="/dashboard/safety" className="hover:text-white transition">Operations</Link></li>
+              <li><Link href="/flip" className="hover:text-white transition">Flip Card — Free</Link></li>
+              <li><Link href="/dashboard/scanner" className="hover:text-white transition">Flip Finder</Link></li>
+              <li><Link href="/dashboard/screener" className="hover:text-white transition">Stock Screener</Link></li>
+              <li><span className="text-gray-700">Social — Coming Soon</span></li>
+              <li><span className="text-gray-700">Research — Coming Soon</span></li>
             </ul>
           </div>
 
@@ -809,6 +876,7 @@ export default function HomePage() {
 
       <Navbar />
       <HeroSection />
+      <LiveProofStrip />
       <TryItSection />
       <DivisionsSection />
       <MissionSection />
