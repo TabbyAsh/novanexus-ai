@@ -562,6 +562,7 @@ export async function getScanOpportunities(
       data_completeness: string | null;
       card_json: string | null;
       source_url: string | null;
+      raw_input_json: string | null;
       observed_at: string;
     }>(
       `SELECT
@@ -575,6 +576,7 @@ export async function getScanOpportunities(
          dc.data_completeness,
          dcv.card_json,
          o.source_url,
+         o.raw_input_json,
          o.observed_at
        FROM nexus_decision_cards dc
        JOIN nexus_opportunities o ON o.id = dc.opportunity_id
@@ -608,12 +610,20 @@ export async function getScanOpportunities(
       const confPct = Number(row.confidence_pct ?? 0);
       const { category } = detectCategory(row.title ?? '');
 
+      let city = '';
+      try {
+        if (row.raw_input_json) {
+          const raw = JSON.parse(row.raw_input_json);
+          city = raw?.listing?.city ?? raw?.input?.location ?? '';
+        }
+      } catch { /* ignore */ }
+
       return {
         decisionCardId:    row.id,
         opportunityId:     row.opportunity_id,
         title:             row.title ?? '',
         askingPrice:       card?.financials?.askingPrice ?? 0,
-        city:              '',  // stored in raw_input_json; omitted for list view
+        city,
         sourceUrl:         row.source_url ?? '',
         action,
         recommendation:    row.recommendation ?? mapRecommendation(action, confPct),
