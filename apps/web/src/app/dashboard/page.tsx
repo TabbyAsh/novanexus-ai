@@ -28,7 +28,7 @@ const QUICK_TOOLS = [
   {
     name: 'Flip Card',
     desc: 'Enter any item, get an instant resale estimate with real eBay sold comps and a buy/pass verdict.',
-    href: '/flip',
+    href: '/dashboard/flip-card',
     badge: 'FREE',
     badgeColor: 'bg-cyan-500/20 text-cyan-400 border-cyan-500/30',
     icon: '💰',
