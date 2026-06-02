@@ -532,7 +532,7 @@ export interface KillSwitchState {
 }
 
 // ============================================
-// Nova Nexus Decision Infrastructure
+// Nova Nexus Decision Infrastructure (Legacy)
 // ============================================
 
 export const NexusDecisionActionSchema = z.enum(['BUY', 'SELL', 'SKIP', 'WAIT', 'OFFER']);
@@ -575,4 +575,212 @@ export interface NexusDecisionOutcome {
   realizedHoldDays?: number | null;
   notes?: string | null;
   loggedAt: Timestamp;
+}
+
+// ============================================
+// THE NOVA DECISION CARD — Universal Contract
+// Core schema. Every module must produce this.
+// Immutable once shipped. Add optional fields
+// in sub-types only. Never remove/rename core.
+// ============================================
+
+/** The six card types — every Decision Card is one of these */
+export const CardTypeSchema = z.enum([
+  'TRADE',    // Stock/asset analysis
+  'FLIP',     // Resale opportunity
+  'PRICING',  // Business quote pricing
+  'CONTENT',  // Content decision
+  'OPS',      // Operational task
+  'LIFE',     // Personal decision
+]);
+export type CardType = z.infer<typeof CardTypeSchema>;
+
+/** Recommended action from analysis */
+export const RecommendedActionSchema = z.enum([
+  'BUY',
+  'SELL',
+  'WATCH',
+  'SKIP',
+  'INVESTIGATE',
+]);
+export type RecommendedAction = z.infer<typeof RecommendedActionSchema>;
+
+/** Risk level classification */
+export const RiskLevelSchema = z.enum(['LOW', 'MEDIUM', 'HIGH', 'EXTREME']);
+export type RiskLevel = z.infer<typeof RiskLevelSchema>;
+
+/** Governance execution mode */
+export const GovernanceModeSchema = z.enum(['RECOMMEND', 'ASSIST', 'AUTOMATE']);
+export type GovernanceMode = z.infer<typeof GovernanceModeSchema>;
+
+/** Outcome status after card execution */
+export const CardOutcomeStatusSchema = z.enum(['PENDING', 'EXECUTED', 'SKIPPED', 'CANCELLED']);
+export type CardOutcomeStatus = z.infer<typeof CardOutcomeStatusSchema>;
+
+/** Data source citation — every source used in analysis */
+export interface DataSource {
+  name: string;           // e.g. "eBay Browse API", "Alpaca Markets"
+  endpoint?: string;      // API endpoint called
+  fetchedAt: Timestamp;   // when data was retrieved
+  recordCount?: number;   // how many records used
+  staleness?: number;     // seconds since data was fresh
+}
+
+/** Concrete next step from a card */
+export interface ActionStep {
+  order: number;
+  description: string;
+  type: 'MANUAL' | 'ASSISTED' | 'AUTOMATED';
+  status: 'PENDING' | 'IN_PROGRESS' | 'DONE' | 'SKIPPED';
+  assignedTo?: string;    // user_id or bot_id
+  dueBy?: Timestamp;
+}
+
+// ---- Type-specific metrics ----
+
+export interface TradeMetrics {
+  symbol: string;
+  entryPrice: number | null;
+  targetPrice: number | null;
+  stopLoss: number | null;
+  riskRewardRatio: number | null;
+  positionSize: number | null;
+  rsi: number | null;
+  adx: number | null;
+  adxRising: boolean | null;
+  vwap: number | null;
+  macd: { value: number; signal: number; histogram: number } | null;
+  volume: number | null;
+  avgVolume: number | null;
+  float: number | null;
+  shortPercent: number | null;
+  eps: number | null;
+  pe: number | null;
+}
+
+export interface FlipMetrics {
+  medianSoldPrice: number | null;
+  lowPrice: number | null;      // 20th percentile
+  highPrice: number | null;     // 80th percentile
+  sampleCount: number;
+  staleness: number | null;     // days since oldest comp
+  estimatedFees: number | null; // platform + payment fees
+  estimatedShipping: number | null;
+  estimatedProfit: number | null;
+  profitMarginPercent: number | null;
+  buyPrice: number | null;
+}
+
+export interface PricingMetrics {
+  jobType: string;
+  variables: Record<string, unknown>;
+  suggestedPrice: number | null;
+  costBasis: number | null;
+  marginPercent: number | null;
+  competitorRange: { low: number; high: number } | null;
+}
+
+export interface ContentMetricsCard {
+  topic: string;
+  format: string;
+  hook: string | null;
+  expectedReach: number | null;
+  bestPostTime: Timestamp | null;
+  platform: string;
+}
+
+/** THE NOVA DECISION CARD — Core contract */
+export interface DecisionCard {
+  // Identity
+  id: string;               // ulid() — sortable unique ID
+  version: number;           // increments on each update
+  created_at: Timestamp;
+  updated_at: Timestamp;
+
+  // Classification
+  card_type: CardType;
+  user_id: string;
+  session_id: string;
+
+  // The Observation — what triggered this card
+  observation: {
+    source: string;          // "market_scan" | "user_input" | "bot_alert"
+    raw_input: unknown;      // the original data, unmodified
+    context: Record<string, unknown>;
+    timestamp: Timestamp;
+  };
+
+  // The Analysis — what Nova computed
+  analysis: {
+    confidence: number | null; // 0–1. NEVER fake. If unknown: null.
+    reasoning: string[];       // bullet chain of logic
+    data_used: DataSource[];   // every source cited
+    missing: string[];         // what data was unavailable
+    warnings: string[];        // risk flags
+  };
+
+  // The Recommendation — what Nova suggests
+  recommendation: {
+    action: RecommendedAction;
+    summary: string;           // one sentence plain-language
+    details: string;
+    risk_level: RiskLevel;
+  };
+
+  // The Numbers — type-specific financial data
+  metrics: TradeMetrics | FlipMetrics | PricingMetrics | ContentMetricsCard | null;
+
+  // The Action Steps — concrete next moves
+  action_steps: ActionStep[];
+
+  // Governance — execution mode and approval state
+  governance: {
+    mode: GovernanceMode;
+    approved_by: string | null;
+    approved_at: Timestamp | null;
+    executed_at: Timestamp | null;
+    kill_switch: boolean;
+  };
+
+  // The Outcome — filled in after execution
+  outcome: {
+    status: CardOutcomeStatus;
+    result: unknown | null;
+    actual_vs_expected: string | null;
+    lesson: string | null;     // what Nova learns from this
+    logged_at: Timestamp | null;
+  };
+
+  // Event chain — links to the append-only event log
+  event_hash: string;
+}
+
+/** Execution decision from the orchestrator */
+export interface ExecutionDecision {
+  allowed: boolean;
+  reason: string;
+  show_to_user?: boolean;
+}
+
+/** Bot manifest — what a bot can do */
+export interface BotManifest {
+  bot_type: BotType;
+  card_types: CardType[];
+  data_sources: string[];
+  execution_modes: GovernanceMode[];
+  required_permissions: Scope[];
+}
+
+/** Data source health status */
+export interface DataSourceStatus {
+  name: string;
+  status: 'ok' | 'degraded' | 'down';
+  lastChecked: Timestamp;
+  latencyMs?: number;
+}
+
+/** Bot health response */
+export interface BotHealthResponse {
+  status: 'ok' | 'degraded';
+  data_sources: DataSourceStatus[];
 }

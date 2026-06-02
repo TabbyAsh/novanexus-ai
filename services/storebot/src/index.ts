@@ -8,10 +8,11 @@ import {
   TaskContext,
   TaskResult,
 } from '@nova/bot-sdk';
-import { generateId, nowTimestamp, HTTP_STATUS, query, queryOne } from '@nova/shared';
+import { generateId, nowTimestamp, HTTP_STATUS, query, queryOne, novaCardInsert } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { PricingEngine, Product as PricingProduct, PriceRecommendation } from './pricing-engine';
 import { searchProducts, appraiseProduct, batchAppraise, ScrapedProduct, ProductAppraisal } from './product-scraper';
+import { analyzeFlip } from './flip-analyzer';
 
 const PORT = parseInt(process.env.PORT || '3011', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
@@ -580,6 +581,56 @@ app.get('/api/dropship/export', (_req: Request, res: Response) => {
       message: `Exported ${drafts.length} listing drafts`,
     },
   });
+});
+
+// ============================================================================
+// Flip Card Analysis — the real Decision Card (Sprint Zero T4)
+// ============================================================================
+
+// POST /api/flips/analyze
+// Body: { value: string, inputType?: 'description'|'url', askingPrice?: number, condition?: string }
+// Produces a real FLIP DecisionCard from live eBay comps and (best-effort) persists it.
+app.post('/api/flips/analyze', async (req: Request, res: Response) => {
+  const { value, inputType, askingPrice, condition, sessionId } = req.body || {};
+  if (!value || typeof value !== 'string') {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'value (product description or URL) is required' },
+    });
+  }
+
+  const userId = (req.headers['x-user-id'] as string) || null;
+
+  try {
+    const card = await analyzeFlip({
+      value,
+      inputType: inputType === 'url' ? 'url' : 'description',
+      askingPrice: typeof askingPrice === 'number' ? askingPrice : null,
+      condition: typeof condition === 'string' ? condition : undefined,
+      userId,
+      sessionId: typeof sessionId === 'string' ? sessionId : undefined,
+    });
+
+    // Persist to the universal nova_cards table (best-effort — never block the result).
+    let persisted = false;
+    try {
+      const { text, values } = novaCardInsert(card);
+      await query(text, values);
+      persisted = true;
+    } catch (err) {
+      logger.warn('Flip card persistence failed (returning card anyway)', {
+        error: (err as Error).message,
+      });
+    }
+
+    res.json({ success: true, data: { card, persisted } });
+  } catch (err) {
+    logger.error('Flip analysis failed', err as Error);
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'FLIP_ANALYSIS_FAILED', message: 'Flip analysis unavailable' },
+    });
+  }
 });
 
 // ============================================================================

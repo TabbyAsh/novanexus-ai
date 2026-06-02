@@ -7,11 +7,12 @@ import {
   TaskContext,
   TaskResult,
 } from '@nova/bot-sdk';
-import { generateId, nowTimestamp, HTTP_STATUS } from '@nova/shared';
+import { generateId, nowTimestamp, HTTP_STATUS, query, novaCardInsert } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { RegimeType } from '@nova/nexus-core';
 import { NexusTrader, type NexusDecisionCard } from './nexus-trader';
 import { getAdaptiveEngine, type TradeOutcome, type VolRegime } from './adaptive-thresholds';
+import { analyzeStock } from './trade-analyzer';
 
 const PORT = parseInt(process.env.PORT || '3010', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
@@ -2013,6 +2014,49 @@ app.get('/api/quotes/:symbol', async (req: Request, res: Response) => {
     return res.status(503).json({ success: false, error: 'Market quote unavailable' });
   }
   res.json({ success: true, data: { quote } });
+});
+
+// ============================================================================
+// TRADE Decision Card analysis (Sprint Zero T8) — universal nova_cards
+// ============================================================================
+app.post('/api/trade/analyze', async (req: Request, res: Response) => {
+  const { symbol, sessionId } = req.body || {};
+  if (!symbol || typeof symbol !== 'string') {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'INVALID_INPUT', message: 'symbol is required' },
+    });
+  }
+
+  const userId = (req.headers['x-user-id'] as string) || null;
+
+  try {
+    const card = await analyzeStock({
+      symbol,
+      userId,
+      sessionId: typeof sessionId === 'string' ? sessionId : undefined,
+    });
+
+    // Persist to the universal nova_cards table (best-effort).
+    let persisted = false;
+    try {
+      const { text, values } = novaCardInsert(card);
+      await query(text, values);
+      persisted = true;
+    } catch (err) {
+      logger.warn('Trade card persistence failed (returning card anyway)', {
+        error: (err as Error).message,
+      });
+    }
+
+    res.json({ success: true, data: { card, persisted } });
+  } catch (error) {
+    logger.error('Trade analysis failed', error as Error);
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'TRADE_ANALYSIS_FAILED', message: 'Trade analysis unavailable' },
+    });
+  }
 });
 
 // ============================================================================

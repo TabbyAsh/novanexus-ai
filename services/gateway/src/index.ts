@@ -8,8 +8,21 @@ import {
   verifyToken,
   checkRateLimit,
   queryOne,
+  query,
+  buildDecisionCard,
+  novaCardInsert,
+  novaCardFromRow,
+  CardTypeSchema,
 } from '@nova/shared';
-import type { JWTPayload, Scope } from '@nova/shared';
+import type {
+  JWTPayload,
+  Scope,
+  DecisionCard,
+  CardType,
+  RecommendedAction,
+  RiskLevel,
+  NovaCardRow,
+} from '@nova/shared';
 
 const app = express();
 const logger = createLogger('gateway-service');
@@ -27,6 +40,7 @@ const SERVICE_URLS = {
   researchbot: process.env.RESEARCHBOT_URL || 'http://localhost:3013',
   opsbot: process.env.OPSBOT_URL || 'http://localhost:3014',
   marketdata: process.env.MARKETDATA_URL || 'http://localhost:3020',
+  commercedata: process.env.COMMERCEDATA_URL || 'http://localhost:3022',
   novaHub: process.env.NOVA_HUB_URL || 'http://localhost:3030',
   scheduler: process.env.SCHEDULER_URL || 'http://localhost:3040',
 };
@@ -690,6 +704,11 @@ app.all('/v1/trade/scan', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/scan', req, res);
 });
 
+// TRADE Decision Card analysis (Sprint Zero T8)
+app.post('/v1/trade/analyze', (req: Request, res: Response) => {
+  proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/trade/analyze', req, res);
+});
+
 app.all('/v1/trade/theses', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/theses', req, res);
 });
@@ -1164,6 +1183,206 @@ app.all('/v1/dashboard/stats', (req: Request, res: Response) => {
 // Reality check, Decision Cards, UDM, Daily Drop, Proof Packs -> Nova Hub
 app.all('/v1/reality', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// ============================================
+// Universal Decision Card API (Sprint Zero T5)
+// The canonical CRUD surface over the nova_cards table.
+// Cards are produced by bots (storebot/tradebot) or posted directly here.
+// ============================================
+
+// Build a normalized DecisionCard from a request body, forcing the
+// authenticated user as owner and guaranteeing identity/governance/outcome.
+function coerceCardFromBody(
+  body: any,
+  userId: string
+): DecisionCard | { error: string } {
+  if (!body || typeof body !== 'object') return { error: 'Body must be a card object' };
+  const ct = CardTypeSchema.safeParse(body.card_type);
+  if (!ct.success) {
+    return { error: 'card_type must be one of TRADE|FLIP|PRICING|CONTENT|OPS|LIFE' };
+  }
+  if (!body.observation || !body.analysis || !body.recommendation) {
+    return { error: 'card must include observation, analysis, and recommendation' };
+  }
+  return buildDecisionCard({
+    card_type: ct.data,
+    user_id: userId,
+    session_id: typeof body.session_id === 'string' ? body.session_id : undefined,
+    observation: {
+      source: String(body.observation.source ?? 'user_input'),
+      raw_input: body.observation.raw_input ?? null,
+      context: typeof body.observation.context === 'object' ? body.observation.context : {},
+      timestamp: typeof body.observation.timestamp === 'string' ? body.observation.timestamp : undefined,
+    },
+    analysis: {
+      confidence: typeof body.analysis.confidence === 'number' ? body.analysis.confidence : null,
+      reasoning: Array.isArray(body.analysis.reasoning) ? body.analysis.reasoning : [],
+      data_used: Array.isArray(body.analysis.data_used) ? body.analysis.data_used : [],
+      missing: Array.isArray(body.analysis.missing) ? body.analysis.missing : [],
+      warnings: Array.isArray(body.analysis.warnings) ? body.analysis.warnings : [],
+    },
+    recommendation: {
+      action: body.recommendation.action as RecommendedAction,
+      summary: String(body.recommendation.summary ?? ''),
+      details: typeof body.recommendation.details === 'string' ? body.recommendation.details : undefined,
+      risk_level: body.recommendation.risk_level as RiskLevel | undefined,
+    },
+    metrics: body.metrics ?? null,
+    action_steps: Array.isArray(body.action_steps) ? body.action_steps : [],
+    governance: typeof body.governance === 'object' ? body.governance : undefined,
+  });
+}
+
+// Create a Decision Card
+app.post('/v1/cards', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+    });
+  }
+  const built = coerceCardFromBody(req.body, req.auth.userId);
+  if ('error' in built) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.VALIDATION_FAILED, message: built.error },
+    });
+  }
+  try {
+    const { text, values } = novaCardInsert(built);
+    const row = await queryOne<NovaCardRow>(text, values);
+    return res.status(HTTP_STATUS.CREATED).json({
+      success: true,
+      data: { card: row ? novaCardFromRow(row) : built },
+    });
+  } catch (error) {
+    logger.error('Failed to create card', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'CARD_PERSIST_FAILED', message: 'Failed to store card' },
+    });
+  }
+});
+
+// List the authenticated user's cards (newest first)
+app.get('/v1/cards', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+    });
+  }
+  const limit = Math.min(Math.max(Math.floor(Number(req.query.limit) || 20), 1), 100);
+  const offset = Math.max(Math.floor(Number(req.query.offset) || 0), 0);
+  const typeParsed = CardTypeSchema.safeParse(req.query.type);
+
+  const params: unknown[] = [req.auth.userId];
+  let sql = 'SELECT * FROM nova_cards WHERE user_id = $1';
+  if (typeParsed.success) {
+    params.push(typeParsed.data);
+    sql += ` AND card_type = $${params.length}`;
+  }
+  sql += ` ORDER BY created_at DESC LIMIT ${limit} OFFSET ${offset}`;
+
+  try {
+    const result = await query<NovaCardRow>(sql, params as any[]);
+    return res.json({
+      success: true,
+      data: { cards: result.rows.map(novaCardFromRow), count: result.rows.length },
+      meta: { limit, offset },
+    });
+  } catch (error) {
+    logger.error('Failed to list cards', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'CARD_LIST_FAILED', message: 'Failed to list cards' },
+    });
+  }
+});
+
+// Get one card by ULID (26-char id) — scoped to the user (or public/null-owner)
+app.get('/v1/cards/:id([0-9A-Za-z]{26})', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+    });
+  }
+  try {
+    const row = await queryOne<NovaCardRow>(
+      'SELECT * FROM nova_cards WHERE id = $1 AND (user_id = $2 OR user_id IS NULL)',
+      [req.params.id, req.auth.userId]
+    );
+    if (!row) {
+      return res.status(HTTP_STATUS.NOT_FOUND).json({
+        success: false,
+        error: { code: ERROR_CODES.NOT_FOUND, message: 'Card not found' },
+      });
+    }
+    return res.json({ success: true, data: { card: novaCardFromRow(row) } });
+  } catch (error) {
+    logger.error('Failed to get card', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'CARD_GET_FAILED', message: 'Failed to get card' },
+    });
+  }
+});
+
+// Record the real-world outcome of a Decision Card (Sprint Zero T9 — the Loop)
+app.patch('/v1/cards/:id([0-9A-Za-z]{26})/outcome', async (req: Request, res: Response) => {
+  if (!req.auth) {
+    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Unauthorized' },
+    });
+  }
+
+  const { status, result, actual_vs_expected, lesson } = req.body || {};
+  const allowed = ['EXECUTED', 'SKIPPED', 'CANCELLED'];
+  if (!allowed.includes(status)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.VALIDATION_FAILED, message: `status must be one of ${allowed.join(', ')}` },
+    });
+  }
+
+  const now = new Date().toISOString();
+  const outcome = {
+    status,
+    result: result ?? null,
+    actual_vs_expected: typeof actual_vs_expected === 'string' ? actual_vs_expected : null,
+    lesson: typeof lesson === 'string' ? lesson : null,
+    logged_at: now,
+  };
+
+  try {
+    const row = await queryOne<NovaCardRow>(
+      `UPDATE nova_cards
+         SET outcome = $1::jsonb,
+             version = version + 1,
+             governance = CASE WHEN $2 = 'EXECUTED'
+               THEN jsonb_set(governance, '{executed_at}', to_jsonb($3::text))
+               ELSE governance END
+       WHERE id = $4 AND (user_id = $5 OR user_id IS NULL)
+       RETURNING *`,
+      [JSON.stringify(outcome), status, now, req.params.id, req.auth.userId]
+    );
+    if (!row) {
+      return res.status(HTTP_STATUS.NOT_FOUND).json({
+        success: false,
+        error: { code: ERROR_CODES.NOT_FOUND, message: 'Card not found' },
+      });
+    }
+    return res.json({ success: true, data: { card: novaCardFromRow(row) } });
+  } catch (error) {
+    logger.error('Failed to record card outcome', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'CARD_OUTCOME_FAILED', message: 'Failed to record outcome' },
+    });
+  }
 });
 
 app.all('/v1/cards/*', (req: Request, res: Response) => {

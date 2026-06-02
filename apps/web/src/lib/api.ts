@@ -105,6 +105,43 @@ type GuidedFlowResponse = {
   };
 };
 
+// The universal Nova Decision Card (mirrors libs/shared DecisionCard).
+export type DecisionCardDTO = {
+  id: string;
+  version: number;
+  created_at: string;
+  updated_at: string;
+  card_type: 'TRADE' | 'FLIP' | 'PRICING' | 'CONTENT' | 'OPS' | 'LIFE' | string;
+  user_id: string;
+  session_id: string;
+  observation: { source: string; raw_input: unknown; context: Record<string, unknown>; timestamp: string };
+  analysis: {
+    confidence: number | null;
+    reasoning: string[];
+    data_used: Array<{ name: string; endpoint?: string; fetchedAt: string; recordCount?: number }>;
+    missing: string[];
+    warnings: string[];
+  };
+  recommendation: { action: string; summary: string; details: string; risk_level: string };
+  metrics: Record<string, unknown> | null;
+  action_steps: Array<Record<string, unknown>>;
+  governance: {
+    mode: string;
+    approved_by: string | null;
+    approved_at: string | null;
+    executed_at: string | null;
+    kill_switch: boolean;
+  };
+  outcome: {
+    status: 'PENDING' | 'EXECUTED' | 'SKIPPED' | 'CANCELLED' | string;
+    result: unknown | null;
+    actual_vs_expected: string | null;
+    lesson: string | null;
+    logged_at: string | null;
+  };
+  event_hash: string;
+};
+
 class ApiClient {
   private accessToken: string | null = null;
   private refreshToken: string | null = null;
@@ -1749,6 +1786,49 @@ class ApiClient {
 
   async deleteFlip(id: string) {
     return this.request<{ deleted: boolean }>('DELETE', `/v1/flips/${id}`);
+  }
+
+  // ==========================================================================
+  // Universal Decision Cards (Sprint Zero) — real eBay-backed Flip Cards
+  // ==========================================================================
+
+  /** Analyze a product into a real FLIP Decision Card (StoreBot + commercedata). */
+  async analyzeFlipCard(params: {
+    value: string;
+    inputType?: 'description' | 'url';
+    askingPrice?: number | null;
+    condition?: string;
+  }) {
+    return this.request<{ card: DecisionCardDTO; persisted: boolean }>(
+      'POST',
+      '/v1/flips/analyze',
+      params
+    );
+  }
+
+  /** List the current user's Decision Cards (newest first). */
+  async getCards(params?: { type?: string; limit?: number; offset?: number }) {
+    const qs = new URLSearchParams();
+    if (params?.type) qs.set('type', params.type);
+    if (params?.limit) qs.set('limit', String(params.limit));
+    if (params?.offset) qs.set('offset', String(params.offset));
+    const query = qs.toString() ? `?${qs.toString()}` : '';
+    return this.request<{ cards: DecisionCardDTO[]; count: number }>('GET', `/v1/cards${query}`);
+  }
+
+  /** Fetch a single Decision Card by ULID. */
+  async getCard(id: string) {
+    return this.request<{ card: DecisionCardDTO }>('GET', `/v1/cards/${id}`);
+  }
+
+  /** Record the real-world outcome of a Decision Card (Sprint Zero T9). */
+  async updateCardOutcome(id: string, outcome: {
+    status: 'EXECUTED' | 'SKIPPED' | 'CANCELLED';
+    result?: unknown;
+    actual_vs_expected?: string;
+    lesson?: string;
+  }) {
+    return this.request<{ card: DecisionCardDTO }>('PATCH', `/v1/cards/${id}/outcome`, outcome);
   }
 
   // ==========================================================================

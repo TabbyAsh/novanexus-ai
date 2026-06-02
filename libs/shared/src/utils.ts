@@ -18,6 +18,35 @@ export function nowTimestamp(): string {
   return new Date().toISOString();
 }
 
+// Crockford's Base32 alphabet (excludes I, L, O, U to avoid ambiguity)
+const ULID_ENCODING = '0123456789ABCDEFGHJKMNPQRSTVWXYZ';
+const ULID_TIME_LEN = 10;
+const ULID_RANDOM_LEN = 16;
+
+/**
+ * Generate a ULID — Universally Unique Lexicographically Sortable Identifier.
+ * 48-bit timestamp + 80-bit randomness, Crockford Base32 encoded.
+ * Used as the canonical ID for Decision Cards so they sort by creation time.
+ */
+export function ulid(seedTime?: number): string {
+  const time = seedTime ?? Date.now();
+
+  let timeChars = '';
+  let t = time;
+  for (let i = ULID_TIME_LEN - 1; i >= 0; i--) {
+    const mod = t % 32;
+    timeChars = ULID_ENCODING[mod] + timeChars;
+    t = (t - mod) / 32;
+  }
+
+  let randChars = '';
+  for (let i = 0; i < ULID_RANDOM_LEN; i++) {
+    randChars += ULID_ENCODING[Math.floor(Math.random() * 32)];
+  }
+
+  return timeChars + randChars;
+}
+
 /**
  * Compute SHA-256 hash for event chaining
  */
