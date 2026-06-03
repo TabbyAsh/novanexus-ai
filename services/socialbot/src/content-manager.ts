@@ -240,16 +240,53 @@ export class ContentManager {
    * Generate content suggestions based on analytics
    */
   async generateSuggestions(platform?: string): Promise<ContentSuggestion[]> {
-    const suggestions: ContentSuggestion[] = [];
     const platforms = platform ? [platform] : ['twitter', 'linkedin', 'instagram'];
 
-    for (const p of platforms) {
-      // Generate platform-specific suggestions
-      const suggestion = this.generatePlatformSuggestion(p);
-      suggestions.push(suggestion);
+    // Try OpenAI first; fall back to deterministic stubs
+    if (process.env.OPENAI_API_KEY) {
+      try {
+        const { default: OpenAI } = await import('openai');
+        const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+        const niches = ['resale flipping', 'stock trading', 'AI tools', 'personal finance'];
+        const niche = niches[Math.floor(Math.random() * niches.length)];
+
+        const prompt = `Generate ${platforms.length} social media content ideas for: ${platforms.join(', ')}.
+Niche: ${niche}. Each idea: a short topic, one hook opener, and content_type (text/video/carousel).
+Return JSON: { suggestions: [{ platform, topic, hook, content_type }] }`;
+
+        const res = await client.chat.completions.create({
+          model: 'gpt-4o-mini',
+          messages: [
+            { role: 'system', content: 'You are a social media content strategist. Return JSON only.' },
+            { role: 'user', content: prompt },
+          ],
+          response_format: { type: 'json_object' },
+          max_tokens: 600,
+          temperature: 0.8,
+        });
+
+        const parsed = JSON.parse(res.choices[0]?.message?.content ?? '{}');
+        const raw: Array<{ platform: string; topic: string; hook: string; content_type: string }> =
+          parsed.suggestions ?? [];
+
+        if (raw.length > 0) {
+          return raw.map((item) => ({
+            platform:            item.platform,
+            content_type:        item.content_type || 'text',
+            suggested_content:   item.hook || item.topic,
+            suggested_hashtags:  this.suggestHashtags('business', 3),
+            optimal_time:        this.getNextOptimalTime(item.platform),
+            predicted_engagement: 0, // null would break the type; 0 means unknown
+            reasoning:           `OpenAI suggestion for "${item.topic}" in ${niche} niche.`,
+          }));
+        }
+      } catch {
+        // Fall through to stubs
+      }
     }
 
-    return suggestions;
+    // Deterministic fallback — honest topic ideas, no fake numbers
+    return platforms.map((p) => this.generatePlatformSuggestion(p));
   }
 
   /**

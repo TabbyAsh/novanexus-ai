@@ -3,11 +3,11 @@
 import { motion, useScroll, useTransform } from 'framer-motion';
 import Link from 'next/link';
 import dynamic from 'next/dynamic';
-import { useRef, useState } from 'react';
+import { useRef, useState, useEffect } from 'react';
 import {
   CreditCard, TrendingUp, ShoppingBag, Radio,
   FlaskConical, Shield, ArrowRight, ChevronDown,
-  ExternalLink, Sparkles,
+  ExternalLink, Sparkles, Users, BarChart3, DollarSign,
 } from 'lucide-react';
 
 // ─── 3D Nova — SSR-safe dynamic import ───────────────────────────────
@@ -243,6 +243,84 @@ function HeroSection() {
         <ChevronDown className="w-5 h-5" />
       </motion.div>
     </section>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
+// PLATFORM STATS — live numbers from the backend
+// ═════════════════════════════════════════════════════════════════════
+interface PlatformStats {
+  totalUsers?: number;
+  agentRunsCompleted?: number;
+  totalOutcomeValue?: number;
+  flipsTracked?: number;
+}
+
+function PlatformStatsBar() {
+  const [stats, setStats] = useState<PlatformStats | null>(null);
+
+  useEffect(() => {
+    const url = `${process.env.NEXT_PUBLIC_API_URL || ‘http://localhost:3000’}/v1/platform/stats`;
+    fetch(url, { cache: ‘no-store’ })
+      .then((r) => r.json())
+      .then((d) => { if (d?.success && d.data) setStats(d.data); })
+      .catch(() => {});
+  }, []);
+
+  if (!stats) return null;
+
+  const items = [
+    {
+      icon: Users,
+      value: stats.totalUsers ? stats.totalUsers.toLocaleString() : null,
+      label: ‘Members’,
+      color: ‘text-blue-400’,
+    },
+    {
+      icon: DollarSign,
+      value: stats.totalOutcomeValue && stats.totalOutcomeValue > 0
+        ? `$${stats.totalOutcomeValue >= 1000
+            ? `${(stats.totalOutcomeValue / 1000).toFixed(1)}k`
+            : stats.totalOutcomeValue.toFixed(0)}`
+        : null,
+      label: ‘Outcome Value Tracked’,
+      color: ‘text-emerald-400’,
+    },
+    {
+      icon: BarChart3,
+      value: stats.flipsTracked ? stats.flipsTracked.toLocaleString() : null,
+      label: ‘Flip Plans Run’,
+      color: ‘text-pink-400’,
+    },
+    {
+      icon: TrendingUp,
+      value: stats.agentRunsCompleted ? stats.agentRunsCompleted.toLocaleString() : null,
+      label: ‘Agent Runs Completed’,
+      color: ‘text-violet-400’,
+    },
+  ].filter((item) => item.value !== null);
+
+  if (items.length === 0) return null;
+
+  return (
+    <motion.section
+      initial={{ opacity: 0, y: 12 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, delay: 0.4 }}
+      className="relative py-6 px-6 border-y border-white/5 bg-white/[0.015]"
+    >
+      <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-6 sm:gap-12">
+        {items.map((item) => (
+          <div key={item.label} className="flex items-center gap-3">
+            <item.icon className={`w-4 h-4 ${item.color}`} />
+            <div>
+              <div className={`text-lg font-bold ${item.color}`}>{item.value}</div>
+              <div className="text-xs text-gray-600">{item.label}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+    </motion.section>
   );
 }
 
@@ -876,6 +954,7 @@ export default function HomePage() {
 
       <Navbar />
       <HeroSection />
+      <PlatformStatsBar />
       <LiveProofStrip />
       <TryItSection />
       <DivisionsSection />

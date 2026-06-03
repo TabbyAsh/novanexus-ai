@@ -13,14 +13,19 @@ const PORT = process.env.PORT || 3000;
 
 // Service definitions with their dist paths and internal ports
 const SERVICES = [
-  { name: 'gateway', port: 3000, dist: 'services/gateway/dist/index.js', expose: true },
-  { name: 'auth', port: 3001, dist: 'services/auth/dist/index.js' },
+  { name: 'gateway',      port: 3000, dist: 'services/gateway/dist/index.js',      expose: true },
+  { name: 'auth',         port: 3001, dist: 'services/auth/dist/index.js' },
   { name: 'orchestrator', port: 3002, dist: 'services/orchestrator/dist/index.js' },
-  { name: 'eventbus', port: 3003, dist: 'services/eventbus/dist/index.js' },
-  { name: 'billing', port: 3006, dist: 'services/billing/dist/index.js' },
-  { name: 'tradebot', port: 3010, dist: 'services/tradebot/dist/index.js' },
-  { name: 'marketdata', port: 3020, dist: 'services/marketdata/dist/index.js' },
-  { name: 'novaHub', port: 3030, dist: 'services/nova-hub/dist/index.js' },
+  { name: 'eventbus',     port: 3003, dist: 'services/eventbus/dist/index.js' },
+  { name: 'billing',      port: 3006, dist: 'services/billing/dist/index.js' },
+  { name: 'tradebot',     port: 3010, dist: 'services/tradebot/dist/index.js' },
+  { name: 'storebot',     port: 3011, dist: 'services/storebot/dist/index.js' },
+  { name: 'socialbot',    port: 3012, dist: 'services/socialbot/dist/index.js' },
+  { name: 'opsbot',       port: 3014, dist: 'services/opsbot/dist/index.js' },
+  { name: 'marketdata',   port: 3020, dist: 'services/marketdata/dist/index.js' },
+  { name: 'commercedata', port: 3022, dist: 'services/commercedata/dist/index.js' },
+  { name: 'novaHub',      port: 3030, dist: 'services/nova-hub/dist/index.js' },
+  { name: 'scheduler',    port: 3040, dist: 'services/scheduler/dist/index.js' },
 ];
 
 async function validateEnv() {
@@ -53,14 +58,20 @@ function startService(service) {
     ...process.env,
     PORT: service.expose ? PORT : service.port,
     NODE_ENV: 'production',
-    // Internal service URLs (localhost in same container)
-    AUTH_SERVICE_URL: 'http://localhost:3001',
-    ORCHESTRATOR_URL: 'http://localhost:3002',
-    EVENTBUS_URL: 'http://localhost:3003',
-    BILLING_URL: 'http://localhost:3006',
-    TRADEBOT_URL: 'http://localhost:3010',
-    MARKETDATA_URL: 'http://localhost:3020',
-    NOVA_HUB_URL: 'http://localhost:3030',
+    // Internal service URLs (all on localhost in same container)
+    AUTH_SERVICE_URL:  'http://localhost:3001',
+    ORCHESTRATOR_URL:  'http://localhost:3002',
+    EVENTBUS_URL:      'http://localhost:3003',
+    BILLING_URL:       'http://localhost:3006',
+    TRADEBOT_URL:      'http://localhost:3010',
+    STOREBOT_URL:      'http://localhost:3011',
+    SOCIALBOT_URL:     'http://localhost:3012',
+    OPSBOT_URL:        'http://localhost:3014',
+    MARKETDATA_URL:    'http://localhost:3020',
+    COMMERCEDATA_URL:  'http://localhost:3022',
+    NOVA_HUB_URL:      'http://localhost:3030',
+    SCHEDULER_URL:     'http://localhost:3040',
+    GATEWAY_URL:       'http://localhost:3000',
   };
 
   console.log(`Starting ${service.name} on port ${service.expose ? PORT : service.port}`);

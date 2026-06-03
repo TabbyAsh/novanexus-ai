@@ -6,10 +6,24 @@
  * commercedata and returns a universal FLIP Decision Card.
  */
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import FlipCard, { DecisionCard } from '../../../components/FlipCard';
 import { api } from '../../../lib/api';
+
+type CalibrationData = {
+  calibrated: boolean;
+  tier?: 'early-training' | 'learning' | 'calibrated';
+  sampleSize: number;
+  message: string;
+};
+
+const CALIBRATION_STYLE: Record<string, { dot: string; border: string; text: string }> = {
+  'calibrated':    { dot: 'bg-emerald-400', border: 'border-emerald-500/30 bg-emerald-500/10', text: 'text-emerald-300' },
+  'learning':      { dot: 'bg-cyan-400',    border: 'border-cyan-500/30    bg-cyan-500/10',    text: 'text-cyan-300'    },
+  'early-training':{ dot: 'bg-amber-400',   border: 'border-amber-500/30   bg-amber-500/10',   text: 'text-amber-300'   },
+  'none':          { dot: 'bg-gray-500',    border: 'border-gray-700       bg-gray-900/50',    text: 'text-gray-400'    },
+};
 
 export default function FlipCardPage() {
   const [value, setValue] = useState('');
@@ -19,6 +33,13 @@ export default function FlipCardPage() {
   const [error, setError] = useState<string | null>(null);
   const [card, setCard] = useState<DecisionCard | null>(null);
   const [outcomeMsg, setOutcomeMsg] = useState<string | null>(null);
+  const [calibration, setCalibration] = useState<CalibrationData | null>(null);
+
+  useEffect(() => {
+    api.getCalibration().then((res) => {
+      if (res.success && res.data) setCalibration(res.data);
+    }).catch(() => {});
+  }, []);
 
   const isUrl = /^https?:\/\//i.test(value.trim());
 
@@ -79,6 +100,18 @@ export default function FlipCardPage() {
             Every number comes from live eBay comparable listings. If data is missing, Nova says so — no guesses.
           </p>
         </div>
+
+        {/* Calibration badge — shows Nova's learning state */}
+        {calibration && (() => {
+          const tier = calibration.calibrated ? (calibration.tier ?? 'early-training') : 'none';
+          const style = CALIBRATION_STYLE[tier];
+          return (
+            <div className={`flex items-start gap-3 rounded-xl border px-4 py-3 ${style.border}`}>
+              <span className={`mt-1 w-2 h-2 rounded-full shrink-0 ${style.dot}`} />
+              <p className={`text-sm leading-relaxed ${style.text}`}>{calibration.message}</p>
+            </div>
+          );
+        })()}
 
         <form onSubmit={submit} className="space-y-4 rounded-xl border border-gray-800 bg-gray-900/40 p-5">
           <div>

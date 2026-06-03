@@ -305,6 +305,28 @@ export default function DashboardPage() {
           </motion.div>
         </div>
 
+        {/* Referral chip — viral growth nudge */}
+        <motion.div
+          initial={{ opacity: 0, y: 8 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ delay: 0.5 }}
+          className="flex items-center justify-between gap-4 backdrop-blur-xl bg-violet-500/5 border border-violet-500/20 rounded-2xl px-5 py-4"
+        >
+          <div className="flex items-center gap-3">
+            <div className="w-8 h-8 rounded-lg bg-violet-500/20 flex items-center justify-center text-sm shrink-0">🎁</div>
+            <div>
+              <div className="text-sm font-semibold text-white">Refer a friend — both get $10 credit</div>
+              <div className="text-xs text-gray-500 mt-0.5">Share your referral link. When they upgrade, you both win.</div>
+            </div>
+          </div>
+          <Link
+            href="/dashboard/referrals"
+            className="shrink-0 px-4 py-2 rounded-lg bg-violet-600/80 hover:bg-violet-500 text-sm font-medium text-white transition"
+          >
+            Get Link →
+          </Link>
+        </motion.div>
+
         {/* Upgrade CTA */}
         <UpgradeCTA visible={true} />
       </div>

@@ -90,7 +90,7 @@ RUN esbuild services/nova-hub/src/index.ts \
 RUN esbuild services/socialbot/src/index.ts \
   --bundle --platform=node --target=node20 \
   --outfile=services/socialbot/dist/index.js \
-  --external:pg-native --external:cors \
+  --external:pg-native --external:cors --external:openai \
   --tsconfig=services/socialbot/tsconfig.json
 
 RUN esbuild services/storebot/src/index.ts \
@@ -111,6 +111,12 @@ RUN esbuild services/scheduler/src/index.ts \
   --external:pg-native \
   --tsconfig=services/scheduler/tsconfig.json
 
+RUN esbuild services/opsbot/src/index.ts \
+  --bundle --platform=node --target=node20 \
+  --outfile=services/opsbot/dist/index.js \
+  --external:pg-native \
+  --tsconfig=services/opsbot/tsconfig.json
+
 # Verify ALL production bundles exist — fail hard if any are missing
 RUN echo '=== Verifying all production bundles ===' && \
   ls -la services/gateway/dist/index.js && \
@@ -125,6 +131,7 @@ RUN echo '=== Verifying all production bundles ===' && \
   ls -la services/storebot/dist/index.js && \
   ls -la services/commercedata/dist/index.js && \
   ls -la services/scheduler/dist/index.js && \
+  ls -la services/opsbot/dist/index.js && \
   echo '=== All production bundles verified ==='
 
 # ─────────────────────────────────────────────────────────────────

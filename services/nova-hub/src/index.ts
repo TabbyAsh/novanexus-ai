@@ -9739,6 +9739,57 @@ app.get('/v1/outcomes/summary', authMiddleware, async (req: AuthenticatedRequest
   });
 });
 
+// ── GET /v1/outcomes/calibration ─────────────────────────────────────────────
+// Returns the user's current Decision Engine calibration state.
+// This is the visible proof that Nova learns from their outcomes.
+app.get('/v1/outcomes/calibration', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId, orgId } = req.user!;
+  try {
+    const profile = await getNexusCalibrationProfile(orgId, userId);
+
+    if (!profile || profile.sampleSize === 0) {
+      return res.json({
+        success: true,
+        data: {
+          calibrated: false,
+          sampleSize: 0,
+          message: 'No outcomes logged yet. Complete your first flip or trade, then record the result — Nova will start calibrating.',
+        },
+      });
+    }
+
+    const biasPct   = Math.round(profile.meanPredictionBiasPct   * 10) / 10;
+    const confDelta = Math.round(profile.meanConfidenceDeltaPct  * 10) / 10;
+    const tier =
+      profile.sampleSize >= 10 ? 'calibrated'   :
+      profile.sampleSize >= 5  ? 'learning'      :
+                                  'early-training';
+
+    const message =
+      tier === 'calibrated'
+        ? `Calibrated on ${profile.sampleSize} outcomes — Nova has adjusted profit estimates by ${biasPct > 0 ? '+' : ''}${biasPct}% and confidence by ${confDelta > 0 ? '+' : ''}${confDelta}%.`
+        : tier === 'learning'
+        ? `Training (${profile.sampleSize} outcomes) — keep logging to sharpen predictions. Current bias: ${biasPct > 0 ? '+' : ''}${biasPct}%.`
+        : `Early training (${profile.sampleSize} outcome${profile.sampleSize === 1 ? '' : 's'}) — Nova has started learning from your market. Log more to improve accuracy.`;
+
+    res.json({
+      success: true,
+      data: {
+        calibrated:              true,
+        tier,
+        sampleSize:              profile.sampleSize,
+        meanPredictionBiasPct:   biasPct,
+        meanCalibrationErrorPct: Math.round(profile.meanCalibrationErrorPct * 10) / 10,
+        meanConfidenceDeltaPct:  confDelta,
+        message,
+      },
+    });
+  } catch (err) {
+    logger.error('Calibration fetch failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'CALIBRATION_FAILED', message: 'Could not fetch calibration profile.' } });
+  }
+});
+
 // ============================================
 // TYCOON ENGINE: Agent Auto-Scheduler
 // "Systematize → Automate → Scale"
@@ -10183,6 +10234,43 @@ app.get('/v1/platform/stats', async (_req: Request, res: Response) => {
     });
   } catch {
     res.json({ success: true, data: { totalUsers: 0, agentRunsCompleted: 0, totalOutcomeValue: 0, timeSavedMinutes: 0, flipsTracked: 0 } });
+  }
+});
+
+// ── GET /v1/admin/users ───────────────────────────────────────────────────────
+// Founder-only user list with outcome value per user.
+// Requires ops.admin scope (enforced at gateway).
+app.get('/v1/admin/users', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const rows = await query<{
+      id: string;
+      email: string;
+      status: string;
+      created_at: string;
+      outcome_value: string | null;
+    }>(
+      `SELECT u.id, u.email, u.status, u.created_at,
+              COALESCE(SUM(oe.value), 0) as outcome_value
+       FROM users u
+       LEFT JOIN outcome_events oe ON oe.user_id = u.id
+       GROUP BY u.id, u.email, u.status, u.created_at
+       ORDER BY u.created_at DESC
+       LIMIT 200`
+    );
+
+    const users = rows.rows.map((r) => ({
+      id:           r.id,
+      email:        r.email,
+      status:       r.status,
+      plan:         null, // billing plan lives in billing service; not joined here
+      outcomeValue: parseFloat(r.outcome_value ?? '0'),
+      createdAt:    r.created_at,
+    }));
+
+    res.json({ success: true, data: { users, count: users.length } });
+  } catch (err) {
+    logger.error('Admin users fetch failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'ADMIN_FAILED', message: 'Could not fetch users.' } });
   }
 });
 

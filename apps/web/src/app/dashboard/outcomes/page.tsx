@@ -67,6 +67,33 @@ export default function OutcomesPage() {
         </button>
       </div>
 
+      {/* P&L Callout Banner */}
+      {!loading && summary && (
+        summary.allTime.totalValue > 0 ? (
+          <div className="mb-6 flex items-center gap-4 rounded-xl border border-green-500/30 bg-green-500/10 px-5 py-4">
+            <TrendingUp className="w-5 h-5 text-green-400 shrink-0" />
+            <div>
+              <span className="font-semibold text-green-300">
+                Nova has helped generate {fmt(summary.allTime.totalValue)} in tracked value.
+              </span>
+              <span className="text-green-500/80 text-sm ml-2">
+                Keep logging outcomes to improve predictions and grow this number.
+              </span>
+            </div>
+          </div>
+        ) : summary.allTime.totalEvents === 0 ? (
+          <div className="mb-6 flex items-center gap-4 rounded-xl border border-gray-700 bg-gray-900/60 px-5 py-4">
+            <Target className="w-5 h-5 text-gray-500 shrink-0" />
+            <div>
+              <span className="font-semibold text-gray-300">Your Outcome Ledger is empty.</span>
+              <span className="text-gray-500 text-sm ml-2">
+                Complete a flip or trade, then record the result here — Nova learns from every outcome you log.
+              </span>
+            </div>
+          </div>
+        ) : null
+      )}
+
       {loading && !summary ? (
         <div className="flex justify-center py-20"><RefreshCw className="w-8 h-8 text-cyan-400 animate-spin" /></div>
       ) : summary ? (

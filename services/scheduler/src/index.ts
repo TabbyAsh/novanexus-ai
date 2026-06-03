@@ -484,6 +484,39 @@ app.post('/v1/scheduler/trigger/health', async (req: Request, res: Response) => 
   }
 });
 
+app.post('/v1/scheduler/trigger/stock-alerts', async (req: Request, res: Response) => {
+  const actor = getActorId(req);
+  try {
+    logger.info('Manual stock alerts trigger received', { actor });
+    jobDailyStockAlerts().catch(err => logger.error('Manual stock alerts failed', err instanceof Error ? err : new Error(String(err))));
+    res.json({ success: true, message: 'Stock alerts job triggered (running in background)' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/v1/scheduler/trigger/weekly-digest', async (req: Request, res: Response) => {
+  const actor = getActorId(req);
+  try {
+    logger.info('Manual weekly digest trigger received', { actor });
+    jobWeeklyDigest().catch(err => logger.error('Manual weekly digest failed', err instanceof Error ? err : new Error(String(err))));
+    res.json({ success: true, message: 'Weekly digest job triggered (running in background)' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
+app.post('/v1/scheduler/trigger/flip-alerts', async (req: Request, res: Response) => {
+  const actor = getActorId(req);
+  try {
+    logger.info('Manual flip alerts trigger received', { actor });
+    jobDailyFlipAlerts().catch(err => logger.error('Manual flip alerts failed', err instanceof Error ? err : new Error(String(err))));
+    res.json({ success: true, message: 'Flip alerts job triggered (running in background)' });
+  } catch (err: any) {
+    res.status(500).json({ success: false, error: err.message });
+  }
+});
+
 // Run history
 app.get('/v1/scheduler/history', (_req: Request, res: Response) => {
   res.json({ success: true, data: { runs: runHistory } });
@@ -493,7 +526,8 @@ app.get('/v1/scheduler/history', (_req: Request, res: Response) => {
 // JOB: DAILY FLIP ALERTS — Free flip opportunities emailed to subscribers
 // ============================================================================
 
-const NOVA_HUB_URL = process.env.NOVA_HUB_URL || 'http://localhost:3030';
+const NOVA_HUB_URL  = process.env.NOVA_HUB_URL   || 'http://localhost:3030';
+const TRADEBOT_URL  = process.env.TRADEBOT_URL   || 'http://localhost:3010';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const FLIP_ALERT_CITIES = ['newyork', 'losangeles', 'chicago', 'houston', 'phoenix', 'sfbay', 'seattle', 'denver', 'atlanta', 'miami'];
 
@@ -675,6 +709,301 @@ async function jobDailyFlipAlerts(): Promise<void> {
 }
 
 // ============================================================================
+// JOB: DAILY STOCK SCREENER ALERTS — top setups emailed to subscribers
+// Runs after market open, 9:30 AM ET = 14:30 UTC weekdays
+// ============================================================================
+
+interface StockAlertItem {
+  symbol: string;
+  name: string;
+  type: string;
+  pattern: string;
+  confidence: number;
+  entry: number;
+  target: number;
+  stopLoss: number;
+  riskReward: number;
+  reasoning: string;
+}
+
+async function jobDailyStockAlerts(): Promise<void> {
+  const startTime = Date.now();
+  logger.info('=== DAILY STOCK ALERTS JOB STARTED ===');
+
+  try {
+    // 1. Fetch top screener signals
+    let signals: StockAlertItem[] = [];
+    try {
+      const res = await fetch(`${TRADEBOT_URL}/api/ai-screener/top-movers`, {
+        signal: AbortSignal.timeout(20_000),
+      });
+      const data = await res.json() as { success: boolean; data?: { signals?: StockAlertItem[] } };
+      if (data.success && Array.isArray(data.data?.signals)) {
+        signals = data.data!.signals
+          .filter((s) => s.type === 'bullish' && s.confidence >= 60)
+          .sort((a, b) => (b.confidence ?? 0) - (a.confidence ?? 0))
+          .slice(0, 5);
+      }
+    } catch (err: any) {
+      logger.warn('Stock screener fetch failed', { error: err.message });
+    }
+
+    if (signals.length === 0) {
+      logger.info('No qualifying stock setups today');
+      await logSchedulerRun('stock-alerts', 'success', Date.now() - startTime, { signals: 0 });
+      return;
+    }
+
+    // 2. Get paid subscribers (LITE, PRO, FOUNDING)
+    let subscribers: { email: string; user_id: string }[] = [];
+    try {
+      const result = await query<{ user_id: string }>(
+        `SELECT user_id FROM entitlements WHERE plan IN ('LITE', 'PRO', 'FOUNDING') AND status = 'ACTIVE'`
+      );
+      for (const row of result.rows) {
+        const user = await query<{ email: string }>('SELECT email FROM users WHERE id = $1', [row.user_id]);
+        if (user.rows[0]?.email) subscribers.push({ email: user.rows[0].email, user_id: row.user_id });
+      }
+    } catch (err: any) {
+      logger.warn('Could not fetch subscribers for stock alerts', { error: err.message });
+    }
+
+    // 3. Send email via Resend
+    if (signals.length > 0 && subscribers.length > 0 && RESEND_API_KEY) {
+      const rowsHtml = signals.map((s) => {
+        const rr = s.riskReward ? s.riskReward.toFixed(1) : '—';
+        const conf = s.confidence ? `${s.confidence.toFixed(0)}%` : '—';
+        return `<tr>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;font-weight:bold;color:#fff">${s.symbol}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#10b981">${s.pattern}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#9ca3af">$${Number(s.entry).toFixed(2)}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#34d399">$${Number(s.target).toFixed(2)}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#6b7280">${rr}:1</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#a78bfa">${conf}</td>
+        </tr>`;
+      }).join('');
+
+      const topSignal = signals[0];
+      const html = `<div style="font-family:system-ui,sans-serif;background:#0a0a0f;color:#fff;padding:32px;max-width:640px;margin:0 auto">
+        <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+          <div style="width:36px;height:36px;background:linear-gradient(135deg,#10b981,#059669);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:18px">N</div>
+          <div>
+            <div style="font-size:18px;font-weight:700;color:#fff">Nova Stock Alerts</div>
+            <div style="font-size:12px;color:#6b7280">AI momentum signals — ${new Date().toLocaleDateString('en-US', { weekday: 'long', month: 'short', day: 'numeric' })}</div>
+          </div>
+        </div>
+
+        <div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin-bottom:20px">
+          <div style="font-size:12px;color:#6b7280;text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">Top Setup Today</div>
+          <div style="font-size:24px;font-weight:700;color:#10b981">${topSignal.symbol}</div>
+          <div style="font-size:14px;color:#9ca3af;margin-top:4px">${topSignal.pattern} · ${topSignal.confidence?.toFixed(0) ?? '—'}% confidence</div>
+          <div style="font-size:13px;color:#6b7280;margin-top:8px;line-height:1.5">${(topSignal.reasoning || '').slice(0, 200)}</div>
+        </div>
+
+        <table style="width:100%;border-collapse:collapse;margin-bottom:20px">
+          <thead>
+            <tr style="color:#6b7280;font-size:11px;text-transform:uppercase;letter-spacing:0.05em">
+              <th style="text-align:left;padding:8px">Symbol</th>
+              <th style="padding:8px">Pattern</th>
+              <th style="padding:8px">Entry</th>
+              <th style="padding:8px">Target</th>
+              <th style="padding:8px">R:R</th>
+              <th style="padding:8px">Conf.</th>
+            </tr>
+          </thead>
+          <tbody>${rowsHtml}</tbody>
+        </table>
+
+        <div style="background:#111827;border:1px solid #1f2937;border-radius:8px;padding:16px;margin-bottom:20px">
+          <div style="font-size:12px;color:#f59e0b;font-weight:600;margin-bottom:4px">⚠ Not financial advice</div>
+          <div style="font-size:12px;color:#6b7280;line-height:1.5">
+            These are AI-generated pattern signals for informational purposes only. Past signals do not guarantee future results.
+            Always use paper trading to validate before risking real capital. Use your own judgment.
+          </div>
+        </div>
+
+        <a href="https://novanexus-ai.com/dashboard/screener" style="display:inline-block;background:linear-gradient(135deg,#10b981,#059669);color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+          View Full Screener →
+        </a>
+
+        <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1f2937;font-size:11px;color:#374151">
+          Powered by Nova · <a href="https://novanexus-ai.com" style="color:#6b7280">novanexus-ai.com</a>
+        </div>
+      </div>`;
+
+      for (const sub of subscribers) {
+        try {
+          await fetch('https://api.resend.com/emails', {
+            method: 'POST',
+            headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              from: 'Nova Stock Alerts <alerts@novanexus-ai.com>',
+              to: [sub.email],
+              subject: `📈 ${signals.length} Stock Setup${signals.length > 1 ? 's' : ''} Today — Top: ${topSignal.symbol} (${topSignal.confidence?.toFixed(0)}% conf)`,
+              html,
+            }),
+          });
+          logger.info('Stock alert sent', { userId: sub.user_id });
+        } catch (err: any) {
+          logger.warn('Stock alert email failed', { userId: sub.user_id, error: err.message });
+        }
+      }
+    }
+
+    const durationMs = Date.now() - startTime;
+    await logSchedulerRun('stock-alerts', 'success', durationMs, {
+      signals: signals.length, emailed: subscribers.length,
+    });
+
+    await sendDiscordAlert(
+      '📈 Daily Stock Alerts Sent',
+      `Found ${signals.length} qualifying setup(s). Emailed ${subscribers.length} subscribers. Top: ${signals[0]?.symbol} ${signals[0]?.pattern}`,
+      0x8b5cf6
+    );
+
+  } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    await logSchedulerRun('stock-alerts', 'failure', durationMs, { error: err.message });
+    logger.error('Daily Stock Alerts failed', err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ============================================================================
+// JOB: WEEKLY INTELLIGENCE DIGEST — Saturday morning summary email
+// Best flips + stock setups from the week. Keeps ALL subscribers engaged.
+// ============================================================================
+
+async function jobWeeklyDigest(): Promise<void> {
+  const startTime = Date.now();
+  logger.info('=== WEEKLY DIGEST JOB STARTED ===');
+
+  try {
+    // 1. Pull top outcome events from the week (platform-wide, anonymized)
+    const weekOutcomes = await query<{ domain: string; event_type: string; value: string; description: string }>(
+      `SELECT domain, event_type, value, description
+       FROM outcome_events
+       WHERE created_at > NOW() - INTERVAL '7 days'
+         AND event_type IN ('PROFIT', 'FLIP_PROFIT', 'OPPORTUNITY_FOUND')
+       ORDER BY value::numeric DESC
+       LIMIT 5`
+    ).catch(() => ({ rows: [] }));
+
+    // 2. Pull today's top stock signals
+    let signals: StockAlertItem[] = [];
+    try {
+      const res = await fetch(`${TRADEBOT_URL}/api/ai-screener/top-movers`, { signal: AbortSignal.timeout(15_000) });
+      const data = await res.json() as { success: boolean; data?: { signals?: StockAlertItem[] } };
+      if (data.success) signals = (data.data?.signals || []).filter((s) => s.confidence >= 55).slice(0, 3);
+    } catch { /* non-fatal */ }
+
+    // 3. Get ALL subscribers (free users get digest too — retention + upgrade nudge)
+    let subscribers: { email: string }[] = [];
+    try {
+      const result = await query<{ email: string }>('SELECT email FROM users WHERE status = $1 LIMIT 500', ['ACTIVE']);
+      subscribers = result.rows;
+    } catch (err: any) {
+      logger.warn('Could not fetch users for weekly digest', { error: err.message });
+    }
+
+    if (subscribers.length === 0) {
+      logger.info('No subscribers for weekly digest');
+      await logSchedulerRun('weekly-digest', 'success', Date.now() - startTime, { emailed: 0 });
+      return;
+    }
+
+    const outcomeRows = weekOutcomes.rows.map((o) => {
+      const val = parseFloat(o.value || '0');
+      return `<li style="padding:6px 0;color:#9ca3af;font-size:14px">
+        <span style="color:#10b981;font-weight:600">+$${val.toFixed(0)}</span>
+        ${o.description ? ` — ${o.description.slice(0, 80)}` : ` from ${o.domain}`}
+      </li>`;
+    }).join('');
+
+    const signalRows = signals.map((s) =>
+      `<li style="padding:6px 0;color:#9ca3af;font-size:14px">
+        <span style="color:#a78bfa;font-weight:600">${s.symbol}</span>
+        — ${s.pattern} · entry $${Number(s.entry).toFixed(2)} · ${s.confidence?.toFixed(0)}% conf
+      </li>`
+    ).join('');
+
+    const weekStr = new Date().toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' });
+
+    const html = `<div style="font-family:system-ui,sans-serif;background:#0a0a0f;color:#fff;padding:32px;max-width:600px;margin:0 auto">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:8px">
+        <div style="width:36px;height:36px;background:linear-gradient(135deg,#7c3aed,#4f46e5);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:18px">N</div>
+        <div>
+          <div style="font-size:18px;font-weight:700">Nova Weekly Intelligence</div>
+          <div style="font-size:12px;color:#6b7280">Week ending ${weekStr}</div>
+        </div>
+      </div>
+      <p style="color:#6b7280;font-size:14px;margin-bottom:24px">
+        Here's what Nova found this week — flips, setups, and opportunities worth knowing about.
+      </p>
+
+      ${outcomeRows ? `<div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin-bottom:20px">
+        <div style="font-size:12px;color:#10b981;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;margin-bottom:12px">💰 Tracked Wins This Week</div>
+        <ul style="list-style:none;margin:0;padding:0">${outcomeRows}</ul>
+        <div style="font-size:11px;color:#374151;margin-top:12px">Anonymized — based on outcomes logged by Nova users</div>
+      </div>` : ''}
+
+      ${signalRows ? `<div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin-bottom:20px">
+        <div style="font-size:12px;color:#a78bfa;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;margin-bottom:12px">📈 Current Stock Setups</div>
+        <ul style="list-style:none;margin:0;padding:0">${signalRows}</ul>
+      </div>` : ''}
+
+      <div style="display:flex;gap:12px;margin-bottom:24px;flex-wrap:wrap">
+        <a href="https://novanexus-ai.com/dashboard/scanner" style="flex:1;min-width:140px;display:block;text-align:center;background:#111827;border:1px solid #1f2937;color:#10b981;padding:12px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">
+          🔍 Scan for Flips
+        </a>
+        <a href="https://novanexus-ai.com/dashboard/screener" style="flex:1;min-width:140px;display:block;text-align:center;background:#111827;border:1px solid #1f2937;color:#a78bfa;padding:12px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">
+          📈 Stock Screener
+        </a>
+        <a href="https://novanexus-ai.com/pricing" style="flex:1;min-width:140px;display:block;text-align:center;background:linear-gradient(135deg,#7c3aed,#4f46e5);color:#fff;padding:12px;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600">
+          ⚡ Upgrade Plan
+        </a>
+      </div>
+
+      <div style="font-size:11px;color:#374151;border-top:1px solid #1f2937;padding-top:16px">
+        Not financial or investment advice. Powered by Nova · <a href="https://novanexus-ai.com" style="color:#6b7280">novanexus-ai.com</a>
+      </div>
+    </div>`;
+
+    let sent = 0;
+    for (const sub of subscribers.slice(0, 500)) {
+      if (!RESEND_API_KEY) break;
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Nova Weekly <weekly@novanexus-ai.com>',
+            to: [sub.email],
+            subject: `Nova Weekly: ${signals.length > 0 ? `${signals[0].symbol} setup + ` : ''}${weekOutcomes.rows.length > 0 ? 'wins from this week' : 'intelligence digest'}`,
+            html,
+          }),
+        });
+        sent++;
+      } catch { /* skip individual failures */ }
+      // Resend rate limit: ~10 req/s, batch with small delay
+      if (sent % 10 === 0) await new Promise((r) => setTimeout(r, 1000));
+    }
+
+    const durationMs = Date.now() - startTime;
+    await logSchedulerRun('weekly-digest', 'success', durationMs, { emailed: sent });
+    await sendDiscordAlert(
+      '📬 Weekly Digest Sent',
+      `Emailed ${sent} users. ${signals.length} stock setups, ${weekOutcomes.rows.length} tracked wins.`,
+      0x4f46e5
+    );
+
+  } catch (err: any) {
+    const durationMs = Date.now() - startTime;
+    await logSchedulerRun('weekly-digest', 'failure', durationMs, { error: err.message });
+    logger.error('Weekly Digest failed', err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ============================================================================
 // CRON SCHEDULING
 // ============================================================================
 
@@ -713,6 +1042,24 @@ function startSchedules(): void {
       });
     }, { timezone: 'UTC' });
     logger.info('📅 Scheduled: Daily Flip Alerts — 7:00 AM ET (12:00 UTC) daily');
+
+    // Daily Stock Alerts: 9:45 AM ET = 14:45 UTC (weekdays, after market opens)
+    cron.schedule('45 14 * * 1-5', () => {
+      logger.info('Cron triggered: Daily Stock Alerts');
+      jobDailyStockAlerts().catch(err => {
+        logger.error('Daily Stock Alerts cron job failed', err instanceof Error ? err : new Error(String(err)));
+      });
+    }, { timezone: 'UTC' });
+    logger.info('📅 Scheduled: Daily Stock Alerts — 9:45 AM ET (14:45 UTC) weekdays');
+
+    // Weekly Intelligence Digest: Saturday 9:00 AM ET = 14:00 UTC
+    cron.schedule('0 14 * * 6', () => {
+      logger.info('Cron triggered: Weekly Digest');
+      jobWeeklyDigest().catch(err => {
+        logger.error('Weekly Digest cron job failed', err instanceof Error ? err : new Error(String(err)));
+      });
+    }, { timezone: 'UTC' });
+    logger.info('📅 Scheduled: Weekly Digest — Saturday 9:00 AM ET (14:00 UTC)');
   } else {
     logger.info('⏸ Brief scheduling disabled (ENABLE_BRIEF_SCHEDULE=false)');
   }

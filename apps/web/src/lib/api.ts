@@ -1972,6 +1972,18 @@ class ApiClient {
     }>('GET', '/v1/outcomes/summary');
   }
 
+  async getCalibration() {
+    return this.request<{
+      calibrated: boolean;
+      tier?: 'early-training' | 'learning' | 'calibrated';
+      sampleSize: number;
+      meanPredictionBiasPct?: number;
+      meanCalibrationErrorPct?: number;
+      meanConfidenceDeltaPct?: number;
+      message: string;
+    }>('GET', '/v1/outcomes/calibration');
+  }
+
   // ==========================================================================
   // Command Layer — Founder Enterprise Control
   // ==========================================================================
