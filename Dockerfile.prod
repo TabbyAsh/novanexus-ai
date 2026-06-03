@@ -3,6 +3,7 @@
 #
 # Build: docker build -f Dockerfile.prod -t nova-backend .
 # Run:   docker run -p 3000:3000 --env-file .env nova-backend
+# Cache bust: 2026-06-03-v2
 
 FROM node:20-alpine AS builder
 
