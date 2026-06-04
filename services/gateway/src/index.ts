@@ -65,6 +65,7 @@ const ROUTE_SCOPES: Record<string, Scope[]> = {
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
+  '/v1/bootstrap/',  // one-time admin setup — remove after use
   '/health',
   '/version',
   '/v1/auth/register',
