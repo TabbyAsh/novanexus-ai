@@ -777,6 +777,117 @@ function HowItWorksSection() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// WHAT'S LIVE — every feature, honest status
+// ═════════════════════════════════════════════════════════════════════
+function WhatsLiveSection() {
+  const features = [
+    {
+      category: 'Resale Intelligence',
+      color: 'text-emerald-400',
+      border: 'border-emerald-500/20',
+      bg: 'bg-emerald-500/5',
+      items: [
+        { name: 'Flip Card', desc: 'Enter any item → real eBay sold prices → net profit → verdict', href: '/flip', status: 'Live' },
+        { name: 'Flip Finder', desc: 'Craigslist scanner → auto-evaluated deals with buy/pass verdict', href: '/dashboard/scanner', status: 'Live' },
+        { name: 'Flip History', desc: 'Every analysis saved. Tracks your win rate over time.', href: '/dashboard/flip-history', status: 'Live' },
+        { name: 'Marketplace Intel', desc: 'Cross-platform deal scoring and market comps', href: '/dashboard/marketplace', status: 'Live' },
+        { name: 'Deal Pipeline', desc: 'Track flips from sourced → acquired → listed → sold', href: '/dashboard/flips', status: 'Live' },
+      ],
+    },
+    {
+      category: 'Trading Intelligence',
+      color: 'text-violet-400',
+      border: 'border-violet-500/20',
+      bg: 'bg-violet-500/5',
+      items: [
+        { name: 'Stock Screener', desc: 'Momentum pattern analysis · 500+ tickers · ranked by confidence', href: '/dashboard/screener', status: 'Live' },
+        { name: 'Trade Journal', desc: 'Log trades, track P&L, build your performance history', href: '/dashboard/journal', status: 'Live' },
+        { name: 'Paper Trading', desc: 'Alpaca-connected · test setups before risking real capital', href: '/dashboard/trading', status: 'Live' },
+        { name: 'Daily Brief', desc: 'AI-generated pre-market intelligence delivered each morning', href: '/dashboard/nexus', status: 'Live' },
+        { name: 'Strategy Backtest', desc: 'Test your rules against historical data', href: '/dashboard/backtest', status: 'Live' },
+      ],
+    },
+    {
+      category: 'Content & Growth',
+      color: 'text-pink-400',
+      border: 'border-pink-500/20',
+      bg: 'bg-pink-500/5',
+      items: [
+        { name: 'Social Content', desc: 'AI-generated posts, hooks, and campaign plans for your brand', href: '/dashboard/social', status: 'Live' },
+        { name: 'Content Cards', desc: 'Every post becomes a Decision Card — tracked, reviewed, improved', href: '/dashboard/content-engine', status: 'Live' },
+        { name: 'Analytics', desc: 'Portfolio, trading, and platform performance in one view', href: '/dashboard/analytics', status: 'Live' },
+        { name: 'Referral System', desc: 'Invite users · earn credit · grow the platform', href: '/dashboard/referrals', status: 'Live' },
+      ],
+    },
+    {
+      category: 'Governance & Intelligence',
+      color: 'text-amber-400',
+      border: 'border-amber-500/20',
+      bg: 'bg-amber-500/5',
+      items: [
+        { name: 'Alert Inbox', desc: 'Daily flip and stock alerts delivered to your dashboard', href: '/dashboard/alerts', status: 'Live' },
+        { name: 'Outcome Ledger', desc: 'Log every result. Nova calibrates from your real history.', href: '/dashboard/outcomes', status: 'Live' },
+        { name: 'Automation Gates', desc: 'RECOMMEND → ASSIST → AUTOMATE · you control Nova\'s autonomy', href: '/dashboard/safety', status: 'Live' },
+        { name: 'AI Agents', desc: 'Autonomous agents that run tasks, log results, compound learning', href: '/dashboard/agents', status: 'Live' },
+        { name: 'Decision Cards', desc: 'Every major decision becomes a structured, auditable artifact', href: '/dashboard/decision-cards', status: 'Live' },
+      ],
+    },
+  ];
+
+  return (
+    <section className="py-20 px-6 border-t border-white/5">
+      <div className="max-w-6xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true }}
+          className="mb-12"
+        >
+          <h2 className="text-3xl font-bold text-white mb-2">Everything that&apos;s live right now.</h2>
+          <p className="text-gray-500">Not coming soon. Not planned. Working today — for subscribers.</p>
+        </motion.div>
+
+        <div className="grid md:grid-cols-2 gap-6">
+          {features.map((cat, ci) => (
+            <motion.div
+              key={cat.category}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: ci * 0.08 }}
+              viewport={{ once: true }}
+              className={`rounded-2xl border ${cat.border} ${cat.bg} p-6`}
+            >
+              <h3 className={`text-sm font-bold uppercase tracking-widest ${cat.color} mb-4`}>{cat.category}</h3>
+              <ul className="space-y-3">
+                {cat.items.map((item) => (
+                  <li key={item.name}>
+                    <Link href={item.href} className="flex items-start gap-3 group">
+                      <span className="w-1.5 h-1.5 rounded-full bg-current mt-2 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" style={{ color: 'inherit' }} />
+                      <div>
+                        <span className="text-sm font-medium text-white group-hover:text-gray-200 transition">{item.name}</span>
+                        <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{item.desc}</p>
+                      </div>
+                    </Link>
+                  </li>
+                ))}
+              </ul>
+            </motion.div>
+          ))}
+        </div>
+
+        <div className="mt-8 text-center">
+          <Link href="/register"
+            className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-semibold text-sm transition-all shadow-lg shadow-emerald-900/20">
+            Access All Features — Start Free
+          </Link>
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
 // MISSION — Why this exists
 // ═════════════════════════════════════════════════════════════════════
 function MissionSection() {
@@ -1002,6 +1113,7 @@ export default function HomePage() {
       <HeroSection />
       <TryItSection />
       <HowItWorksSection />
+      <WhatsLiveSection />
       <PricingTeaser />
       <MissionSection />
       <Footer />
