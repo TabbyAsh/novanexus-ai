@@ -1,97 +1,13 @@
 'use client';
 
-import { motion, useScroll, useTransform } from 'framer-motion';
+import { motion } from 'framer-motion';
 import Link from 'next/link';
-import { useRef, useState } from 'react';
-import {
-  ArrowRight,
-} from 'lucide-react';
+import { useState } from 'react';
+import { ArrowRight, CheckCircle } from 'lucide-react';
 
-// ─── Flip Card Widget Constants ──────────────────────────────────────
-const CONDITIONS = ['New', 'Like New', 'Good', 'Fair', 'Poor'] as const;
-const PLATFORMS = ['eBay', 'Facebook Marketplace', 'Mercari', 'Poshmark', 'General'] as const;
-
-// ─── Division Data (kept for reference, no longer rendered) ──────────
-const DIVISIONS = [
-  {
-    name: 'Flip Card',
-    desc: 'Evaluate any item instantly — real eBay sold comps, fee math, and a clear buy / negotiate / pass verdict.',
-    icon: CreditCard,
-    color: 'text-emerald-400',
-    border: 'border-emerald-500/20 hover:border-emerald-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(16,185,129,0.15)]',
-    bg: 'from-emerald-500/10',
-    status: 'Live · Free',
-    statusColor: 'bg-emerald-500/20 text-emerald-400',
-    href: '/flip',
-  },
-  {
-    name: 'Flip Finder',
-    desc: 'Scans Craigslist across cities for items worth buying and flipping. Real listings, real verdicts, negotiation scripts included.',
-    icon: ShoppingBag,
-    color: 'text-pink-400',
-    border: 'border-pink-500/20 hover:border-pink-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(244,114,182,0.15)]',
-    bg: 'from-pink-500/10',
-    status: 'Live',
-    statusColor: 'bg-emerald-500/20 text-emerald-400',
-    href: '/dashboard/scanner',
-  },
-  {
-    name: 'Wall Street',
-    desc: 'AI momentum scanner across 500+ stocks — ranked signals with entry, target, risk/reward, and pattern context.',
-    icon: TrendingUp,
-    color: 'text-green-400',
-    border: 'border-green-500/20 hover:border-green-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(34,197,94,0.15)]',
-    bg: 'from-green-500/10',
-    status: 'Live',
-    statusColor: 'bg-emerald-500/20 text-emerald-400',
-    href: '/dashboard/screener',
-  },
-  {
-    name: 'Social',
-    desc: 'Content scheduling, audience growth tools, and distribution planning for your side income brand.',
-    icon: Radio,
-    color: 'text-violet-400',
-    border: 'border-violet-500/20 hover:border-violet-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(139,92,246,0.15)]',
-    bg: 'from-violet-500/10',
-    status: 'Coming Soon',
-    statusColor: 'bg-gray-500/20 text-gray-500',
-    href: '/register',
-  },
-  {
-    name: 'Research',
-    desc: 'Decision logs, outcome tracking, structured postmortems, and calibration learning.',
-    icon: FlaskConical,
-    color: 'text-sky-400',
-    border: 'border-sky-500/20 hover:border-sky-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(14,165,233,0.15)]',
-    bg: 'from-sky-500/10',
-    status: 'Coming Soon',
-    statusColor: 'bg-gray-500/20 text-gray-500',
-    href: '/register',
-  },
-  {
-    name: 'Governance',
-    desc: 'Rule engine, risk controls, kill switches, and audit trail — so the platform never acts against your interests.',
-    icon: Shield,
-    color: 'text-amber-400',
-    border: 'border-amber-500/20 hover:border-amber-400/50',
-    glow: 'hover:shadow-[0_0_40px_rgba(245,158,11,0.15)]',
-    bg: 'from-amber-500/10',
-    status: 'Coming Soon',
-    statusColor: 'bg-gray-500/20 text-gray-500',
-    href: '/register',
-  },
-];
-
-// ─── Currency Formatter ──────────────────────────────────────────────
-const fmt = (n: number) => {
-  const f = new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(n));
-  return n < 0 ? `-${f}` : f;
-};
+// ─── Currency formatter ──────────────────────────────────────────────
+const fmt = (n: number) =>
+  new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(Math.abs(n));
 
 // ═════════════════════════════════════════════════════════════════════
 // NAVBAR
@@ -101,33 +17,27 @@ function Navbar() {
     <motion.nav
       initial={{ y: -100, opacity: 0 }}
       animate={{ y: 0, opacity: 1 }}
-      transition={{ duration: 0.6 }}
-      className="fixed top-0 left-0 right-0 z-50 px-6 py-4 backdrop-blur-xl bg-[#0a0a0f]/70 border-b border-white/5"
+      transition={{ duration: 0.5 }}
+      className="fixed top-0 left-0 right-0 z-50 px-6 py-4 backdrop-blur-xl bg-[#0a0a0f]/80 border-b border-white/5"
     >
-      <div className="max-w-7xl mx-auto flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-3">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center shadow-lg shadow-cyan-500/20">
-            <span className="text-white font-bold text-xl">N</span>
+      <div className="max-w-6xl mx-auto flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center">
+            <span className="text-white font-bold text-sm">N</span>
           </div>
-          <span className="text-white font-bold text-xl tracking-tight">
-            Nova<span className="text-cyan-400">Nexus</span>
-          </span>
+          <span className="text-white font-bold text-lg tracking-tight">Nova</span>
         </Link>
 
-        <div className="hidden md:flex items-center gap-8">
-          <a href="#divisions" className="text-gray-400 hover:text-white transition-colors text-sm">Divisions</a>
-          <Link href="/pricing" className="text-gray-400 hover:text-white transition-colors text-sm">Pricing</Link>
-          <a href="#about" className="text-gray-400 hover:text-white transition-colors text-sm">About</a>
+        <div className="hidden md:flex items-center gap-8 text-sm">
+          <Link href="/services/back-office-os" className="text-gray-400 hover:text-white transition">Services</Link>
+          <Link href="/decision-cards"          className="text-gray-400 hover:text-white transition">Decision Cards</Link>
+          <Link href="/field-manual"            className="text-gray-400 hover:text-white transition">Field Manual</Link>
+          <Link href="/flip"                    className="text-gray-400 hover:text-white transition">Flip Tool</Link>
         </div>
 
         <div className="flex items-center gap-3">
-          <Link href="/login" className="text-gray-400 hover:text-white transition-colors text-sm px-4 py-2">
-            Sign In
-          </Link>
-          <Link
-            href="/register"
-            className="px-5 py-2 rounded-lg text-sm font-medium bg-gradient-to-r from-cyan-500 to-purple-600 text-white shadow-lg shadow-cyan-500/20 hover:shadow-cyan-500/40 transition-all"
-          >
+          <Link href="/login"    className="text-gray-400 hover:text-white text-sm transition px-3 py-2">Sign In</Link>
+          <Link href="/register" className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
             Get Started
           </Link>
         </div>
@@ -137,56 +47,42 @@ function Navbar() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// HERO — Product-first. No decoration.
+// HERO
 // ═════════════════════════════════════════════════════════════════════
 function HeroSection() {
   return (
-    <section className="relative pt-32 pb-20 px-6 overflow-hidden">
+    <section className="relative pt-36 pb-24 px-6 text-center overflow-hidden">
       <div className="absolute inset-0 -z-10">
-        <div className="absolute top-0 left-1/3 w-[500px] h-[500px] rounded-full opacity-10 blur-[120px]"
+        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[700px] h-[400px] rounded-full opacity-10 blur-[120px]"
           style={{ background: 'radial-gradient(circle, #10b981 0%, transparent 70%)' }} />
       </div>
 
-      <div className="max-w-4xl mx-auto text-center">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-        >
-          {/* Value statement — concrete, not aspirational */}
-          <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold px-4 py-1.5 rounded-full mb-8 tracking-wide">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            Free · No account needed · Real eBay sold prices
+      <div className="max-w-3xl mx-auto">
+        <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
+          <div className="inline-flex items-center gap-2 bg-white/5 border border-white/10 text-gray-400 text-xs px-4 py-1.5 rounded-full mb-8">
+            Tools and services for small businesses, entrepreneurs, and operators
           </div>
 
-          <h1 className="text-5xl md:text-6xl font-bold text-white leading-[1.1] mb-5">
-            Is this item{' '}
-            <span className="text-emerald-400">worth flipping?</span>
+          <h1 className="text-5xl md:text-6xl font-bold text-white leading-[1.1] mb-6">
+            Turn business confusion<br />
+            <span className="text-emerald-400">into clean action.</span>
           </h1>
 
-          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-4 leading-relaxed">
-            Enter any item. Nova calculates real eBay sold prices, platform fees,
-            shipping costs, and net profit — then tells you to buy, negotiate, or pass.
+          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-10 leading-relaxed">
+            Nova Enterprises builds practical systems for people building something real:
+            admin workspaces, decision cards, templates, scripts, and back-office support.
           </p>
 
-          <p className="text-sm text-gray-600 mb-10">
-            Ten seconds. No guessing. The math is shown. Nothing is hidden.
-          </p>
-
-          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-6">
-            <a href="#try-it"
-              className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-base font-semibold bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-900/30 transition-all">
-              Try It Free — No Signup <ArrowRight className="w-4 h-4" />
-            </a>
-            <Link href="/dashboard/scanner"
-              className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-base font-medium border border-white/10 text-gray-300 hover:bg-white/5 transition-all">
-              Scan Craigslist for Deals
+          <div className="flex flex-col sm:flex-row gap-4 justify-center">
+            <Link href="/services/back-office-os"
+              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition-all shadow-lg shadow-emerald-900/30">
+              Build My Back Office <ArrowRight className="w-4 h-4" />
+            </Link>
+            <Link href="/decision-cards"
+              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-medium border border-white/10 text-gray-300 hover:bg-white/5 transition-all">
+              Explore Decision Cards
             </Link>
           </div>
-
-          <p className="text-xs text-gray-700">
-            Stock screener also available · Momentum patterns · Not financial advice
-          </p>
         </motion.div>
       </div>
     </section>
@@ -194,578 +90,77 @@ function HeroSection() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// PLATFORM STATS — live numbers from the backend
+// THREE PATHS
 // ═════════════════════════════════════════════════════════════════════
-interface PlatformStats {
-  totalUsers?: number;
-  agentRunsCompleted?: number;
-  totalOutcomeValue?: number;
-  flipsTracked?: number;
-}
-
-function PlatformStatsBar() {
-  const [stats, setStats] = useState<PlatformStats | null>(null);
-
-  useEffect(() => {
-    const url = `${process.env.NEXT_PUBLIC_API_URL || ‘http://localhost:3000’}/v1/platform/stats`;
-    fetch(url, { cache: ‘no-store’ })
-      .then((r) => r.json())
-      .then((d) => { if (d?.success && d.data) setStats(d.data); })
-      .catch(() => {});
-  }, []);
-
-  if (!stats) return null;
-
-  const items = [
+function ThreePaths() {
+  const paths = [
     {
-      icon: Users,
-      value: stats.totalUsers ? stats.totalUsers.toLocaleString() : null,
-      label: ‘Members’,
-      color: ‘text-blue-400’,
+      emoji: '🗂️',
+      label: 'For Businesses',
+      name: 'Back Office OS',
+      desc: 'A done-for-you monthly admin system. Estimates, invoices, expense tracking, customer scripts, weekly P&L. You run your business. We handle the paperwork.',
+      cta: 'View Services',
+      href: '/services/back-office-os',
+      border: 'border-emerald-500/25 hover:border-emerald-400/50',
+      bg: 'hover:bg-emerald-500/5',
+      badge: 'Service',
+      badgeColor: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/25',
+      price: 'From $150/mo',
     },
     {
-      icon: DollarSign,
-      value: stats.totalOutcomeValue && stats.totalOutcomeValue > 0
-        ? `$${stats.totalOutcomeValue >= 1000
-            ? `${(stats.totalOutcomeValue / 1000).toFixed(1)}k`
-            : stats.totalOutcomeValue.toFixed(0)}`
-        : null,
-      label: ‘Outcome Value Tracked’,
-      color: ‘text-emerald-400’,
+      emoji: '🃏',
+      label: 'For Operators',
+      name: 'Decision Cards',
+      desc: 'Every business situation has a next move. Pick a card — Customer Hasn\'t Paid, Price a Job, New Client Intake — get the checklist, script, and template for that exact moment.',
+      cta: 'Open Card Library',
+      href: '/decision-cards',
+      border: 'border-cyan-500/25 hover:border-cyan-400/50',
+      bg: 'hover:bg-cyan-500/5',
+      badge: 'Product',
+      badgeColor: 'bg-cyan-500/15 text-cyan-400 border-cyan-500/25',
+      price: 'From $9/mo',
     },
     {
-      icon: BarChart3,
-      value: stats.flipsTracked ? stats.flipsTracked.toLocaleString() : null,
-      label: ‘Flip Plans Run’,
-      color: ‘text-pink-400’,
-    },
-    {
-      icon: TrendingUp,
-      value: stats.agentRunsCompleted ? stats.agentRunsCompleted.toLocaleString() : null,
-      label: ‘Agent Runs Completed’,
-      color: ‘text-violet-400’,
-    },
-  ].filter((item) => item.value !== null);
-
-  if (items.length === 0) return null;
-
-  return (
-    <motion.section
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.5, delay: 0.4 }}
-      className="relative py-6 px-6 border-y border-white/5 bg-white/[0.015]"
-    >
-      <div className="max-w-4xl mx-auto flex flex-wrap items-center justify-center gap-6 sm:gap-12">
-        {items.map((item) => (
-          <div key={item.label} className="flex items-center gap-3">
-            <item.icon className={`w-4 h-4 ${item.color}`} />
-            <div>
-              <div className={`text-lg font-bold ${item.color}`}>{item.value}</div>
-              <div className="text-xs text-gray-600">{item.label}</div>
-            </div>
-          </div>
-        ))}
-      </div>
-    </motion.section>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// LIVE PROOF STRIP — what’s working right now
-// ═════════════════════════════════════════════════════════════════════
-function LiveProofStrip() {
-  return (
-    <section className="relative py-8 px-6 border-y border-white/5 bg-white/[0.01]">
-      <div className="max-w-5xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="flex flex-col sm:flex-row items-center justify-center gap-4 sm:gap-10"
-        >
-          {/* Flip Finder */}
-          <Link
-            href="/dashboard/scanner"
-            className="flex items-center gap-3 group"
-          >
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse flex-shrink-0" />
-            <div>
-              <span className="text-white text-sm font-semibold group-hover:text-emerald-300 transition-colors">Flip Finder</span>
-              <span className="ml-2 text-[10px] bg-emerald-500/20 text-emerald-400 px-1.5 py-0.5 rounded border border-emerald-500/30 font-bold">LIVE</span>
-              <p className="text-gray-500 text-xs mt-0.5">Craigslist scanner · auto-scored deals</p>
-            </div>
-          </Link>
-
-          <span className="hidden sm:block w-px h-8 bg-white/10" />
-
-          {/* Flip Card */}
-          <Link
-            href="/flip"
-            className="flex items-center gap-3 group"
-          >
-            <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse flex-shrink-0" />
-            <div>
-              <span className="text-white text-sm font-semibold group-hover:text-cyan-300 transition-colors">Flip Card</span>
-              <span className="ml-2 text-[10px] bg-cyan-500/20 text-cyan-400 px-1.5 py-0.5 rounded border border-cyan-500/30 font-bold">FREE</span>
-              <p className="text-gray-500 text-xs mt-0.5">Instant analysis · real eBay comps</p>
-            </div>
-          </Link>
-
-          <span className="hidden sm:block w-px h-8 bg-white/10" />
-
-          {/* Stock Screener */}
-          <Link
-            href="/dashboard/screener"
-            className="flex items-center gap-3 group"
-          >
-            <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse flex-shrink-0" />
-            <div>
-              <span className="text-white text-sm font-semibold group-hover:text-green-300 transition-colors">Stock Screener</span>
-              <span className="ml-2 text-[10px] bg-green-500/20 text-green-400 px-1.5 py-0.5 rounded border border-green-500/30 font-bold">LIVE</span>
-              <p className="text-gray-500 text-xs mt-0.5">AI signals · 500+ stocks</p>
-            </div>
-          </Link>
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// TRY IT — Flip Card Sales Wedge
-// ═════════════════════════════════════════════════════════════════════
-function TryItSection() {
-  const [title, setTitle] = useState('');
-  const [price, setPrice] = useState('');
-  const [condition, setCondition] = useState('Good');
-  const [platform, setPlatform] = useState('eBay');
-  const [shipping, setShipping] = useState<'shipping' | 'pickup'>('shipping');
-  const [loading, setLoading] = useState(false);
-  const [result, setResult] = useState<any>(null);
-  const [error, setError] = useState<string | null>(null);
-
-  const analyze = async () => {
-    if (!title.trim() || !price) return;
-    setLoading(true);
-    setResult(null);
-    setError(null);
-    try {
-      const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
-      const headers: Record<string, string> = { 'Content-Type': 'application/json' };
-      if (token) headers['Authorization'] = `Bearer ${token}`;
-      const res = await fetch('/api/proxy/v1/flip/appraise', {
-        method: 'POST',
-        headers,
-        body: JSON.stringify({
-          title: title.trim(),
-          buy_price: parseFloat(price),
-          condition,
-          shipping_or_pickup: shipping,
-          target_platform: platform,
-        }),
-      });
-      const data = await res.json();
-      if (data.success) {
-        setResult(data.data);
-      } else {
-        setError(data.error?.message || 'Analysis failed. Please try again.');
-      }
-    } catch {
-      setError('Could not reach the server. Please try again.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const reset = () => {
-    setResult(null);
-    setTitle('');
-    setPrice('');
-    setCondition('Good');
-    setPlatform('eBay');
-    setShipping('shipping');
-  };
-
-  return (
-    <section id="try-it" className="relative py-24 px-6">
-      <div className="max-w-3xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-          className="text-center mb-10"
-        >
-          <div className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 mb-4">
-            <Sparkles className="w-4 h-4 text-emerald-400" />
-            <span className="text-emerald-400 text-sm font-medium">Try it now — no account needed</span>
-          </div>
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-3">
-            Know if it&apos;s worth flipping — before you buy.
-          </h2>
-          <p className="text-gray-400 max-w-lg mx-auto">
-            Enter any item and get an instant verdict backed by real eBay sold data.
-          </p>
-        </motion.div>
-
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6, delay: 0.1 }}
-          viewport={{ once: true }}
-          className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-8 shadow-2xl"
-        >
-          {!result ? (
-            <div className="space-y-5">
-              {/* Item title */}
-              <div>
-                <label className="block text-sm text-gray-400 mb-1.5">What are you looking at?</label>
-                <input
-                  value={title}
-                  onChange={(e) => setTitle(e.target.value)}
-                  placeholder="e.g. Sony WH-1000XM5 Headphones"
-                  className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-gray-600 focus:border-emerald-500 focus:outline-none transition"
-                />
-              </div>
-
-              {/* Price + Condition */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">Asking price</label>
-                  <div className="relative">
-                    <span className="absolute left-3 top-3 text-gray-500">$</span>
-                    <input
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={price}
-                      onChange={(e) => setPrice(e.target.value)}
-                      placeholder="0.00"
-                      className="w-full bg-black/30 border border-white/10 rounded-lg pl-7 pr-4 py-3 text-white placeholder-gray-600 focus:border-emerald-500 focus:outline-none transition"
-                    />
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">Condition</label>
-                  <select
-                    value={condition}
-                    onChange={(e) => setCondition(e.target.value)}
-                    className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none transition appearance-none"
-                  >
-                    {CONDITIONS.map((c) => (
-                      <option key={c} value={c} className="bg-gray-900">{c}</option>
-                    ))}
-                  </select>
-                </div>
-              </div>
-
-              {/* Platform + Shipping */}
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">Sell on</label>
-                  <select
-                    value={platform}
-                    onChange={(e) => setPlatform(e.target.value)}
-                    className="w-full bg-black/30 border border-white/10 rounded-lg px-4 py-3 text-white focus:border-emerald-500 focus:outline-none transition appearance-none"
-                  >
-                    {PLATFORMS.map((p) => (
-                      <option key={p} value={p} className="bg-gray-900">{p}</option>
-                    ))}
-                  </select>
-                </div>
-                <div>
-                  <label className="block text-sm text-gray-400 mb-1.5">Fulfillment</label>
-                  <div className="flex gap-2">
-                    <button
-                      type="button"
-                      onClick={() => setShipping('shipping')}
-                      className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${
-                        shipping === 'shipping'
-                          ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400'
-                          : 'bg-black/20 border-white/10 text-gray-500 hover:border-white/20'
-                      }`}
-                    >
-                      Ship
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setShipping('pickup')}
-                      className={`flex-1 py-3 rounded-lg border text-sm font-medium transition ${
-                        shipping === 'pickup'
-                          ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-400'
-                          : 'bg-black/20 border-white/10 text-gray-500 hover:border-white/20'
-                      }`}
-                    >
-                      Local
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Error */}
-              {error && (
-                <div className="p-3 rounded-lg bg-red-900/30 border border-red-700/40 text-red-300 text-sm text-center">
-                  {error}
-                  {error.includes('free') && (
-                    <Link href="/register" className="block mt-2 text-cyan-400 hover:text-cyan-300 font-medium">
-                      Sign up for unlimited access →
-                    </Link>
-                  )}
-                </div>
-              )}
-
-              {/* Submit */}
-              <button
-                onClick={analyze}
-                disabled={loading || !title.trim() || !price}
-                className="w-full py-3.5 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 disabled:from-gray-700 disabled:to-gray-700 disabled:text-gray-500 text-white font-semibold transition-all shadow-lg shadow-emerald-900/20"
-              >
-                {loading ? 'Analyzing...' : 'Get Verdict'}
-              </button>
-              <p className="text-center text-xs text-gray-600">3 free analyses per day · No account needed</p>
-            </div>
-          ) : (
-            <div className="space-y-5">
-              {/* Verdict */}
-              <div
-                className={`text-center py-5 rounded-xl ${
-                  result.verdict === 'BUY'
-                    ? 'bg-emerald-500/15 border border-emerald-500/30'
-                    : result.verdict === 'NEGOTIATE LOWER'
-                    ? 'bg-amber-500/15 border border-amber-500/30'
-                    : 'bg-red-500/15 border border-red-500/30'
-                }`}
-              >
-                <div
-                  className={`text-3xl font-black ${
-                    result.verdict === 'BUY'
-                      ? 'text-emerald-400'
-                      : result.verdict === 'NEGOTIATE LOWER'
-                      ? 'text-amber-400'
-                      : 'text-red-400'
-                  }`}
-                >
-                  {result.verdict}
-                </div>
-              </div>
-
-              {/* Economics */}
-              <div className="grid grid-cols-4 gap-3 text-center text-sm">
-                <div>
-                  <div className="text-gray-500 text-xs">Buy</div>
-                  <div className="text-white font-medium">{fmt(result.buy_price)}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 text-xs">Resale</div>
-                  <div className="text-white font-medium">{fmt(result.est_resale_mid)}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 text-xs">Costs</div>
-                  <div className="text-gray-400">{fmt(result.est_platform_fees + result.est_shipping_cost)}</div>
-                </div>
-                <div>
-                  <div className="text-gray-500 text-xs">Profit</div>
-                  <div className={result.est_net_profit_mid > 0 ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>
-                    {fmt(result.est_net_profit_mid)}
-                  </div>
-                </div>
-              </div>
-
-              {/* Rationale */}
-              <p className="text-sm text-gray-400 text-center leading-relaxed">{result.rationale_summary}</p>
-
-              {/* Confidence + Comps */}
-              <div className="flex items-center justify-center gap-4 text-xs text-gray-500">
-                <span>
-                  {result.confidence_score >= 70 ? 'High' : result.confidence_score >= 40 ? 'Moderate' : 'Low'} confidence ({result.confidence_score}%)
-                </span>
-                <span>·</span>
-                <span>{result.comp_sources?.[0]?.count || 0} sold comps</span>
-              </div>
-
-              {/* Actions */}
-              <div className="flex gap-3">
-                <button
-                  onClick={reset}
-                  className="flex-1 py-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white text-sm font-medium transition"
-                >
-                  Try Another
-                </button>
-                <Link
-                  href="/register"
-                  className="flex-1 py-3 rounded-lg bg-gradient-to-r from-cyan-500 to-purple-600 text-white text-sm font-medium text-center transition hover:shadow-lg hover:shadow-cyan-500/20"
-                >
-                  Unlock Unlimited
-                </Link>
-              </div>
-            </div>
-          )}
-        </motion.div>
-      </div>
-    </section>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// DIVISIONS — All six, equal weight
-// ═════════════════════════════════════════════════════════════════════
-function DivisionsSection() {
-  return (
-    <section id="divisions" className="relative py-24 px-6">
-      <div className="max-w-6xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
-          viewport={{ once: true }}
-          className="text-center mb-14"
-        >
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-3">
-            Three tools live today.{' '}
-            <span className="bg-gradient-to-r from-cyan-400 to-purple-400 bg-clip-text text-transparent">
-              Three more in development.
-            </span>
-          </h2>
-          <p className="text-gray-400 max-w-lg mx-auto">
-            We only ship what works. Everything below is clearly labeled — live or coming soon.
-          </p>
-        </motion.div>
-
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-5">
-          {DIVISIONS.map((div, i) => {
-            const Icon = div.icon;
-            return (
-              <motion.div
-                key={div.name}
-                initial={{ opacity: 0, y: 20 }}
-                whileInView={{ opacity: 1, y: 0 }}
-                transition={{ duration: 0.5, delay: i * 0.08 }}
-                viewport={{ once: true }}
-                whileHover={{ y: -4 }}
-              >
-                <Link
-                  href={div.href}
-                  className={`block relative backdrop-blur-xl bg-white/[0.03] border ${div.border} rounded-2xl p-6 transition-all duration-300 ${div.glow} group`}
-                >
-                  {/* Gradient overlay */}
-                  <div className={`absolute inset-0 rounded-2xl bg-gradient-to-br ${div.bg} to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none`} />
-
-                  <div className="relative z-10">
-                    <div className="flex items-start justify-between mb-4">
-                      <div className={`p-2.5 rounded-xl bg-white/5 ${div.color}`}>
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <span className={`px-2.5 py-1 rounded-full text-xs font-medium ${div.statusColor}`}>
-                        {div.status}
-                      </span>
-                    </div>
-                    <h3 className="text-lg font-semibold text-white mb-2">{div.name}</h3>
-                    <p className="text-sm text-gray-400 leading-relaxed">{div.desc}</p>
-                    <div className="mt-4 flex items-center gap-1 text-xs text-gray-500 group-hover:text-gray-300 transition-colors">
-                      <span>Explore</span>
-                      <ExternalLink className="w-3 h-3" />
-                    </div>
-                  </div>
-                </Link>
-              </motion.div>
-            );
-          })}
-        </div>
-      </div>
-    </section>
-  );
-}
-
-// ═════════════════════════════════════════════════════════════════════
-// HOW IT WORKS — Three tools. What each one does. No fluff.
-// ═════════════════════════════════════════════════════════════════════
-function HowItWorksSection() {
-  const tools = [
-    {
-      name: 'Flip Card',
-      href: '/flip',
-      tag: 'Free · No signup',
-      tagColor: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
-      color: 'text-emerald-400',
-      border: 'border-emerald-500/20 hover:border-emerald-400/40',
-      what: 'You enter an item name and asking price.',
-      how: 'Nova scrapes real eBay sold listings, calculates platform fees, shipping, and net margin.',
-      output: 'You get: Buy / Negotiate / Pass — with the exact numbers behind the verdict.',
-      proof: 'The math is shown. Every assumption is labelled. Nothing is hidden.',
-    },
-    {
-      name: 'Flip Finder',
-      href: '/dashboard/scanner',
-      tag: 'Paid · Craigslist scanner',
-      tagColor: 'bg-pink-500/15 text-pink-400 border-pink-500/30',
-      color: 'text-pink-400',
-      border: 'border-pink-500/20 hover:border-pink-400/40',
-      what: 'You pick a city. Nova scans Craigslist free and low-cost listings.',
-      how: 'Every item that matches electronics, gaming, tools, or appliances gets evaluated automatically.',
-      output: 'You see a ranked list: item, asking price, estimated resale, estimated profit, verdict.',
-      proof: 'You only look at deals already scored. No manual research per item.',
-    },
-    {
-      name: 'Stock Screener',
-      href: '/dashboard/screener',
-      tag: 'Paid · Pattern analysis',
-      tagColor: 'bg-violet-500/15 text-violet-400 border-violet-500/30',
-      color: 'text-violet-400',
-      border: 'border-violet-500/20 hover:border-violet-400/40',
-      what: 'Nova runs momentum pattern analysis across 500+ tickers daily.',
-      how: 'Volume, RSI, ADX, MACD, VWAP, float. Ranked by confidence score.',
-      output: 'Setups with entry, target, stop, and risk/reward ratio.',
-      proof: 'Not financial advice. No audited track record. Use for research only. Paper trade before risking capital.',
+      emoji: '📖',
+      label: 'To Learn',
+      name: 'Field Manual',
+      desc: 'Old business rules rebuilt for modern operators. Each piece turns a principle into an action card. Feeds everything else Nova offers.',
+      cta: 'Read the Field Manual',
+      href: '/field-manual',
+      border: 'border-amber-500/25 hover:border-amber-400/50',
+      bg: 'hover:bg-amber-500/5',
+      badge: 'Free',
+      badgeColor: 'bg-amber-500/15 text-amber-400 border-amber-500/25',
+      price: 'Always free',
     },
   ];
 
   return (
     <section className="py-20 px-6 border-t border-white/5">
       <div className="max-w-5xl mx-auto">
-        <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5 }}
-          viewport={{ once: true }}
-          className="text-center mb-12"
-        >
-          <h2 className="text-3xl font-bold text-white mb-3">Three tools. Each one does one thing well.</h2>
-          <p className="text-gray-500">Every output is traceable to a number. Every number comes from a real source.</p>
-        </motion.div>
-
         <div className="grid md:grid-cols-3 gap-5">
-          {tools.map((tool, i) => (
+          {paths.map((p, i) => (
             <motion.div
-              key={tool.name}
-              initial={{ opacity: 0, y: 20 }}
+              key={p.name}
+              initial={{ opacity: 0, y: 24 }}
               whileInView={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.5, delay: i * 0.1 }}
               viewport={{ once: true }}
             >
-              <Link href={tool.href}
-                className={`block h-full rounded-2xl border ${tool.border} bg-white/[0.02] p-6 transition-all hover:bg-white/[0.04]`}>
-                <div className="flex items-center justify-between mb-4">
-                  <h3 className={`text-lg font-bold ${tool.color}`}>{tool.name}</h3>
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${tool.tagColor}`}>{tool.tag}</span>
+              <Link href={p.href}
+                className={`block h-full rounded-2xl border ${p.border} ${p.bg} bg-white/[0.02] p-6 transition-all duration-300 group`}>
+                <div className="flex items-center justify-between mb-5">
+                  <span className="text-2xl">{p.emoji}</span>
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${p.badgeColor}`}>{p.badge}</span>
                 </div>
-                <div className="space-y-3 text-sm">
-                  <div>
-                    <span className="text-gray-600 text-xs uppercase tracking-wider">Input</span>
-                    <p className="text-gray-300 mt-0.5">{tool.what}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600 text-xs uppercase tracking-wider">Process</span>
-                    <p className="text-gray-300 mt-0.5">{tool.how}</p>
-                  </div>
-                  <div>
-                    <span className="text-gray-600 text-xs uppercase tracking-wider">Output</span>
-                    <p className="text-gray-300 mt-0.5">{tool.output}</p>
-                  </div>
-                  <div className="pt-2 border-t border-white/5">
-                    <p className="text-gray-600 text-xs italic">{tool.proof}</p>
-                  </div>
+                <div className="text-xs text-gray-600 uppercase tracking-widest mb-1">{p.label}</div>
+                <h3 className="text-lg font-bold text-white mb-3">{p.name}</h3>
+                <p className="text-sm text-gray-400 leading-relaxed mb-5">{p.desc}</p>
+                <div className="flex items-center justify-between">
+                  <span className="text-xs text-gray-600">{p.price}</span>
+                  <span className="text-sm font-medium text-gray-300 group-hover:text-white transition flex items-center gap-1">
+                    {p.cta} <ArrowRight className="w-3.5 h-3.5" />
+                  </span>
                 </div>
               </Link>
             </motion.div>
@@ -777,109 +172,67 @@ function HowItWorksSection() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// WHAT'S LIVE — every feature, honest status
+// DECISION CARDS PREVIEW — show what they are concretely
 // ═════════════════════════════════════════════════════════════════════
-function WhatsLiveSection() {
-  const features = [
-    {
-      category: 'Resale Intelligence',
-      color: 'text-emerald-400',
-      border: 'border-emerald-500/20',
-      bg: 'bg-emerald-500/5',
-      items: [
-        { name: 'Flip Card', desc: 'Enter any item → real eBay sold prices → net profit → verdict', href: '/flip', status: 'Live' },
-        { name: 'Flip Finder', desc: 'Craigslist scanner → auto-evaluated deals with buy/pass verdict', href: '/dashboard/scanner', status: 'Live' },
-        { name: 'Flip History', desc: 'Every analysis saved. Tracks your win rate over time.', href: '/dashboard/flip-history', status: 'Live' },
-        { name: 'Marketplace Intel', desc: 'Cross-platform deal scoring and market comps', href: '/dashboard/marketplace', status: 'Live' },
-        { name: 'Deal Pipeline', desc: 'Track flips from sourced → acquired → listed → sold', href: '/dashboard/flips', status: 'Live' },
-      ],
-    },
-    {
-      category: 'Trading Intelligence',
-      color: 'text-violet-400',
-      border: 'border-violet-500/20',
-      bg: 'bg-violet-500/5',
-      items: [
-        { name: 'Stock Screener', desc: 'Momentum pattern analysis · 500+ tickers · ranked by confidence', href: '/dashboard/screener', status: 'Live' },
-        { name: 'Trade Journal', desc: 'Log trades, track P&L, build your performance history', href: '/dashboard/journal', status: 'Live' },
-        { name: 'Paper Trading', desc: 'Alpaca-connected · test setups before risking real capital', href: '/dashboard/trading', status: 'Live' },
-        { name: 'Daily Brief', desc: 'AI-generated pre-market intelligence delivered each morning', href: '/dashboard/nexus', status: 'Live' },
-        { name: 'Strategy Backtest', desc: 'Test your rules against historical data', href: '/dashboard/backtest', status: 'Live' },
-      ],
-    },
-    {
-      category: 'Content & Growth',
-      color: 'text-pink-400',
-      border: 'border-pink-500/20',
-      bg: 'bg-pink-500/5',
-      items: [
-        { name: 'Social Content', desc: 'AI-generated posts, hooks, and campaign plans for your brand', href: '/dashboard/social', status: 'Live' },
-        { name: 'Content Cards', desc: 'Every post becomes a Decision Card — tracked, reviewed, improved', href: '/dashboard/content-engine', status: 'Live' },
-        { name: 'Analytics', desc: 'Portfolio, trading, and platform performance in one view', href: '/dashboard/analytics', status: 'Live' },
-        { name: 'Referral System', desc: 'Invite users · earn credit · grow the platform', href: '/dashboard/referrals', status: 'Live' },
-      ],
-    },
-    {
-      category: 'Governance & Intelligence',
-      color: 'text-amber-400',
-      border: 'border-amber-500/20',
-      bg: 'bg-amber-500/5',
-      items: [
-        { name: 'Alert Inbox', desc: 'Daily flip and stock alerts delivered to your dashboard', href: '/dashboard/alerts', status: 'Live' },
-        { name: 'Outcome Ledger', desc: 'Log every result. Nova calibrates from your real history.', href: '/dashboard/outcomes', status: 'Live' },
-        { name: 'Automation Gates', desc: 'RECOMMEND → ASSIST → AUTOMATE · you control Nova\'s autonomy', href: '/dashboard/safety', status: 'Live' },
-        { name: 'AI Agents', desc: 'Autonomous agents that run tasks, log results, compound learning', href: '/dashboard/agents', status: 'Live' },
-        { name: 'Decision Cards', desc: 'Every major decision becomes a structured, auditable artifact', href: '/dashboard/decision-cards', status: 'Live' },
-      ],
-    },
+function DecisionCardsPreview() {
+  const cards = [
+    { title: 'Customer Hasn\'t Paid', desc: 'Reminder message, payment deadline, escalation steps, invoice follow-up.', tag: 'Collections' },
+    { title: 'Price a Job', desc: 'Cost breakdown, margin calculator, quote structure, upsell prompts.', tag: 'Pricing' },
+    { title: 'New Client Intake', desc: 'Intake form, quote checklist, customer script, job notes template.', tag: 'Intake' },
+    { title: 'Friend Business Deal', desc: 'Risk checklist, agreement template, ownership questions, red flags.', tag: 'Deals' },
+    { title: 'Invoice Follow-Up', desc: 'Follow-up sequence, payment link, final notice template.', tag: 'Admin' },
+    { title: 'Hiring Help', desc: 'Role checklist, pay terms, expectations agreement, trial period structure.', tag: 'Hiring' },
   ];
 
   return (
     <section className="py-20 px-6 border-t border-white/5">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-5xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.5 }}
           viewport={{ once: true }}
-          className="mb-12"
+          className="mb-10"
         >
-          <h2 className="text-3xl font-bold text-white mb-2">Everything that&apos;s live right now.</h2>
-          <p className="text-gray-500">Not coming soon. Not planned. Working today — for subscribers.</p>
+          <div className="flex items-end justify-between">
+            <div>
+              <h2 className="text-3xl font-bold text-white mb-2">Every situation has a card.</h2>
+              <p className="text-gray-500 max-w-xl">
+                Choose the card for your moment. Get the checklist, script, template, and next action — specific to your situation.
+              </p>
+            </div>
+            <Link href="/decision-cards" className="hidden md:flex items-center gap-1 text-sm text-emerald-400 hover:text-emerald-300 transition">
+              See all cards <ArrowRight className="w-4 h-4" />
+            </Link>
+          </div>
         </motion.div>
 
-        <div className="grid md:grid-cols-2 gap-6">
-          {features.map((cat, ci) => (
+        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
+          {cards.map((card, i) => (
             <motion.div
-              key={cat.category}
-              initial={{ opacity: 0, y: 20 }}
+              key={card.title}
+              initial={{ opacity: 0, y: 16 }}
               whileInView={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.5, delay: ci * 0.08 }}
+              transition={{ duration: 0.4, delay: i * 0.07 }}
               viewport={{ once: true }}
-              className={`rounded-2xl border ${cat.border} ${cat.bg} p-6`}
             >
-              <h3 className={`text-sm font-bold uppercase tracking-widest ${cat.color} mb-4`}>{cat.category}</h3>
-              <ul className="space-y-3">
-                {cat.items.map((item) => (
-                  <li key={item.name}>
-                    <Link href={item.href} className="flex items-start gap-3 group">
-                      <span className="w-1.5 h-1.5 rounded-full bg-current mt-2 shrink-0 opacity-50 group-hover:opacity-100 transition-opacity" style={{ color: 'inherit' }} />
-                      <div>
-                        <span className="text-sm font-medium text-white group-hover:text-gray-200 transition">{item.name}</span>
-                        <p className="text-xs text-gray-500 mt-0.5 leading-relaxed">{item.desc}</p>
-                      </div>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
+              <Link href="/decision-cards"
+                className="block rounded-xl border border-gray-800 bg-gray-900/50 p-5 hover:border-cyan-500/30 hover:bg-cyan-500/5 transition-all group">
+                <div className="flex items-start justify-between mb-3">
+                  <span className="text-xs font-semibold text-gray-600 bg-gray-800 px-2 py-0.5 rounded">{card.tag}</span>
+                  <span className="text-gray-700 group-hover:text-cyan-500 transition text-lg">→</span>
+                </div>
+                <h4 className="text-sm font-semibold text-white mb-2">{card.title}</h4>
+                <p className="text-xs text-gray-500 leading-relaxed">{card.desc}</p>
+              </Link>
             </motion.div>
           ))}
         </div>
 
         <div className="mt-8 text-center">
-          <Link href="/register"
-            className="inline-flex items-center gap-2 px-8 py-3.5 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white font-semibold text-sm transition-all shadow-lg shadow-emerald-900/20">
-            Access All Features — Start Free
+          <Link href="/decision-cards"
+            className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white/5 hover:bg-white/8 border border-white/10 text-sm text-gray-300 hover:text-white transition">
+            Open the Card Library — 3 free per month
           </Link>
         </div>
       </div>
@@ -888,135 +241,167 @@ function WhatsLiveSection() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// MISSION — Why this exists
+// BACK OFFICE OS PITCH — service section
 // ═════════════════════════════════════════════════════════════════════
-function MissionSection() {
-  const ref = useRef(null);
-  const { scrollYProgress } = useScroll({ target: ref, offset: ['start end', 'end start'] });
-  const y = useTransform(scrollYProgress, [0, 1], [60, -60]);
+function BackOfficeSection() {
+  const deliverables = [
+    'Estimate template',
+    'Invoice template',
+    'Expense tracker',
+    'Customer intake form',
+    'Customer follow-up scripts',
+    'Weekly profit/loss sheet',
+    'Task tracker',
+    'Monthly admin review',
+  ];
 
   return (
-    <section id="about" ref={ref} className="relative py-24 px-6 overflow-hidden">
-      {/* Floating N watermark */}
-      <motion.div style={{ y }} className="absolute inset-0 flex items-center justify-center opacity-[0.03] pointer-events-none">
-        <span className="text-[20rem] font-bold text-white select-none">N</span>
-      </motion.div>
+    <section className="py-20 px-6 border-t border-white/5">
+      <div className="max-w-5xl mx-auto">
+        <div className="grid md:grid-cols-2 gap-12 items-center">
+          <motion.div
+            initial={{ opacity: 0, x: -20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6 }}
+            viewport={{ once: true }}
+          >
+            <div className="text-xs text-gray-500 uppercase tracking-widest mb-3">Service · From $150/month</div>
+            <h2 className="text-3xl font-bold text-white mb-5">
+              Stop losing time to scattered paperwork.
+            </h2>
+            <p className="text-gray-400 leading-relaxed mb-6">
+              Nova Back Office OS gives your business a clean admin system — forms, invoices, scripts, expense tracking, and weekly visibility — built for you and maintained monthly.
+            </p>
+            <p className="text-gray-500 text-sm leading-relaxed mb-8">
+              Best for: contractors, clothing brands, freelancers, local service businesses, small operations that need systems but not a full-time admin.
+            </p>
+            <Link href="/services/back-office-os"
+              className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold text-sm transition-all">
+              Get Your Back Office Built <ArrowRight className="w-4 h-4" />
+            </Link>
+          </motion.div>
 
-      <div className="max-w-3xl mx-auto relative z-10">
-        <motion.div
-          initial={{ opacity: 0, y: 30 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.8 }}
-          viewport={{ once: true }}
-          className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-10 md:p-14 text-center"
-        >
-          <h2 className="text-2xl md:text-3xl font-bold text-white mb-6">
-            Every number is real. Every assumption is shown. Nothing is guaranteed.
-          </h2>
-          <p className="text-lg text-gray-400 leading-relaxed mb-6">
-            Nova doesn&apos;t tell you what to do. It gives you the math and lets you decide.
-            The flip margin calculation uses real eBay completed sale prices, real platform fee tables, and real shipping estimates by category.
-            The stock screener uses real market data. When data is unavailable, it says unavailable — not zero, not a placeholder.
-          </p>
-          <p className="text-gray-500 leading-relaxed mb-8">
-            The system gets better the more you use it. Log outcomes. Nova learns which estimates were off and adjusts future recommendations for your market.
-          </p>
-          <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
-            <span className="w-8 h-px bg-gray-700" />
-            NovaNexus — novanexus-ai.com
-            <span className="w-8 h-px bg-gray-700" />
-          </div>
-        </motion.div>
+          <motion.div
+            initial={{ opacity: 0, x: 20 }}
+            whileInView={{ opacity: 1, x: 0 }}
+            transition={{ duration: 0.6, delay: 0.1 }}
+            viewport={{ once: true }}
+            className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6"
+          >
+            <div className="text-sm font-semibold text-emerald-400 mb-4">Every client receives:</div>
+            <ul className="space-y-3">
+              {deliverables.map((item) => (
+                <li key={item} className="flex items-center gap-3 text-sm text-gray-300">
+                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" />
+                  {item}
+                </li>
+              ))}
+            </ul>
+            <div className="mt-5 pt-4 border-t border-emerald-500/20 text-xs text-gray-500">
+              Delivered in Google Drive or Notion. Monthly maintenance included.
+            </div>
+          </motion.div>
+        </div>
       </div>
     </section>
   );
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// PRICING TEASER
+// PRODUCT LADDER
 // ═════════════════════════════════════════════════════════════════════
-function PricingTeaser() {
+function ProductLadder() {
+  const tiers = [
+    { level: 'Free',    product: 'Field Manual',           desc: 'Business principles → action cards. Feeds everything.',        price: 'Always free',   href: '/field-manual',            color: 'text-gray-400' },
+    { level: 'Entry',   product: 'Young Operator Playbook', desc: 'How to write, speak, follow up, and move professionally.',     price: '$27–$97',       href: '/playbook',                color: 'text-amber-400' },
+    { level: 'Core',    product: 'Decision Cards',          desc: 'Exact next moves for exact business situations.',              price: '$9–$79/month',  href: '/decision-cards',          color: 'text-cyan-400' },
+    { level: 'Service', product: 'Local Admin Service',     desc: 'Online presence, scripts, forms, monthly cleanup.',            price: '$200–$500/mo',  href: '/services/local-admin',    color: 'text-violet-400' },
+    { level: 'Premium', product: 'Back Office OS',          desc: 'Full done-for-you admin system, maintained monthly.',          price: '$150–$500/mo',  href: '/services/back-office-os', color: 'text-emerald-400' },
+  ];
+
   return (
-    <section className="relative py-24 px-6">
-      <div className="max-w-4xl mx-auto">
+    <section className="py-20 px-6 border-t border-white/5">
+      <div className="max-w-3xl mx-auto">
         <motion.div
           initial={{ opacity: 0, y: 20 }}
           whileInView={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.6 }}
+          transition={{ duration: 0.5 }}
           viewport={{ once: true }}
-          className="text-center mb-10"
+          className="text-center mb-12"
         >
-          <h2 className="text-3xl md:text-4xl font-bold text-white mb-3">
-            Start free. Upgrade when it pays for itself.
-          </h2>
-          <p className="text-gray-400">Avoid one bad buy and the subscription pays for itself.</p>
+          <h2 className="text-3xl font-bold text-white mb-3">Start where you are. Scale as you grow.</h2>
+          <p className="text-gray-500">Every product feeds the next. Start free. Upgrade when it pays for itself.</p>
         </motion.div>
 
-        <div className="grid md:grid-cols-2 gap-6 max-w-2xl mx-auto">
-          {/* Free */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0 }}
-            viewport={{ once: true }}
-            className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-8"
-          >
-            <div className="text-sm text-gray-400 mb-1">Free</div>
-            <div className="text-4xl font-bold text-white mb-1">$0</div>
-            <div className="text-sm text-gray-500 mb-6">No account needed</div>
-            <ul className="space-y-3 text-sm text-gray-300 mb-8">
-              {['3 Flip Card analyses per day', 'Real eBay sold comps', 'Full cost breakdown', 'Buy / negotiate / pass verdict'].map((f) => (
-                <li key={f} className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <a
-              href="#try-it"
-              className="block w-full py-3 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white text-sm font-medium text-center transition"
+        <div className="space-y-3">
+          {tiers.map((tier, i) => (
+            <motion.div
+              key={tier.product}
+              initial={{ opacity: 0, y: 12 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.4, delay: i * 0.08 }}
+              viewport={{ once: true }}
             >
-              Try It Now
-            </a>
-          </motion.div>
-
-          {/* Pro */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.5, delay: 0.1 }}
-            viewport={{ once: true }}
-            className="relative backdrop-blur-xl bg-gradient-to-b from-emerald-900/20 to-white/[0.03] border-2 border-emerald-500/30 rounded-2xl p-8"
-          >
-            <div className="text-sm text-emerald-400 font-medium mb-1">Flip Card Pro</div>
-            <div className="text-4xl font-bold text-white mb-1">$9<span className="text-lg text-gray-400 font-normal">/mo</span></div>
-            <div className="text-sm text-gray-500 mb-6">Cancel anytime</div>
-            <ul className="space-y-3 text-sm text-gray-300 mb-8">
-              {[
-                'Unlimited Flip Card analyses',
-                'Saved analysis history',
-                'Daily Flip Alert emails',
-                'Full platform access',
-                'Priority comp data',
-              ].map((f) => (
-                <li key={f} className="flex items-center gap-2">
-                  <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 flex-shrink-0" />
-                  {f}
-                </li>
-              ))}
-            </ul>
-            <Link
-              href="/register"
-              className="block w-full py-3 rounded-lg bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white text-sm font-semibold text-center transition-all shadow-lg shadow-emerald-900/20"
-            >
-              Get Started
-            </Link>
-          </motion.div>
+              <Link href={tier.href}
+                className="flex items-center gap-5 rounded-xl border border-gray-800 bg-gray-900/40 px-5 py-4 hover:border-gray-600 hover:bg-gray-900 transition-all group">
+                <div className="w-16 shrink-0 text-right">
+                  <span className="text-xs text-gray-600 uppercase tracking-wider">{tier.level}</span>
+                </div>
+                <div className="flex-1 min-w-0">
+                  <div className={`text-sm font-semibold ${tier.color}`}>{tier.product}</div>
+                  <div className="text-xs text-gray-500 mt-0.5">{tier.desc}</div>
+                </div>
+                <div className="shrink-0 text-right">
+                  <div className="text-xs text-gray-400">{tier.price}</div>
+                  <ArrowRight className="w-3.5 h-3.5 text-gray-700 group-hover:text-gray-400 transition ml-auto mt-1" />
+                </div>
+              </Link>
+            </motion.div>
+          ))}
         </div>
+      </div>
+    </section>
+  );
+}
 
-        <div className="text-center mt-6">
-          <Link href="/pricing" className="text-sm text-gray-500 hover:text-gray-300 transition-colors">
-            View all plans including Founding Member →
+// ═════════════════════════════════════════════════════════════════════
+// RESALE + TRADING TOOLS — not hidden, just in context
+// ═════════════════════════════════════════════════════════════════════
+function TradeToolsStrip() {
+  return (
+    <section className="py-12 px-6 border-t border-white/5 bg-white/[0.01]">
+      <div className="max-w-4xl mx-auto">
+        <div className="text-center mb-6">
+          <p className="text-xs text-gray-600 uppercase tracking-widest">Also inside Nova</p>
+          <h3 className="text-lg font-semibold text-white mt-1">Resale &amp; trading intelligence tools</h3>
+        </div>
+        <div className="flex flex-col sm:flex-row gap-4 justify-center">
+          <Link href="/flip"
+            className="flex items-center gap-3 rounded-xl border border-gray-800 bg-gray-900/50 px-5 py-4 hover:border-emerald-500/30 transition group">
+            <span className="text-xl">💰</span>
+            <div>
+              <div className="text-sm font-semibold text-white">Flip Card</div>
+              <div className="text-xs text-gray-500">Enter any item → real eBay comps → net profit → verdict</div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-gray-700 group-hover:text-emerald-400 transition ml-auto" />
+          </Link>
+          <Link href="/dashboard/scanner"
+            className="flex items-center gap-3 rounded-xl border border-gray-800 bg-gray-900/50 px-5 py-4 hover:border-pink-500/30 transition group">
+            <span className="text-xl">🔍</span>
+            <div>
+              <div className="text-sm font-semibold text-white">Flip Finder</div>
+              <div className="text-xs text-gray-500">Craigslist scanner → auto-scored deals</div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-gray-700 group-hover:text-pink-400 transition ml-auto" />
+          </Link>
+          <Link href="/dashboard/screener"
+            className="flex items-center gap-3 rounded-xl border border-gray-800 bg-gray-900/50 px-5 py-4 hover:border-violet-500/30 transition group">
+            <span className="text-xl">📈</span>
+            <div>
+              <div className="text-sm font-semibold text-white">Stock Screener</div>
+              <div className="text-xs text-gray-500">Momentum patterns · Not financial advice</div>
+            </div>
+            <ArrowRight className="w-4 h-4 text-gray-700 group-hover:text-violet-400 transition ml-auto" />
           </Link>
         </div>
       </div>
@@ -1029,63 +414,58 @@ function PricingTeaser() {
 // ═════════════════════════════════════════════════════════════════════
 function Footer() {
   return (
-    <footer className="relative py-16 px-6 border-t border-white/5">
-      <div className="max-w-6xl mx-auto">
-        <div className="grid md:grid-cols-4 gap-10 mb-12">
-          {/* Brand */}
+    <footer className="py-16 px-6 border-t border-white/5">
+      <div className="max-w-5xl mx-auto">
+        <div className="grid md:grid-cols-4 gap-10 mb-10">
           <div className="md:col-span-1">
-            <div className="flex items-center gap-2 mb-4">
-              <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-cyan-500 to-purple-600 flex items-center justify-center">
-                <span className="text-white font-bold text-sm">N</span>
+            <div className="flex items-center gap-2 mb-3">
+              <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center">
+                <span className="text-white font-bold text-xs">N</span>
               </div>
-              <span className="text-white font-semibold">NovaNexus</span>
+              <span className="text-white font-semibold">Nova Enterprises</span>
             </div>
-            <p className="text-sm text-gray-500 leading-relaxed">
-              Market intelligence and operational infrastructure — built to compound.
+            <p className="text-xs text-gray-600 leading-relaxed">
+              Practical systems for people building something real.
             </p>
           </div>
 
-          {/* Tools */}
           <div>
-            <h4 className="text-sm font-semibold text-gray-300 mb-4">Tools</h4>
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Services</h4>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="/flip" className="hover:text-white transition">Flip Card — Free</Link></li>
+              <li><Link href="/services/back-office-os" className="hover:text-white transition">Back Office OS</Link></li>
+              <li><Link href="/services/local-admin"    className="hover:text-white transition">Local Admin Service</Link></li>
+            </ul>
+          </div>
+
+          <div>
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Products</h4>
+            <ul className="space-y-2 text-sm text-gray-500">
+              <li><Link href="/decision-cards"  className="hover:text-white transition">Decision Cards</Link></li>
+              <li><Link href="/playbook"        className="hover:text-white transition">Young Operator Playbook</Link></li>
+              <li><Link href="/flip"            className="hover:text-white transition">Flip Card</Link></li>
               <li><Link href="/flip-calculator" className="hover:text-white transition">Flip Calculator</Link></li>
-              <li><Link href="/dashboard/scanner" className="hover:text-white transition">Flip Finder</Link></li>
               <li><Link href="/dashboard/screener" className="hover:text-white transition">Stock Screener</Link></li>
             </ul>
           </div>
 
-          {/* Legal */}
           <div>
-            <h4 className="text-sm font-semibold text-gray-300 mb-4">Legal</h4>
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Learn</h4>
             <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="/privacy" className="hover:text-white transition">Privacy Policy</Link></li>
-              <li><Link href="/terms" className="hover:text-white transition">Terms of Service</Link></li>
-              <li><Link href="/legal/risk-disclosure" className="hover:text-white transition">Risk Disclosure</Link></li>
-            </ul>
-          </div>
-
-          {/* Account */}
-          <div>
-            <h4 className="text-sm font-semibold text-gray-300 mb-4">Account</h4>
-            <ul className="space-y-2 text-sm text-gray-500">
-              <li><Link href="/login" className="hover:text-white transition">Sign In</Link></li>
-              <li><Link href="/register" className="hover:text-white transition">Create Account</Link></li>
-              <li><Link href="/pricing" className="hover:text-white transition">Pricing</Link></li>
-              <li><a href="mailto:wyatt@novanexus-ai.com" className="hover:text-white transition">Contact</a></li>
+              <li><Link href="/field-manual" className="hover:text-white transition">Field Manual</Link></li>
+              <li><Link href="/pricing"      className="hover:text-white transition">Pricing</Link></li>
+              <li><Link href="/login"        className="hover:text-white transition">Sign In</Link></li>
+              <li><Link href="/register"     className="hover:text-white transition">Create Account</Link></li>
+              <li><a href="mailto:hello@novanexus-ai.com" className="hover:text-white transition">Contact</a></li>
             </ul>
           </div>
         </div>
 
         <div className="pt-8 border-t border-white/5">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className="text-gray-600 text-sm">© 2026 NovaNexus. All rights reserved.</p>
-          </div>
-          <p className="mt-4 text-gray-700 text-xs leading-relaxed text-center max-w-4xl mx-auto">
-            <strong className="text-gray-600">Risk Disclosure:</strong> NovaNexus provides informational tools only.
-            Nothing on this platform constitutes financial, investment, or trading advice. All decisions are made by you.
-            Past performance and estimates do not guarantee future results. You may lose money. Use at your own risk.
+          <p className="text-gray-600 text-xs">© 2026 Nova Enterprises. All rights reserved.</p>
+          <p className="mt-3 text-gray-700 text-xs leading-relaxed max-w-3xl">
+            <strong className="text-gray-600">Risk Disclosure:</strong> Stock screener and trading tools are for informational purposes only.
+            Nothing on this platform constitutes financial or investment advice. Resale estimates are based on historical market data and may not reflect actual sale prices.
+            All decisions are yours. You may lose money.
           </p>
         </div>
       </div>
@@ -1094,28 +474,24 @@ function Footer() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// PAGE COMPOSITION
+// PAGE
 // ═════════════════════════════════════════════════════════════════════
 export default function HomePage() {
   return (
     <main className="relative min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
-      {/* Subtle grid background */}
-      <div
-        className="fixed inset-0 -z-10 opacity-[0.02] pointer-events-none"
+      <div className="fixed inset-0 -z-10 opacity-[0.015] pointer-events-none"
         style={{
-          backgroundImage:
-            'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
+          backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',
           backgroundSize: '60px 60px',
         }}
       />
-
       <Navbar />
       <HeroSection />
-      <TryItSection />
-      <HowItWorksSection />
-      <WhatsLiveSection />
-      <PricingTeaser />
-      <MissionSection />
+      <ThreePaths />
+      <DecisionCardsPreview />
+      <BackOfficeSection />
+      <ProductLadder />
+      <TradeToolsStrip />
       <Footer />
     </main>
   );

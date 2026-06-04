@@ -12142,6 +12142,154 @@ function roundTo2(value: number): number {
 }
 
 // ============================================
+// ============================================================================
+// DECISION CARD GENERATION — AI fills in the card with user's context
+// POST /v1/cards/generate — Paid feature ($29/mo Pro tier)
+// ============================================================================
+
+const CARD_SYSTEM_PROMPTS: Record<string, string> = {
+  'customer-hasnt-paid': 'You are a business advisor helping someone collect payment from a non-paying client. Be direct, professional, and practical.',
+  'price-a-job': 'You are a pricing consultant helping a small business owner price a job correctly. Be specific with numbers and reasoning.',
+  'new-client-intake': 'You are a business operations expert helping formalize a new client relationship. Be thorough and professional.',
+  'friend-business-deal': 'You are an advisor helping someone navigate a business deal with a friend or family member. Be honest about risks.',
+  'invoice-follow-up': 'You are a collections and accounts receivable expert. Be professional, firm, and actionable.',
+  'hiring-help': 'You are an HR and operations consultant helping a small business owner hire their first helper or contractor.',
+  'partnership-terms': 'You are a business attorney helping define partnership terms. Be specific and cover the most common failure points.',
+  'contractor-estimate': 'You are a contracting and pricing expert. Help create a professional, itemized estimate.',
+  'local-service-setup': 'You are a small business launch consultant. Help a local service business get set up properly.',
+  'clothing-brand-launch': 'You are a fashion and e-commerce expert helping launch a clothing brand. Be specific about sequencing.',
+};
+
+app.post('/v1/cards/generate', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { cardType, context } = req.body || {};
+
+  if (!cardType || !context || context.length < 20) {
+    return res.status(400).json({
+      success: false,
+      error: { code: 'MISSING_INPUT', message: 'cardType and context (at least 20 characters) are required.' },
+    });
+  }
+
+  const openaiKey = process.env.OPENAI_API_KEY;
+  if (!openaiKey) {
+    return res.status(503).json({
+      success: false,
+      error: { code: 'AI_NOT_CONFIGURED', message: 'AI generation not available.' },
+    });
+  }
+
+  const systemPrompt = CARD_SYSTEM_PROMPTS[cardType] || 'You are a business advisor helping someone navigate a business situation.';
+
+  try {
+    const { default: OpenAI } = await import('openai');
+    const client = new OpenAI({ apiKey: openaiKey });
+
+    const completion = await client.chat.completions.create({
+      model: 'gpt-4o-mini',
+      messages: [
+        { role: 'system', content: `${systemPrompt}
+
+The user has given you their specific situation. Generate a personalized action card with these sections:
+
+SITUATION SUMMARY: One sentence describing their specific situation.
+
+YOUR NEXT 3 MOVES: Numbered, specific, actionable steps for their exact situation.
+
+WHAT TO SAY: A script or message template filled in with their specific details.
+
+WATCH OUT FOR: 2-3 risks specific to their situation.
+
+TODAY'S ACTION: One concrete thing they should do in the next hour.
+
+Keep it short, specific, and actionable. Use their actual details. No generic advice.` },
+        { role: 'user', content: `My situation: ${context}` },
+      ],
+      max_tokens: 600,
+      temperature: 0.7,
+    });
+
+    const content = completion.choices[0]?.message?.content || '';
+
+    // Log usage
+    try {
+      await query(
+        `INSERT INTO usage_events (user_id, event_type, metadata, created_at) VALUES ($1, $2, $3, NOW())`,
+        [userId, 'card_generated', JSON.stringify({ cardType, contextLength: context.length })]
+      );
+    } catch { /* non-fatal */ }
+
+    res.json({ success: true, data: { content, cardType } });
+  } catch (err) {
+    logger.error('Card generation failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'GENERATION_FAILED', message: 'Could not generate card.' } });
+  }
+});
+
+// ── POST /v1/contact — service inquiry form ──────────────────────────
+// Receives form submissions from service pages and forwards via Resend.
+app.post('/v1/contact', async (req: Request, res: Response) => {
+  const { name, email, business, challenge, service } = req.body || {};
+  if (!name || !email) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS' } });
+  }
+
+  const RESEND_KEY = process.env.RESEND_API_KEY;
+  if (!RESEND_KEY || RESEND_KEY === 'disabled') {
+    // Still accept the form, just log it
+    logger.info('Contact form received (Resend not configured)', { name, email, service });
+    return res.json({ success: true, data: { received: true } });
+  }
+
+  const html = `<div style="font-family:system-ui;background:#0a0a0f;color:#fff;padding:24px;max-width:500px">
+    <h2 style="color:#10b981;margin-bottom:16px">New Service Inquiry — ${service || 'Nova'}</h2>
+    <p><strong>Name:</strong> ${name}</p>
+    <p><strong>Email:</strong> ${email}</p>
+    ${business ? `<p><strong>Business:</strong> ${business}</p>` : ''}
+    ${challenge ? `<p><strong>Challenge:</strong> ${challenge}</p>` : ''}
+    <p style="margin-top:16px;color:#6b7280;font-size:12px">Reply directly to this email to respond to ${name}.</p>
+  </div>`;
+
+  try {
+    const r = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Nova Contact <hello@novanexus-ai.com>',
+        to: ['hello@novanexus-ai.com'],
+        reply_to: email,
+        subject: `New inquiry: ${service || 'Nova'} — ${name}`,
+        html,
+      }),
+    });
+    if (r.ok) {
+      // Send confirmation to the inquirer
+      await fetch('https://api.resend.com/emails', {
+        method: 'POST',
+        headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          from: 'Nova Enterprises <hello@novanexus-ai.com>',
+          to: [email],
+          subject: `Got it, ${name.split(' ')[0]} — I'll follow up within 24 hours`,
+          html: `<div style="font-family:system-ui;background:#0a0a0f;color:#fff;padding:24px;max-width:500px">
+            <h2 style="color:#10b981">Thanks for reaching out.</h2>
+            <p style="color:#9ca3af">I received your inquiry about ${service || 'Nova services'} and will follow up within 24 hours to schedule a setup call.</p>
+            <p style="color:#9ca3af">If you need to reach me sooner: <a href="mailto:hello@novanexus-ai.com" style="color:#10b981">hello@novanexus-ai.com</a></p>
+            <p style="color:#374151;font-size:11px;margin-top:16px">Nova Enterprises · novanexus-ai.com</p>
+          </div>`,
+        }),
+      });
+      res.json({ success: true, data: { received: true } });
+    } else {
+      logger.warn('Contact form Resend failed', { status: r.status });
+      res.json({ success: true, data: { received: true } }); // still accept
+    }
+  } catch (err) {
+    logger.error('Contact form failed', err as Error);
+    res.json({ success: true, data: { received: true } }); // still accept
+  }
+});
+
 // Start Server
 // ============================================
 

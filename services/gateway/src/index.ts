@@ -1060,6 +1060,16 @@ app.all('/v1/ops/modes*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Decision card generation -> Nova Hub (auth required)
+app.all('/v1/cards/generate*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Contact form -> Nova Hub (public — no auth)
+app.all('/v1/contact*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Calibration -> Nova Hub
 app.all('/v1/calibration*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
