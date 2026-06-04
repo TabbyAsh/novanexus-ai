@@ -2,35 +2,16 @@
 
 import { motion, useScroll, useTransform } from 'framer-motion';
 import Link from 'next/link';
-import dynamic from 'next/dynamic';
-import { useRef, useState, useEffect } from 'react';
+import { useRef, useState } from 'react';
 import {
-  CreditCard, TrendingUp, ShoppingBag, Radio,
-  FlaskConical, Shield, ArrowRight, ChevronDown,
-  ExternalLink, Sparkles, Users, BarChart3, DollarSign,
+  ArrowRight,
 } from 'lucide-react';
-
-// ─── 3D Nova — SSR-safe dynamic import ───────────────────────────────
-const NovaStar = dynamic(() => import('@/components/three/NovaStar'), {
-  ssr: false,
-  loading: () => (
-    <div className="w-full h-full flex items-center justify-center">
-      <div
-        className="w-48 h-48 rounded-full opacity-40 animate-pulse"
-        style={{
-          background: 'radial-gradient(circle, #00f5ff 0%, #7c3aed 40%, transparent 70%)',
-          filter: 'blur(30px)',
-        }}
-      />
-    </div>
-  ),
-});
 
 // ─── Flip Card Widget Constants ──────────────────────────────────────
 const CONDITIONS = ['New', 'Like New', 'Good', 'Fair', 'Poor'] as const;
 const PLATFORMS = ['eBay', 'Facebook Marketplace', 'Mercari', 'Poshmark', 'General'] as const;
 
-// ─── Division Data ───────────────────────────────────────────────────
+// ─── Division Data (kept for reference, no longer rendered) ──────────
 const DIVISIONS = [
   {
     name: 'Flip Card',
@@ -156,92 +137,58 @@ function Navbar() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
-// HERO — Identity left, 3D Nova right
+// HERO — Product-first. No decoration.
 // ═════════════════════════════════════════════════════════════════════
 function HeroSection() {
   return (
-    <section className="relative min-h-screen flex items-center px-6 pt-24 pb-16 overflow-hidden">
-      {/* Background nebula */}
-      <div className="absolute inset-0 -z-10 overflow-hidden">
-        <div className="absolute top-1/4 left-1/4 w-[600px] h-[600px] rounded-full opacity-20 blur-[120px]"
-          style={{ background: 'radial-gradient(circle, #7c3aed 0%, transparent 70%)' }} />
-        <div className="absolute bottom-1/4 right-1/4 w-[500px] h-[500px] rounded-full opacity-15 blur-[100px]"
-          style={{ background: 'radial-gradient(circle, #00f5ff 0%, transparent 70%)' }} />
+    <section className="relative pt-32 pb-20 px-6 overflow-hidden">
+      <div className="absolute inset-0 -z-10">
+        <div className="absolute top-0 left-1/3 w-[500px] h-[500px] rounded-full opacity-10 blur-[120px]"
+          style={{ background: 'radial-gradient(circle, #10b981 0%, transparent 70%)' }} />
       </div>
 
-      <div className="max-w-7xl mx-auto w-full grid lg:grid-cols-2 gap-12 items-center">
-        {/* Left — Text */}
+      <div className="max-w-4xl mx-auto text-center">
         <motion.div
-          initial={{ opacity: 0, x: -40 }}
-          animate={{ opacity: 1, x: 0 }}
-          transition={{ duration: 0.8 }}
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.6 }}
         >
-          <h1 className="text-5xl md:text-6xl lg:text-7xl font-bold text-white leading-[1.1] mb-6">
-            Find Flips.{' '}
-            <br className="hidden sm:block" />
-            Screen Stocks.{' '}
-            <br className="hidden sm:block" />
-            <span className="bg-gradient-to-r from-cyan-400 via-purple-400 to-pink-400 bg-clip-text text-transparent">
-              Build Real Income.
-            </span>
+          {/* Value statement — concrete, not aspirational */}
+          <div className="inline-flex items-center gap-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 text-xs font-semibold px-4 py-1.5 rounded-full mb-8 tracking-wide">
+            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
+            Free · No account needed · Real eBay sold prices
+          </div>
+
+          <h1 className="text-5xl md:text-6xl font-bold text-white leading-[1.1] mb-5">
+            Is this item{' '}
+            <span className="text-emerald-400">worth flipping?</span>
           </h1>
 
-          <p className="text-xl text-gray-400 max-w-xl mb-8 leading-relaxed">
-            Flip Finder scans Craigslist for items worth buying.
-            Flip Card evaluates any listing in seconds.
-            Stock Screener surfaces momentum setups — all with real data.
+          <p className="text-xl text-gray-400 max-w-2xl mx-auto mb-4 leading-relaxed">
+            Enter any item. Nova calculates real eBay sold prices, platform fees,
+            shipping costs, and net profit — then tells you to buy, negotiate, or pass.
           </p>
 
-          <div className="flex flex-col sm:flex-row gap-4 mb-8">
-            <a
-              href="#try-it"
-              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-semibold bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-900/30 transition-all"
-            >
-              Try Flip Card — Free <ArrowRight className="w-4 h-4" />
+          <p className="text-sm text-gray-600 mb-10">
+            Ten seconds. No guessing. The math is shown. Nothing is hidden.
+          </p>
+
+          <div className="flex flex-col sm:flex-row gap-4 justify-center mb-6">
+            <a href="#try-it"
+              className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-base font-semibold bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-white shadow-lg shadow-emerald-900/30 transition-all">
+              Try It Free — No Signup <ArrowRight className="w-4 h-4" />
             </a>
-            <Link
-              href="/dashboard/scanner"
-              className="inline-flex items-center justify-center gap-2 px-7 py-3.5 rounded-xl text-base font-medium backdrop-blur-xl bg-pink-500/10 border border-pink-500/20 text-pink-300 hover:bg-pink-500/20 transition-all"
-            >
-              Scan for Flips <ArrowRight className="w-4 h-4" />
+            <Link href="/dashboard/scanner"
+              className="inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl text-base font-medium border border-white/10 text-gray-300 hover:bg-white/5 transition-all">
+              Scan Craigslist for Deals
             </Link>
           </div>
 
-          <div className="flex items-center gap-6 text-sm text-gray-500">
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-              Real data
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-cyan-400" />
-              Transparent math
-            </span>
-            <span className="flex items-center gap-1.5">
-              <span className="w-1.5 h-1.5 rounded-full bg-pink-400" />
-              No guarantees
-            </span>
-          </div>
-        </motion.div>
-
-        {/* Right — 3D Nova */}
-        <motion.div
-          initial={{ opacity: 0, scale: 0.8 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.2, delay: 0.3 }}
-          className="hidden lg:block h-[500px]"
-        >
-          <NovaStar />
+          <p className="text-xs text-gray-700">
+            Stock screener also available · Momentum patterns · Not financial advice
+          </p>
         </motion.div>
       </div>
-
-      {/* Scroll hint */}
-      <motion.div
-        animate={{ y: [0, 8, 0] }}
-        transition={{ duration: 2, repeat: Infinity }}
-        className="absolute bottom-8 left-1/2 -translate-x-1/2 text-gray-600"
-      >
-        <ChevronDown className="w-5 h-5" />
-      </motion.div>
     </section>
   );
 }
@@ -732,6 +679,104 @@ function DivisionsSection() {
 }
 
 // ═════════════════════════════════════════════════════════════════════
+// HOW IT WORKS — Three tools. What each one does. No fluff.
+// ═════════════════════════════════════════════════════════════════════
+function HowItWorksSection() {
+  const tools = [
+    {
+      name: 'Flip Card',
+      href: '/flip',
+      tag: 'Free · No signup',
+      tagColor: 'bg-emerald-500/15 text-emerald-400 border-emerald-500/30',
+      color: 'text-emerald-400',
+      border: 'border-emerald-500/20 hover:border-emerald-400/40',
+      what: 'You enter an item name and asking price.',
+      how: 'Nova scrapes real eBay sold listings, calculates platform fees, shipping, and net margin.',
+      output: 'You get: Buy / Negotiate / Pass — with the exact numbers behind the verdict.',
+      proof: 'The math is shown. Every assumption is labelled. Nothing is hidden.',
+    },
+    {
+      name: 'Flip Finder',
+      href: '/dashboard/scanner',
+      tag: 'Paid · Craigslist scanner',
+      tagColor: 'bg-pink-500/15 text-pink-400 border-pink-500/30',
+      color: 'text-pink-400',
+      border: 'border-pink-500/20 hover:border-pink-400/40',
+      what: 'You pick a city. Nova scans Craigslist free and low-cost listings.',
+      how: 'Every item that matches electronics, gaming, tools, or appliances gets evaluated automatically.',
+      output: 'You see a ranked list: item, asking price, estimated resale, estimated profit, verdict.',
+      proof: 'You only look at deals already scored. No manual research per item.',
+    },
+    {
+      name: 'Stock Screener',
+      href: '/dashboard/screener',
+      tag: 'Paid · Pattern analysis',
+      tagColor: 'bg-violet-500/15 text-violet-400 border-violet-500/30',
+      color: 'text-violet-400',
+      border: 'border-violet-500/20 hover:border-violet-400/40',
+      what: 'Nova runs momentum pattern analysis across 500+ tickers daily.',
+      how: 'Volume, RSI, ADX, MACD, VWAP, float. Ranked by confidence score.',
+      output: 'Setups with entry, target, stop, and risk/reward ratio.',
+      proof: 'Not financial advice. No audited track record. Use for research only. Paper trade before risking capital.',
+    },
+  ];
+
+  return (
+    <section className="py-20 px-6 border-t border-white/5">
+      <div className="max-w-5xl mx-auto">
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.5 }}
+          viewport={{ once: true }}
+          className="text-center mb-12"
+        >
+          <h2 className="text-3xl font-bold text-white mb-3">Three tools. Each one does one thing well.</h2>
+          <p className="text-gray-500">Every output is traceable to a number. Every number comes from a real source.</p>
+        </motion.div>
+
+        <div className="grid md:grid-cols-3 gap-5">
+          {tools.map((tool, i) => (
+            <motion.div
+              key={tool.name}
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.5, delay: i * 0.1 }}
+              viewport={{ once: true }}
+            >
+              <Link href={tool.href}
+                className={`block h-full rounded-2xl border ${tool.border} bg-white/[0.02] p-6 transition-all hover:bg-white/[0.04]`}>
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className={`text-lg font-bold ${tool.color}`}>{tool.name}</h3>
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${tool.tagColor}`}>{tool.tag}</span>
+                </div>
+                <div className="space-y-3 text-sm">
+                  <div>
+                    <span className="text-gray-600 text-xs uppercase tracking-wider">Input</span>
+                    <p className="text-gray-300 mt-0.5">{tool.what}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 text-xs uppercase tracking-wider">Process</span>
+                    <p className="text-gray-300 mt-0.5">{tool.how}</p>
+                  </div>
+                  <div>
+                    <span className="text-gray-600 text-xs uppercase tracking-wider">Output</span>
+                    <p className="text-gray-300 mt-0.5">{tool.output}</p>
+                  </div>
+                  <div className="pt-2 border-t border-white/5">
+                    <p className="text-gray-600 text-xs italic">{tool.proof}</p>
+                  </div>
+                </div>
+              </Link>
+            </motion.div>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════
 // MISSION — Why this exists
 // ═════════════════════════════════════════════════════════════════════
 function MissionSection() {
@@ -755,18 +800,20 @@ function MissionSection() {
           className="backdrop-blur-xl bg-white/[0.03] border border-white/10 rounded-2xl p-10 md:p-14 text-center"
         >
           <h2 className="text-2xl md:text-3xl font-bold text-white mb-6">
-            The tools that create wealth have always been locked behind walls of capital and access.
+            Every number is real. Every assumption is shown. Nothing is guaranteed.
           </h2>
           <p className="text-lg text-gray-400 leading-relaxed mb-6">
-            NovaNexus opens those walls. We build software that gives individuals the same analytical infrastructure that institutions take for granted — stock screening, resale economics, operational governance — distilled into tools anyone can use.
+            Nova doesn&apos;t tell you what to do. It gives you the math and lets you decide.
+            The flip margin calculation uses real eBay completed sale prices, real platform fee tables, and real shipping estimates by category.
+            The stock screener uses real market data. When data is unavailable, it says unavailable — not zero, not a placeholder.
           </p>
           <p className="text-gray-500 leading-relaxed mb-8">
-            Every number is backed by real data. Every assumption is shown. Nothing is guaranteed. That honesty is the product.
+            The system gets better the more you use it. Log outcomes. Nova learns which estimates were off and adjusts future recommendations for your market.
           </p>
-          <div className="flex items-center justify-center gap-2 text-sm text-cyan-400/80">
-            <span className="w-8 h-px bg-cyan-400/30" />
-            NovaNexus
-            <span className="w-8 h-px bg-cyan-400/30" />
+          <div className="flex items-center justify-center gap-2 text-sm text-gray-600">
+            <span className="w-8 h-px bg-gray-700" />
+            NovaNexus — novanexus-ai.com
+            <span className="w-8 h-px bg-gray-700" />
           </div>
         </motion.div>
       </div>
@@ -892,10 +939,9 @@ function Footer() {
             <h4 className="text-sm font-semibold text-gray-300 mb-4">Tools</h4>
             <ul className="space-y-2 text-sm text-gray-500">
               <li><Link href="/flip" className="hover:text-white transition">Flip Card — Free</Link></li>
+              <li><Link href="/flip-calculator" className="hover:text-white transition">Flip Calculator</Link></li>
               <li><Link href="/dashboard/scanner" className="hover:text-white transition">Flip Finder</Link></li>
               <li><Link href="/dashboard/screener" className="hover:text-white transition">Stock Screener</Link></li>
-              <li><span className="text-gray-700">Social — Coming Soon</span></li>
-              <li><span className="text-gray-700">Research — Coming Soon</span></li>
             </ul>
           </div>
 
@@ -954,12 +1000,10 @@ export default function HomePage() {
 
       <Navbar />
       <HeroSection />
-      <PlatformStatsBar />
-      <LiveProofStrip />
       <TryItSection />
-      <DivisionsSection />
-      <MissionSection />
+      <HowItWorksSection />
       <PricingTeaser />
+      <MissionSection />
       <Footer />
     </main>
   );

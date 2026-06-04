@@ -947,6 +947,19 @@ export default function ScreenerPage() {
     <DashboardLayout>
       {/* UDM v2: Reality Guardrail Banner */}
       <RealityBanner />
+
+      {/* ── Legal disclaimer — must be visible before any signals ──────────── */}
+      <div className="mx-6 mt-4 flex items-start gap-3 rounded-xl border border-amber-500/30 bg-amber-500/8 px-4 py-3">
+        <span className="text-amber-400 text-lg shrink-0 mt-0.5">⚠</span>
+        <div className="text-xs text-amber-300/80 leading-relaxed">
+          <strong className="text-amber-300">Not financial advice.</strong>{' '}
+          These signals are pattern-based research tools only. They have no audited track record and do not predict future performance.
+          You may lose money trading any of these setups.{' '}
+          <strong className="text-amber-300">Paper trade before using real capital.</strong>{' '}
+          Nothing here constitutes investment advice, a recommendation, or a solicitation to buy or sell any security.
+        </div>
+      </div>
+
       <div className="space-y-6">
         {/* Header */}
         <motion.div
@@ -956,10 +969,10 @@ export default function ScreenerPage() {
         >
           <div>
             <h1 className="text-4xl font-bold text-white mb-2">
-              Trade Card <GradientText>Engine</GradientText>
+              Stock Screener
             </h1>
             <p className="text-gray-400">
-              Institutional-grade screener with EV/R ranking, board classification, and regime detection
+              Momentum pattern analysis across 500+ tickers — ranked by confidence. Research only.
             </p>
           </div>
           
