@@ -12226,6 +12226,114 @@ Keep it short, specific, and actionable. Use their actual details. No generic ad
   }
 });
 
+// ── POST /v1/bootstrap/admin ─────────────────────────────────────────
+// ONE-TIME endpoint: elevates wyatt@novanexus-ai.com to FOUNDING/OWNER/ADMIN.
+// Protected by BOOTSTRAP_SECRET env var. Remove after use.
+app.post('/v1/bootstrap/admin', async (req: Request, res: Response) => {
+  const BOOTSTRAP_SECRET = process.env.BOOTSTRAP_SECRET;
+  const { secret, email } = req.body || {};
+
+  if (!BOOTSTRAP_SECRET || secret !== BOOTSTRAP_SECRET) {
+    return res.status(403).json({ success: false, error: { code: 'FORBIDDEN' } });
+  }
+
+  const targetEmail = email || 'wyatt@novanexus-ai.com';
+
+  const ALL_FEATURES = [
+    'scanner', 'watchlists', 'alerts', 'basic_scanner', 'watchlist_1', 'paper_trading',
+    'thesis_cards', 'decisions', 'reports', 'csv_export', 'decision_replay',
+    'pdf_export', 'api_access', 'priority_support', 'founding_badge',
+    'concierge_onboarding', 'early_access', 'flip_pipeline', 'deal_cards',
+    'mode_control', 'advanced_analytics', 'admin_access', 'unlimited_usage',
+    'rate_limit_bypass',
+  ];
+
+  try {
+    const userResult = await query<{ id: string; email: string }>(
+      'SELECT id, email FROM users WHERE email = $1', [targetEmail]
+    );
+    if (!userResult.rows.length) {
+      return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: `${targetEmail} not found. Register first.` } });
+    }
+    const user = userResult.rows[0];
+
+    // Activate user
+    await query(`UPDATE users SET status = 'ACTIVE', updated_at = NOW() WHERE id = $1`, [user.id]);
+
+    // Find or create org
+    const orgResult = await query<{ org_id: string }>(`SELECT org_id FROM org_members WHERE user_id = $1 ORDER BY joined_at ASC LIMIT 1`, [user.id]);
+    let orgId: string;
+    if (!orgResult.rows.length) {
+      const newOrg = await queryOne<{ id: string }>(`INSERT INTO orgs (name, created_at) VALUES ($1, NOW()) RETURNING id`, ['Nova Admin Org']);
+      orgId = newOrg!.id;
+      await query(`INSERT INTO org_members (org_id, user_id, role, joined_at) VALUES ($1, $2, 'OWNER', NOW())`, [orgId, user.id]);
+    } else {
+      orgId = orgResult.rows[0].org_id;
+      await query(`UPDATE org_members SET role = 'OWNER' WHERE user_id = $1 AND org_id = $2`, [user.id, orgId]);
+    }
+
+    // Upsert FOUNDING entitlement — expires year 2099
+    const entResult = await query<{ id: string }>('SELECT id FROM entitlements WHERE user_id = $1', [user.id]);
+    if (!entResult.rows.length) {
+      await query(
+        `INSERT INTO entitlements (user_id, org_id, plan, status, features_json, current_period_end)
+         VALUES ($1, $2, 'FOUNDING', 'ACTIVE', $3, '2099-12-31T00:00:00Z')`,
+        [user.id, orgId, JSON.stringify(ALL_FEATURES)]
+      );
+    } else {
+      await query(
+        `UPDATE entitlements SET plan='FOUNDING', status='ACTIVE', features_json=$2, current_period_end='2099-12-31T00:00:00Z', updated_at=NOW() WHERE user_id=$1`,
+        [user.id, JSON.stringify(ALL_FEATURES)]
+      );
+    }
+
+    // Unlimited UDM wallet
+    await query(
+      `INSERT INTO udm_wallets (user_id, balance_clarity, balance_foresight, balance_autonomy)
+       VALUES ($1, 99999, 99999, 99999)
+       ON CONFLICT (user_id) DO UPDATE SET balance_clarity=99999, balance_foresight=99999, balance_autonomy=99999, updated_at=NOW()`,
+      [user.id]
+    ).catch(() => {});
+
+    // AUTOMATE on all sectors
+    for (const sector of ['stocks', 'marketplace', 'flipper', 'dropship', 'social']) {
+      await query(
+        `INSERT INTO system_modes (user_id, sector, mode, updated_at) VALUES ($1, $2, 'AUTOMATE', NOW())
+         ON CONFLICT (user_id, sector) DO UPDATE SET mode='AUTOMATE', updated_at=NOW()`,
+        [user.id, sector]
+      ).catch(() => {});
+    }
+
+    // Admin policies
+    for (const action of ['admin.users', 'ops.admin', 'ops.read', 'admin.killswitch', 'admin.audit', 'admin.billing']) {
+      await query(
+        `INSERT INTO policies (org_id, subject_role, action, resource, effect) VALUES ($1, 'OWNER', $2, '*', 'ALLOW') ON CONFLICT DO NOTHING`,
+        [orgId, action]
+      ).catch(() => {});
+    }
+
+    logger.info('Bootstrap admin completed', { email: targetEmail, userId: user.id });
+    res.json({
+      success: true,
+      data: {
+        email: targetEmail,
+        userId: user.id,
+        orgId,
+        plan: 'FOUNDING',
+        role: 'OWNER',
+        status: 'ACTIVE',
+        expires: '2099-12-31',
+        features: ALL_FEATURES.length,
+        governanceMode: 'AUTOMATE',
+        message: 'Account configured. Remove BOOTSTRAP_SECRET from Railway env when done.',
+      },
+    });
+  } catch (err) {
+    logger.error('Bootstrap admin failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'BOOTSTRAP_FAILED', message: (err as Error).message } });
+  }
+});
+
 // ── POST /v1/contact — service inquiry form ──────────────────────────
 // Receives form submissions from service pages and forwards via Resend.
 app.post('/v1/contact', async (req: Request, res: Response) => {
