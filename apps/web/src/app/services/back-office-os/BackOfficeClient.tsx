@@ -147,7 +147,7 @@ export default function BackOfficeClient() {
               'Customer intake form — capture the right info upfront',
               'Customer follow-up scripts — what to say and when',
               'Weekly profit/loss sheet — know your numbers',
-              'Basic task tracker — what's open, what's done',
+              'Basic task tracker — what’s open, what’s done',
               'Monthly admin review — we clean it up every month',
             ].map(item => (
               <div key={item} className="flex items-start gap-2 text-sm text-gray-300">
