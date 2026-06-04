@@ -127,12 +127,19 @@ export default function PricingPage() {
             </div>
             <span className="text-2xl font-bold text-white">NovaNexus</span>
           </Link>
+          {/* Founding seat counter — pulls live */}
+          {foundingSeats && foundingSeats.remaining <= 50 && (
+            <div className="inline-flex items-center gap-2 bg-amber-500/10 border border-amber-500/30 text-amber-400 text-sm font-semibold px-4 py-2 rounded-full mb-6">
+              <span className="w-2 h-2 bg-amber-400 rounded-full animate-pulse" />
+              {foundingSeats.remaining} founding seats remaining — price locks at $99/mo forever
+            </div>
+          )}
           <h1 className="text-4xl font-bold text-white mb-4">
-            Simple, transparent pricing
+            Real data. Real decisions. Real income.
           </h1>
           <p className="text-xl text-gray-400 max-w-2xl mx-auto">
-            Resale analytics, stock screening, and operational tools. 
-            No guarantees — just real data and transparent assumptions.
+            Nova finds flips, screens stocks, and sends you the best opportunities every morning.
+            No guarantees — just real eBay comps, real AI signals, and transparent math.
           </p>
         </div>
 

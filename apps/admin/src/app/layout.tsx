@@ -20,6 +20,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <nav className="flex items-center gap-6 text-sm text-gray-400">
             <a href="/dashboard" className="hover:text-white transition">Dashboard</a>
             <a href="/users"     className="hover:text-white transition">Users</a>
+            <a href="/email"     className="hover:text-white transition text-amber-400 font-medium">✉ Broadcast</a>
             <a href="/system"    className="hover:text-white transition">System</a>
           </nav>
         </header>

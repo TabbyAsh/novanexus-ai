@@ -10274,6 +10274,120 @@ app.get('/v1/admin/users', authMiddleware, async (_req: AuthenticatedRequest, re
   }
 });
 
+// ── POST /v1/admin/email/broadcast ───────────────────────────────────────────
+// Founder tool: send a custom email to all users (or a filtered segment).
+// Requires ops.admin scope. Uses RESEND_API_KEY from env.
+// Nova's law: if Resend isn't configured, return a helpful error — not silence.
+app.post('/v1/admin/email/broadcast', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const RESEND_KEY = process.env.RESEND_API_KEY;
+
+  if (!RESEND_KEY || RESEND_KEY === 'disabled' || RESEND_KEY.length < 10) {
+    return res.status(503).json({
+      success: false,
+      error: {
+        code: 'RESEND_NOT_CONFIGURED',
+        message: 'RESEND_API_KEY is not set. Go to resend.com, create a free account, verify novanexus-ai.com, and add the key to Railway environment variables.',
+        setupUrl: 'https://resend.com',
+        railwayVarsUrl: 'https://railway.com',
+      },
+    });
+  }
+
+  const { subject, html, segment } = req.body || {};
+  if (!subject || !html) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS', message: 'subject and html are required.' } });
+  }
+
+  try {
+    // Fetch recipient list based on segment
+    let emailQuery = 'SELECT email FROM users WHERE status = $1';
+    const params: string[] = ['ACTIVE'];
+
+    if (segment === 'free') {
+      // Users with no paid entitlement
+      emailQuery = `SELECT DISTINCT u.email FROM users u
+        LEFT JOIN entitlements e ON e.user_id = u.id AND e.status = 'ACTIVE' AND e.plan != 'FREE'
+        WHERE u.status = 'ACTIVE' AND e.id IS NULL`;
+      params.length = 0;
+    } else if (segment === 'paid') {
+      emailQuery = `SELECT DISTINCT u.email FROM users u
+        JOIN entitlements e ON e.user_id = u.id
+        WHERE u.status = 'ACTIVE' AND e.status = 'ACTIVE' AND e.plan != 'FREE'`;
+      params.length = 0;
+    }
+
+    const result = await query<{ email: string }>(emailQuery, params.length > 0 ? params : undefined);
+    const recipients = result.rows.map((r) => r.email).filter(Boolean);
+
+    if (recipients.length === 0) {
+      return res.json({ success: true, data: { sent: 0, failed: 0, message: 'No recipients found for this segment.' } });
+    }
+
+    // Send via Resend (rate-limited: 10/s)
+    let sent = 0;
+    let failed = 0;
+    const errors: string[] = [];
+
+    for (const email of recipients) {
+      try {
+        const r = await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Nova <hello@novanexus-ai.com>',
+            to: [email],
+            subject,
+            html,
+          }),
+        });
+        if (r.ok) { sent++; } else {
+          const err = await r.json() as { message?: string };
+          errors.push(`${email}: ${err.message || r.status}`);
+          failed++;
+        }
+      } catch (e) {
+        errors.push(`${email}: ${(e as Error).message}`);
+        failed++;
+      }
+      // Resend rate limit: ~10 req/s
+      if ((sent + failed) % 10 === 0) await new Promise((resolve) => setTimeout(resolve, 1000));
+    }
+
+    logger.info('Email broadcast complete', { sent, failed, segment: segment || 'all' });
+    res.json({
+      success: true,
+      data: { sent, failed, total: recipients.length, errors: errors.slice(0, 10), segment: segment || 'all' },
+    });
+  } catch (err) {
+    logger.error('Email broadcast failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'BROADCAST_FAILED', message: 'Broadcast failed.' } });
+  }
+});
+
+// ── GET /v1/admin/email/status ────────────────────────────────────────────────
+// Check whether email is configured and ready to send.
+app.get('/v1/admin/email/status', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  const RESEND_KEY = process.env.RESEND_API_KEY;
+  const configured = !!(RESEND_KEY && RESEND_KEY !== 'disabled' && RESEND_KEY.length > 10);
+  const userCount = await queryOne<{ count: string }>('SELECT COUNT(*) as count FROM users WHERE status = $1', ['ACTIVE']);
+  res.json({
+    success: true,
+    data: {
+      emailConfigured: configured,
+      provider: configured ? 'resend' : null,
+      totalRecipients: parseInt(userCount?.count || '0', 10),
+      setupInstructions: configured ? null : {
+        step1: 'Go to https://resend.com and create a free account',
+        step2: 'Verify novanexus-ai.com domain (add DNS records)',
+        step3: 'Create an API key',
+        step4: 'Add RESEND_API_KEY to Railway environment variables',
+        estimatedTime: '5-10 minutes',
+        freeTier: '3,000 emails/month free',
+      },
+    },
+  });
+});
+
 // ============================================
 // TYCOON ENGINE: Referral System
 // Viral growth: each referral = credits for both parties
