@@ -65,7 +65,8 @@ const ROUTE_SCOPES: Record<string, Scope[]> = {
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
-  '/v1/bootstrap/',  // one-time admin setup — remove after use
+  '/v1/bootstrap/',   // one-time admin setup — remove after use
+  '/v1/cards/intake', // situation intake — public (3 free/month)
   '/health',
   '/version',
   '/v1/auth/register',
@@ -1063,6 +1064,11 @@ app.all('/v1/ops/modes*', (req: Request, res: Response) => {
 
 // Bootstrap (one-time admin setup, public, secret-protected internally)
 app.all('/v1/bootstrap/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Situation intake — public (no auth needed for first 3 free cards)
+app.all('/v1/cards/intake*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
