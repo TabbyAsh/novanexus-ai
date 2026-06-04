@@ -1061,6 +1061,11 @@ app.all('/v1/ops/modes*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Bootstrap (one-time admin setup, public, secret-protected internally)
+app.all('/v1/bootstrap/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Decision card generation -> Nova Hub (auth required)
 app.all('/v1/cards/generate*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
