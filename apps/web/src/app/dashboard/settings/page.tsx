@@ -323,7 +323,14 @@ export default function SettingsPage() {
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-gray-500 text-xs">Plan</p>
-                    <p className="text-white font-medium">{entitlement.plan}</p>
+                    <div className="flex items-center gap-2">
+                      <p className="text-white font-medium">{entitlement.plan}</p>
+                      {(entitlement.plan as string) === 'FOUNDING' && (
+                        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-bold bg-amber-500/20 border border-amber-500/40 text-amber-400">
+                          ⭐ Founding Member
+                        </span>
+                      )}
+                    </div>
                   </div>
                   {badge(entitlement.status === 'ACTIVE' || entitlement.status === 'TRIALING', 'Active', entitlement.status)}
                 </div>

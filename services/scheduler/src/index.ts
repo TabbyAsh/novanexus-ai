@@ -700,6 +700,21 @@ async function jobDailyFlipAlerts(): Promise<void> {
         `Found ${evaluated.length} opportunities from ${allListings.length} free listings. Emailed ${subscribers.length} subscribers.`,
         0x10b981
       );
+
+      // Also push top opportunity into in-app alerts (works without Resend)
+      const top = evaluated[0];
+      try {
+        await fetch(`${NOVA_HUB_URL}/v1/alerts/broadcast`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            secret: 'nova-scheduler',
+            alertType: 'CUSTOM',
+            message: `🔍 Flip Alert: "${top.title}" in ${top.city} — est. resale ~$${top.resale_mid}. ${top.link}`,
+          }),
+          signal: AbortSignal.timeout(8000),
+        });
+      } catch { /* non-blocking */ }
     }
   } catch (err: any) {
     const durationMs = Date.now() - startTime;
@@ -860,6 +875,22 @@ async function jobDailyStockAlerts(): Promise<void> {
       `Found ${signals.length} qualifying setup(s). Emailed ${subscribers.length} subscribers. Top: ${signals[0]?.symbol} ${signals[0]?.pattern}`,
       0x8b5cf6
     );
+
+    // Also push top signal into in-app alerts (works without Resend)
+    const top = signals[0];
+    try {
+      await fetch(`${NOVA_HUB_URL}/v1/alerts/broadcast`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          secret: 'nova-scheduler',
+          alertType: 'TRADE',
+          symbol: top.symbol,
+          message: `📈 Stock Setup: ${top.symbol} — ${top.pattern} · Entry $${Number(top.entry).toFixed(2)} · Target $${Number(top.target).toFixed(2)} · ${top.confidence?.toFixed(0)}% confidence`,
+        }),
+        signal: AbortSignal.timeout(8000),
+      });
+    } catch { /* non-blocking */ }
 
   } catch (err: any) {
     const durationMs = Date.now() - startTime;

@@ -11,6 +11,7 @@ import {
   Activity,
   Hash,
   RefreshCw,
+  Zap,
 } from 'lucide-react';
 
 interface ChainStatus {
@@ -291,6 +292,137 @@ export default function SafetyPage() {
           </div>
         </div>
       )}
+
+      {/* ── Automation Gates ──────────────────────────────────────────────── */}
+      <AutomationGates />
+    </div>
+  );
+}
+
+// ─── Automation Gates — RECOMMEND / ASSIST / AUTOMATE ───────────────────────
+const MODES = [
+  {
+    id: 'RECOMMEND',
+    label: 'Recommend',
+    icon: '💡',
+    color: 'border-blue-500/40 bg-blue-500/10 text-blue-300',
+    activeBg: 'ring-2 ring-blue-500/60 border-blue-500/60',
+    desc: 'Nova suggests actions. You decide and execute everything manually.',
+    available: 'All plans',
+  },
+  {
+    id: 'ASSIST',
+    label: 'Assist',
+    icon: '🤝',
+    color: 'border-amber-500/40 bg-amber-500/10 text-amber-300',
+    activeBg: 'ring-2 ring-amber-500/60 border-amber-500/60',
+    desc: 'Nova prepares actions (drafts, calculations, orders) — you approve before anything executes.',
+    available: 'Lite+',
+  },
+  {
+    id: 'AUTOMATE',
+    label: 'Automate',
+    icon: '⚡',
+    color: 'border-emerald-500/40 bg-emerald-500/10 text-emerald-300',
+    activeBg: 'ring-2 ring-emerald-500/60 border-emerald-500/60',
+    desc: 'Nova executes within your set risk limits. Kill switch always available. Founding Member only.',
+    available: 'Founding Member',
+  },
+] as const;
+
+type ModeId = 'RECOMMEND' | 'ASSIST' | 'AUTOMATE';
+
+function AutomationGates() {
+  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+  const [mode, setMode] = useState<ModeId>('RECOMMEND');
+  const [plan, setPlan] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+  const [saved, setSaved] = useState(false);
+
+  useEffect(() => {
+    const token = localStorage.getItem('nova_access_token') || '';
+    Promise.all([
+      fetch(`${API}/v1/billing/entitlement`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => setPlan(d?.data?.entitlement?.plan ?? 'FREE')).catch(() => {}),
+      fetch(`${API}/v1/governance/mode`, { headers: { Authorization: `Bearer ${token}` } })
+        .then(r => r.json()).then(d => { if (d?.data?.mode) setMode(d.data.mode); }).catch(() => {}),
+    ]);
+  }, []);
+
+  const allowed = (modeId: ModeId) => {
+    if (modeId === 'RECOMMEND') return true;
+    if (modeId === 'ASSIST') return plan && plan !== 'FREE';
+    if (modeId === 'AUTOMATE') return plan === 'FOUNDING' || plan === 'PRO';
+    return false;
+  };
+
+  const save = async (newMode: ModeId) => {
+    if (!allowed(newMode)) return;
+    setMode(newMode);
+    setSaving(true);
+    setSaved(false);
+    try {
+      const token = localStorage.getItem('nova_access_token') || '';
+      await fetch(`${API}/v1/governance/mode`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ mode: newMode }),
+      });
+      setSaved(true);
+      setTimeout(() => setSaved(false), 2000);
+    } catch { /* */ } finally { setSaving(false); }
+  };
+
+  return (
+    <div className="bg-gray-900 border border-gray-800 rounded-xl mt-6">
+      <div className="p-6 border-b border-gray-800">
+        <div className="flex items-center gap-3">
+          <div className="p-3 rounded-lg bg-violet-500/20">
+            <Activity className="w-6 h-6 text-violet-400" />
+          </div>
+          <div>
+            <h2 className="text-lg font-semibold text-white">Automation Gates</h2>
+            <p className="text-sm text-gray-400">Control how much Nova is allowed to act on your behalf</p>
+          </div>
+          {saved && (
+            <span className="ml-auto text-xs text-emerald-400 flex items-center gap-1">
+              <CheckCircle className="w-3.5 h-3.5" /> Saved
+            </span>
+          )}
+        </div>
+      </div>
+      <div className="p-6 grid grid-cols-1 md:grid-cols-3 gap-4">
+        {MODES.map((m) => {
+          const isActive = mode === m.id;
+          const isAllowed = allowed(m.id);
+          return (
+            <button
+              key={m.id}
+              onClick={() => isAllowed && save(m.id)}
+              disabled={!isAllowed || saving}
+              className={`relative rounded-xl border p-5 text-left transition disabled:opacity-50 ${
+                isActive ? `${m.color} ${m.activeBg}` : 'border-gray-800 bg-gray-900/50 hover:border-gray-700'
+              } ${!isAllowed ? 'cursor-not-allowed' : 'cursor-pointer'}`}
+            >
+              <div className="text-2xl mb-3">{m.icon}</div>
+              <div className={`font-bold text-sm mb-1 ${isActive ? m.color.split(' ')[2] : 'text-white'}`}>
+                {m.label}
+              </div>
+              <p className="text-xs text-gray-400 leading-relaxed mb-3">{m.desc}</p>
+              <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full border ${
+                isAllowed ? 'border-gray-700 text-gray-500' : 'border-red-800/40 text-red-500/70 bg-red-900/10'
+              }`}>
+                {isAllowed ? `✓ ${m.available}` : `🔒 ${m.available}`}
+              </span>
+              {isActive && (
+                <span className="absolute top-3 right-3 text-[10px] font-bold text-white bg-white/10 px-2 py-0.5 rounded-full">
+                  ACTIVE
+                </span>
+              )}
+            </button>
+          );
+        })}
+      </div>
     </div>
   );
 }

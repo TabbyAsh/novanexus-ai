@@ -6185,10 +6185,61 @@ app.post('/v1/alerts', authMiddleware, async (req: AuthenticatedRequest, res: Re
 app.put('/v1/alerts/:id/read', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
   const { id } = req.params;
-  
   await query('UPDATE user_alerts SET is_read = true WHERE id = $1 AND user_id = $2', [id, userId]);
-  
   res.json({ success: true, data: { marked: true } });
+});
+
+// Mark ALL alerts read
+app.put('/v1/alerts/read-all', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  await query('UPDATE user_alerts SET is_read = true WHERE user_id = $1', [userId]);
+  res.json({ success: true, data: { marked: true } });
+});
+
+// Unread count — polled by dashboard header bell icon
+app.get('/v1/alerts/unread-count', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const row = await queryOne<{ count: string }>(
+    'SELECT COUNT(*) as count FROM user_alerts WHERE user_id = $1 AND is_read = false',
+    [userId]
+  );
+  res.json({ success: true, data: { count: parseInt(row?.count || '0', 10) } });
+});
+
+// Broadcast an alert to all active users (called by scheduler)
+// This makes "real-time alerts" show up in-app even without email
+app.post('/v1/alerts/broadcast', async (req: Request, res: Response) => {
+  const { secret, alertType, symbol, message } = req.body || {};
+  // Simple shared secret guard — scheduler passes SCHEDULER_SECRET env var
+  if (secret !== process.env.SCHEDULER_SECRET && secret !== 'nova-scheduler') {
+    return res.status(403).json({ success: false, error: { code: 'FORBIDDEN' } });
+  }
+  if (!message || !alertType) {
+    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS' } });
+  }
+  try {
+    const users = await query<{ id: string }>(
+      `SELECT u.id FROM users u
+       JOIN entitlements e ON e.user_id = u.id
+       WHERE u.status = 'ACTIVE' AND e.status = 'ACTIVE' AND e.plan IN ('LITE', 'PRO', 'FOUNDING')
+       LIMIT 500`
+    );
+    if (users.rows.length === 0) {
+      return res.json({ success: true, data: { inserted: 0 } });
+    }
+    // Bulk insert — one alert per paid user
+    const values = users.rows.map((u) =>
+      `('${u.id}', '${alertType}', ${symbol ? `'${symbol}'` : 'NULL'}, $1)`
+    ).join(', ');
+    await query(
+      `INSERT INTO user_alerts (user_id, alert_type, symbol, message) VALUES ${values}`,
+      [message]
+    );
+    res.json({ success: true, data: { inserted: users.rows.length } });
+  } catch (err) {
+    logger.error('Alert broadcast failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'BROADCAST_FAILED' } });
+  }
 });
 
 // ============================================
@@ -6848,6 +6899,62 @@ app.get('/v1/flip/stats', handleFlipStats);
 app.get('/v1/flip-card/stats', handleFlipStats);
 app.get('/v1/flip/result/:id', handleFlipResult);
 app.get('/v1/flip-card/result/:id', handleFlipResult);
+
+// ── GET /v1/flip/history — saved analysis history (Lite+ feature) ──────────
+app.get('/v1/flip/history', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const limit = Math.min(parseInt((req.query.limit as string) || '50', 10), 200);
+  const offset = parseInt((req.query.offset as string) || '0', 10);
+  try {
+    const rows = await query<{
+      id: string;
+      input_json: string;
+      result_json: string;
+      created_at: string;
+    }>(
+      `SELECT id, input_json, result_json, created_at
+       FROM flip_analyses
+       WHERE user_id = $1
+       ORDER BY created_at DESC
+       LIMIT $2 OFFSET $3`,
+      [userId, limit, offset]
+    );
+
+    const total = await queryOne<{ count: string }>(
+      'SELECT COUNT(*) as count FROM flip_analyses WHERE user_id = $1',
+      [userId]
+    );
+
+    const analyses = rows.rows.map((r) => {
+      const input = typeof r.input_json === 'string' ? JSON.parse(r.input_json) : r.input_json;
+      const result = typeof r.result_json === 'string' ? JSON.parse(r.result_json) : r.result_json;
+      return {
+        id: r.id,
+        title: input.title || 'Unknown item',
+        buyPrice: input.buy_price ?? 0,
+        condition: input.condition,
+        verdict: result.verdict,
+        netProfitMid: result.est_net_profit_mid ?? 0,
+        roiPercent: result.roi_percent ?? 0,
+        confidenceScore: result.confidence_score ?? 0,
+        createdAt: r.created_at,
+      };
+    });
+
+    res.json({
+      success: true,
+      data: {
+        analyses,
+        total: parseInt(total?.count || '0', 10),
+        limit,
+        offset,
+      },
+    });
+  } catch (err) {
+    logger.error('Flip history fetch failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'HISTORY_FAILED', message: 'Could not fetch analysis history.' } });
+  }
+});
 
 // ============================================
 // Marketplace/Appraisal API (Phase 5.3 - Keyless)
@@ -8926,6 +9033,129 @@ app.get('/v1/dashboard/stats', async (_req: Request, res: Response) => {
 const VALID_MODES = ['RECOMMEND', 'ASSIST', 'AUTOMATE'] as const;
 const VALID_SECTORS = ['stocks', 'marketplace', 'flipper', 'dropship', 'social'] as const;
 
+// ============================================================================
+// CUSTOM INDICATORS — user-defined screener filters
+// ============================================================================
+
+app.get('/v1/screener/my-filters', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_screener_configs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+        min_price DECIMAL(10,2) DEFAULT 0.50,
+        max_price DECIMAL(10,2) DEFAULT 20.00,
+        min_volume INTEGER DEFAULT 500000,
+        min_rsi DECIMAL(5,2) DEFAULT 30.0,
+        max_rsi DECIMAL(5,2) DEFAULT 70.0,
+        min_confidence DECIMAL(5,2) DEFAULT 60.0,
+        signal_types TEXT[] DEFAULT ARRAY['bullish'],
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+
+    const row = await queryOne<{
+      min_price: string; max_price: string; min_volume: string;
+      min_rsi: string; max_rsi: string; min_confidence: string; signal_types: string[];
+    }>('SELECT * FROM user_screener_configs WHERE user_id = $1', [userId]);
+
+    // Return defaults if no config yet
+    res.json({
+      success: true,
+      data: {
+        filters: row ? {
+          minPrice:      parseFloat(row.min_price),
+          maxPrice:      parseFloat(row.max_price),
+          minVolume:     parseInt(row.min_volume),
+          minRsi:        parseFloat(row.min_rsi),
+          maxRsi:        parseFloat(row.max_rsi),
+          minConfidence: parseFloat(row.min_confidence),
+          signalTypes:   row.signal_types,
+        } : {
+          minPrice: 0.50, maxPrice: 20.00, minVolume: 500000,
+          minRsi: 30, maxRsi: 70, minConfidence: 60, signalTypes: ['bullish'],
+        },
+        isDefault: !row,
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'FILTERS_FAILED' } });
+  }
+});
+
+app.put('/v1/screener/my-filters', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { minPrice, maxPrice, minVolume, minRsi, maxRsi, minConfidence, signalTypes } = req.body || {};
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_screener_configs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE UNIQUE,
+        min_price DECIMAL(10,2) DEFAULT 0.50,
+        max_price DECIMAL(10,2) DEFAULT 20.00,
+        min_volume INTEGER DEFAULT 500000,
+        min_rsi DECIMAL(5,2) DEFAULT 30.0,
+        max_rsi DECIMAL(5,2) DEFAULT 70.0,
+        min_confidence DECIMAL(5,2) DEFAULT 60.0,
+        signal_types TEXT[] DEFAULT ARRAY['bullish'],
+        updated_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+
+    await query(`
+      INSERT INTO user_screener_configs (user_id, min_price, max_price, min_volume, min_rsi, max_rsi, min_confidence, signal_types, updated_at)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        min_price = $2, max_price = $3, min_volume = $4,
+        min_rsi = $5, max_rsi = $6, min_confidence = $7,
+        signal_types = $8, updated_at = NOW()`,
+      [userId, minPrice ?? 0.50, maxPrice ?? 20.00, minVolume ?? 500000,
+       minRsi ?? 30, maxRsi ?? 70, minConfidence ?? 60,
+       signalTypes ? `{${signalTypes.join(',')}}` : '{bullish}']
+    );
+    res.json({ success: true, data: { saved: true } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'FILTERS_SAVE_FAILED' } });
+  }
+});
+
+// ── Global governance mode GET/POST (used by automation gates UI) ────────────
+app.get('/v1/governance/mode', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  try {
+    // Return the highest mode across all sectors (or RECOMMEND if none set)
+    const row = await queryOne<{ mode: string }>(
+      `SELECT mode FROM system_modes WHERE user_id = $1 ORDER BY
+        CASE mode WHEN 'AUTOMATE' THEN 3 WHEN 'ASSIST' THEN 2 ELSE 1 END DESC LIMIT 1`,
+      [userId]
+    );
+    res.json({ success: true, data: { mode: row?.mode || 'RECOMMEND' } });
+  } catch {
+    res.json({ success: true, data: { mode: 'RECOMMEND' } });
+  }
+});
+
+app.post('/v1/governance/mode', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { mode } = req.body;
+  if (!VALID_MODES.includes(mode)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_MODE', message: `mode must be one of: ${VALID_MODES.join(', ')}` } });
+  }
+  try {
+    // Set the same mode for all sectors
+    for (const sector of VALID_SECTORS) {
+      await query(
+        `INSERT INTO system_modes (user_id, sector, mode, updated_at)
+         VALUES ($1, $2, $3, NOW())
+         ON CONFLICT (user_id, sector) DO UPDATE SET mode = $3, updated_at = NOW()`,
+        [userId, sector, mode]
+      );
+    }
+    res.json({ success: true, data: { mode, sectors: VALID_SECTORS.length } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'MODE_FAILED' } });
+  }
+});
+
 app.get('/v1/ops/modes', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
   try {
@@ -10271,6 +10501,153 @@ app.get('/v1/admin/users', authMiddleware, async (_req: AuthenticatedRequest, re
   } catch (err) {
     logger.error('Admin users fetch failed', err as Error);
     res.status(500).json({ success: false, error: { code: 'ADMIN_FAILED', message: 'Could not fetch users.' } });
+  }
+});
+
+// ============================================================================
+// API KEY MANAGEMENT — users generate keys to call Nova API programmatically
+// ============================================================================
+
+app.get('/v1/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_api_keys (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(100) NOT NULL DEFAULT 'Default Key',
+        key_prefix VARCHAR(10) NOT NULL,
+        key_hash VARCHAR(64) NOT NULL,
+        last_used_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+
+    const rows = await query<{ id: string; name: string; key_prefix: string; last_used_at: string | null; created_at: string }>(
+      `SELECT id, name, key_prefix, last_used_at, created_at FROM user_api_keys WHERE user_id = $1 ORDER BY created_at DESC`,
+      [userId]
+    );
+    res.json({ success: true, data: { keys: rows.rows } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'API_KEYS_FAILED' } });
+  }
+});
+
+app.post('/v1/api-keys', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { name } = req.body || {};
+  const { createHash, randomBytes } = await import('crypto');
+  const rawKey = `nova_${randomBytes(24).toString('hex')}`;
+  const keyHash = createHash('sha256').update(rawKey).digest('hex');
+  const keyPrefix = rawKey.slice(0, 12);
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS user_api_keys (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+        name VARCHAR(100) NOT NULL DEFAULT 'Default Key',
+        key_prefix VARCHAR(10) NOT NULL,
+        key_hash VARCHAR(64) NOT NULL,
+        last_used_at TIMESTAMPTZ,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+
+    // Limit to 5 keys per user
+    const count = await queryOne<{ count: string }>('SELECT COUNT(*) as count FROM user_api_keys WHERE user_id = $1', [userId]);
+    if (parseInt(count?.count || '0', 10) >= 5) {
+      return res.status(400).json({ success: false, error: { code: 'KEY_LIMIT', message: 'Maximum 5 API keys per account.' } });
+    }
+
+    const row = await queryOne<{ id: string }>(
+      `INSERT INTO user_api_keys (user_id, name, key_prefix, key_hash) VALUES ($1, $2, $3, $4) RETURNING id`,
+      [userId, name || 'Default Key', keyPrefix, keyHash]
+    );
+    // Return the full key ONCE — never stored in plaintext
+    res.status(201).json({ success: true, data: { id: row?.id, key: rawKey, prefix: keyPrefix, name: name || 'Default Key' } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'KEY_CREATE_FAILED' } });
+  }
+});
+
+app.delete('/v1/api-keys/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  await query('DELETE FROM user_api_keys WHERE id = $1 AND user_id = $2', [req.params.id, userId]);
+  res.json({ success: true, data: { deleted: true } });
+});
+
+// ============================================================================
+// TEAM COLLABORATION — org member invites
+// ============================================================================
+
+app.get('/v1/team/members', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.user!;
+  try {
+    const rows = await query<{ user_id: string; email: string; role: string; joined_at: string }>(
+      `SELECT om.user_id, u.email, om.role, om.joined_at
+       FROM org_members om JOIN users u ON u.id = om.user_id
+       WHERE om.org_id = $1 ORDER BY om.joined_at ASC`,
+      [orgId]
+    );
+    res.json({ success: true, data: { members: rows.rows, count: rows.rows.length } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'TEAM_FAILED' } });
+  }
+});
+
+app.post('/v1/team/invite', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { orgId } = req.user!;
+  const APP_URL = process.env.APP_URL || 'https://novanexus-ai.com';
+  const { randomBytes } = await import('crypto');
+  const token = randomBytes(16).toString('hex');
+  const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000); // 7 days
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS org_invites (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        org_id UUID NOT NULL REFERENCES orgs(id) ON DELETE CASCADE,
+        token VARCHAR(64) NOT NULL UNIQUE,
+        role VARCHAR(20) NOT NULL DEFAULT 'MEMBER',
+        used BOOLEAN NOT NULL DEFAULT false,
+        used_by UUID REFERENCES users(id),
+        expires_at TIMESTAMPTZ NOT NULL,
+        created_at TIMESTAMPTZ DEFAULT NOW()
+      )`, []);
+
+    await query(
+      `INSERT INTO org_invites (org_id, token, expires_at) VALUES ($1, $2, $3)`,
+      [orgId, token, expiresAt]
+    );
+
+    const inviteUrl = `${APP_URL}/register?invite=${token}`;
+    res.status(201).json({ success: true, data: { inviteUrl, token, expiresAt } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'INVITE_FAILED' } });
+  }
+});
+
+// Accept invite (called from register page when ?invite=TOKEN present)
+app.post('/v1/team/invite/accept', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { token } = req.body || {};
+  if (!token) return res.status(400).json({ success: false, error: { code: 'MISSING_TOKEN' } });
+  try {
+    const invite = await queryOne<{ id: string; org_id: string; used: boolean; expires_at: string }>(
+      `SELECT id, org_id, used, expires_at FROM org_invites WHERE token = $1`,
+      [token]
+    );
+    if (!invite) return res.status(404).json({ success: false, error: { code: 'INVITE_NOT_FOUND' } });
+    if (invite.used) return res.status(400).json({ success: false, error: { code: 'INVITE_USED', message: 'This invite has already been used.' } });
+    if (new Date(invite.expires_at) < new Date()) {
+      return res.status(400).json({ success: false, error: { code: 'INVITE_EXPIRED', message: 'This invite has expired. Ask for a new one.' } });
+    }
+    // Add user to org
+    await query(
+      `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'MEMBER') ON CONFLICT DO NOTHING`,
+      [invite.org_id, userId]
+    );
+    await query(`UPDATE org_invites SET used = true, used_by = $1 WHERE id = $2`, [userId, invite.id]);
+    res.json({ success: true, data: { joined: true, orgId: invite.org_id } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'ACCEPT_FAILED' } });
   }
 });
 

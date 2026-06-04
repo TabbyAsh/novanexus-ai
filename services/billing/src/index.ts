@@ -148,6 +148,87 @@ async function sendWelcomeEmail(email: string, userId: string): Promise<void> {
   }
 }
 
+async function sendFoundingMemberConciergeEmail(email: string, userId: string): Promise<void> {
+  if (!RESEND_API_KEY) {
+    logger.warn('Concierge email skipped: RESEND_API_KEY not set', { userId });
+    return;
+  }
+  const html = `<div style="font-family:system-ui,sans-serif;background:#0a0a0f;color:#fff;padding:32px;max-width:600px;margin:0 auto">
+    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
+      <div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:20px">N</div>
+      <div>
+        <div style="font-size:18px;font-weight:700">You're a Founding Member</div>
+        <div style="font-size:12px;color:#f59e0b">⭐ ${email}</div>
+      </div>
+    </div>
+
+    <p style="color:#9ca3af;font-size:15px;line-height:1.6">
+      Welcome. Your founding membership is active. Here's how to start making money with Nova today.
+    </p>
+
+    <div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:20px 0">
+      <div style="font-size:13px;font-weight:600;color:#f59e0b;margin-bottom:16px">Your 3-step onboarding</div>
+
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px">
+        <div style="width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;flex-shrink:0">1</div>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:#fff">Run the Flip Finder</div>
+          <div style="color:#9ca3af;font-size:13px;margin-top:2px">Scan your local Craigslist for free items worth flipping. Nova evaluates each one against real eBay pricing and gives you a buy/pass verdict with a negotiation script.</div>
+          <a href="https://novanexus-ai.com/dashboard/scanner" style="color:#10b981;font-size:12px;text-decoration:none">→ novanexus-ai.com/dashboard/scanner</a>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px">
+        <div style="width:24px;height:24px;background:#8b5cf6;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;flex-shrink:0">2</div>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:#fff">Check this morning's stock setups</div>
+          <div style="color:#9ca3af;font-size:13px;margin-top:2px">The screener runs momentum patterns across 500+ tickers. Use it to find setups for paper trading. Daily email alerts start tomorrow morning.</div>
+          <a href="https://novanexus-ai.com/dashboard/screener" style="color:#8b5cf6;font-size:12px;text-decoration:none">→ novanexus-ai.com/dashboard/screener</a>
+        </div>
+      </div>
+
+      <div style="display:flex;align-items:flex-start;gap:12px">
+        <div style="width:24px;height:24px;background:#f59e0b;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;flex-shrink:0">3</div>
+        <div>
+          <div style="font-weight:600;font-size:14px;color:#fff">Log your first outcome</div>
+          <div style="color:#9ca3af;font-size:13px;margin-top:2px">When you buy an item or place a trade — log the result. Nova learns from every outcome and adjusts future recommendations specifically for your market.</div>
+          <a href="https://novanexus-ai.com/dashboard/outcomes" style="color:#f59e0b;font-size:12px;text-decoration:none">→ novanexus-ai.com/dashboard/outcomes</a>
+        </div>
+      </div>
+    </div>
+
+    <p style="color:#6b7280;font-size:13px;line-height:1.5">
+      You're one of 50 founding members. Your subscription directly funds the AI infrastructure that makes these tools work. Expect improvements weekly. Reply to this email if you need anything — I read every one.
+    </p>
+
+    <a href="https://novanexus-ai.com/dashboard" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;margin-top:16px">
+      Open Nova Dashboard →
+    </a>
+
+    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1f2937;font-size:11px;color:#374151">
+      Powered by Nova · <a href="https://novanexus-ai.com" style="color:#6b7280">novanexus-ai.com</a>
+    </div>
+  </div>`;
+
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Nova <hello@novanexus-ai.com>',
+        to: [email],
+        subject: '⭐ You\'re a Nova Founding Member — here\'s how to start',
+        html,
+      }),
+    });
+    logger.info('Founding member concierge email sent', { userId, email });
+    await logOnboardingAction(userId, 'concierge-email', 'success', { email });
+  } catch (err) {
+    logger.error('Concierge email failed', err as Error, { userId });
+    await logOnboardingAction(userId, 'concierge-email', 'failure', { error: (err as Error).message });
+  }
+}
+
 async function logOnboardingAction(userId: string, actionType: string, result: string, details: Record<string, any> = {}): Promise<void> {
   try {
     await query(
@@ -617,8 +698,11 @@ app.post('/webhook', async (req: Request, res: Response) => {
             `SELECT email FROM users WHERE id = $1`, [userId]
           );
           if (userRow?.email) {
-            sendWelcomeEmail(userRow.email, userId).catch(err => {
-              logger.error('Welcome email fire-and-forget failed', err as Error);
+            const emailFn = detectedPlan === 'FOUNDING'
+              ? sendFoundingMemberConciergeEmail(userRow.email, userId)
+              : sendWelcomeEmail(userRow.email, userId);
+            emailFn.catch(err => {
+              logger.error('Welcome/concierge email fire-and-forget failed', err as Error);
             });
           }
         }

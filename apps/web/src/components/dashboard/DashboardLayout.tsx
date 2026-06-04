@@ -181,6 +181,51 @@ const navSectors: NavSector[] = [
         ),
       },
       {
+        name: 'Alert Inbox',
+        href: '/dashboard/alerts',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+          </svg>
+        ),
+      },
+      {
+        name: 'Flip History',
+        href: '/dashboard/flip-history',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        ),
+      },
+      {
+        name: 'Custom Indicators',
+        href: '/dashboard/custom-indicators',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 6V4m0 2a2 2 0 100 4m0-4a2 2 0 110 4m-6 8a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4m6 6v10m6-2a2 2 0 100-4m0 4a2 2 0 110-4m0 4v2m0-6V4" />
+          </svg>
+        ),
+      },
+      {
+        name: 'Team',
+        href: '/dashboard/team',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+          </svg>
+        ),
+      },
+      {
+        name: 'API Keys',
+        href: '/dashboard/api-keys',
+        icon: (
+          <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z" />
+          </svg>
+        ),
+      },
+      {
         name: 'Refer & Earn',
         href: '/dashboard/referrals',
         icon: (
@@ -219,17 +264,21 @@ function useIsMobile() {
 
 // User Profile component - fetches actual logged-in user data
 function UserProfile({ collapsed, isMobile }: { collapsed: boolean; isMobile: boolean }) {
-  const [user, setUser] = useState<{ email: string; role: string; orgName?: string } | null>(null);
-  
+  const [user, setUser] = useState<{ email: string; role: string; orgName?: string; plan?: string } | null>(null);
+
   useEffect(() => {
     async function fetchUser() {
       try {
-        const response = await api.getMe();
-        if (response.success && response.data) {
+        const [meRes, entRes] = await Promise.all([
+          api.getMe(),
+          api.getBillingEntitlement().catch(() => null),
+        ]);
+        if (meRes.success && meRes.data) {
           setUser({
-            email: response.data.user.email,
-            role: response.data.role,
-            orgName: response.data.org?.name,
+            email: meRes.data.user.email,
+            role: meRes.data.role,
+            orgName: meRes.data.org?.name,
+            plan: (entRes as any)?.data?.entitlement?.plan ?? null,
           });
         }
       } catch (err) {
@@ -270,7 +319,13 @@ function UserProfile({ collapsed, isMobile }: { collapsed: boolean; isMobile: bo
               className="overflow-hidden"
             >
               <p className="text-white font-medium text-sm truncate">{displayName}</p>
-              <p className="text-gray-500 text-xs">{displayRole}</p>
+              {user?.plan === 'FOUNDING' ? (
+                <span className="inline-flex items-center gap-1 text-[10px] font-bold text-amber-400">
+                  ⭐ Founding Member
+                </span>
+              ) : (
+                <p className="text-gray-500 text-xs">{displayRole}</p>
+              )}
             </motion.div>
           )}
         </AnimatePresence>
@@ -490,13 +545,8 @@ function Header({ onMenuClick, isMobile }: { onMenuClick: () => void; isMobile: 
       </div>
       
       <div className="flex items-center gap-2 md:gap-4">
-        {/* Notifications */}
-        <button className="relative p-2 rounded-lg hover:bg-white/10 transition-colors">
-          <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
-          </svg>
-          <span className="absolute top-1 right-1 w-2 h-2 rounded-full bg-cyan-400" />
-        </button>
+        {/* Alert bell — live unread count */}
+        <AlertBell />
         
         {/* Quick actions */}
         <Link
@@ -508,6 +558,44 @@ function Header({ onMenuClick, isMobile }: { onMenuClick: () => void; isMobile: 
         </Link>
       </div>
     </header>
+  );
+}
+
+// ─── Alert Bell — polls unread count every 60s ───────────────────────────────
+function AlertBell() {
+  const [count, setCount] = useState(0);
+  const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') || '' : '';
+  const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+
+  const fetchCount = async () => {
+    if (!token) return;
+    try {
+      const r = await fetch(`${API}/v1/alerts/unread-count`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      const d = await r.json();
+      if (d.success) setCount(d.data?.count ?? 0);
+    } catch { /* */ }
+  };
+
+  useEffect(() => {
+    fetchCount();
+    const t = setInterval(fetchCount, 60_000);
+    return () => clearInterval(t);
+  }, [token]);
+
+  return (
+    <Link href="/dashboard/alerts" className="relative p-2 rounded-lg hover:bg-white/10 transition-colors">
+      <svg className="w-5 h-5 text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5}
+          d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+      </svg>
+      {count > 0 && (
+        <span className="absolute -top-0.5 -right-0.5 min-w-[16px] h-4 rounded-full bg-cyan-500 flex items-center justify-center text-[10px] font-bold text-black px-0.5">
+          {count > 99 ? '99+' : count}
+        </span>
+      )}
+    </Link>
   );
 }
 
