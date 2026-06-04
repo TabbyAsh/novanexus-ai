@@ -179,6 +179,11 @@ async function getUserPlan(userId: string): Promise<{ plan: string; limits: Plan
 
 async function checkQuota(userId: string, quotaType: string): Promise<{ allowed: boolean; remaining: number; message?: string }> {
   const { plan, limits } = await getUserPlan(userId);
+
+  // FOUNDING and PRO plans have unlimited access to all features
+  if (plan === 'FOUNDING' || plan === 'PRO') {
+    return { allowed: true, remaining: -1 };
+  }
   
   // Get today's usage
   const today = new Date().toISOString().split('T')[0];

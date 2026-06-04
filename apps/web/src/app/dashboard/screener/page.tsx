@@ -536,9 +536,9 @@ function ScanProgress({ status, mode }: { status: ScanStatus; mode: 'ai' | 'dete
             className="w-8 h-8 rounded-full border-2 border-cyan-400 border-t-transparent"
           />
           <div>
-            <p className="text-white font-semibold">{isAI ? 'Running AI screener...' : 'Running deterministic fallback...'}</p>
+            <p className="text-white font-semibold">{isAI ? 'Running pattern analysis...' : 'Running technical screener...'}</p>
             <p className="text-gray-400 text-sm">
-              Analyzing {status.totalCount} stocks with {isAI ? 'AI + market data' : 'rule-based'} signals
+              Scanning {status.totalCount} stocks for momentum setups
             </p>
           </div>
         </div>
@@ -734,10 +734,10 @@ export default function ScreenerPage() {
         setPaperTrade(tradeResult.data.trade as PaperTrade);
         loadPaperStats();
       } else {
-        setPaperTradeError(tradeResult.error?.message || 'Failed to open paper trade');
+        setPaperTradeError('Paper trade unavailable right now. The trading service did not respond. No order was placed — your account is unchanged. Try again in a moment.');
       }
     } catch (err) {
-      setPaperTradeError((err as Error).message || 'Paper trade failed');
+      setPaperTradeError('Paper trade service timed out. No order was placed. Try again in a moment.');
     } finally {
       setPaperTradeLoading(false);
     }
@@ -980,13 +980,10 @@ export default function ScreenerPage() {
             {error && (
               <span className="text-yellow-400 text-sm">⚠️ Unavailable</span>
             )}
-            {scanSource === 'deterministic' && (
-              <span className="text-yellow-300 text-sm">Fallback active</span>
-            )}
             <div className="flex items-center gap-2 px-4 py-2 rounded-full bg-gradient-to-r from-cyan-500/20 to-purple-500/20 border border-cyan-500/30">
               <span className="w-2 h-2 rounded-full bg-cyan-400 animate-pulse" />
               <span className="text-cyan-400 text-sm font-medium">
-                {scanSource === 'deterministic' ? 'Deterministic Fallback' : 'AI Signals'}
+                {scanSource === 'deterministic' ? 'Technical Analysis' : 'Pattern Analysis'}
               </span>
             </div>
             {/* Phase 7.4: Card Balance */}

@@ -228,7 +228,7 @@ export default function BackOfficeClient() {
               <div>
                 <label className="text-xs text-gray-500 mb-1 block">Business name or type</label>
                 <input value={form.business} onChange={e => setForm(p => ({ ...p, business: e.target.value }))}
-                  placeholder="e.g. Apex Pressure Washing, freelance photographer"
+                  placeholder="e.g. pressure washing, freelance photography, lawn care, clothing brand"
                   className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500/60" />
               </div>
               <div>
