@@ -31,10 +31,59 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// OpenAI client — falls back gracefully if key missing
+// AI client — multi-provider, zero-cost preferred
+// Priority: Gemini (free 1M/day) → Groq (free 14k req/day) → OpenAI (paid fallback)
 const openai = process.env.OPENAI_API_KEY
   ? new OpenAI({ apiKey: process.env.OPENAI_API_KEY })
   : null;
+
+async function callFreeAI(system: string, user: string, maxTokens = 600): Promise<string | null> {
+  // 1. Try Gemini Flash (free tier — 1M tokens/day)
+  const geminiKey = process.env.GEMINI_API_KEY;
+  if (geminiKey) {
+    try {
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${geminiKey}` },
+        body: JSON.stringify({
+          model: 'gemini-1.5-flash',
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          max_tokens: maxTokens,
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (r.ok) {
+        const d = await r.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const content = d.choices?.[0]?.message?.content;
+        if (content) return content;
+      }
+    } catch { /* try next */ }
+  }
+
+  // 2. Try Groq (free tier — Llama 3.3 70B)
+  const groqKey = process.env.GROQ_API_KEY;
+  if (groqKey) {
+    try {
+      const r = await fetch('https://api.groq.com/openai/v1/chat/completions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${groqKey}` },
+        body: JSON.stringify({
+          model: 'llama-3.3-70b-versatile',
+          messages: [{ role: 'system', content: system }, { role: 'user', content: user }],
+          max_tokens: maxTokens,
+        }),
+        signal: AbortSignal.timeout(12000),
+      });
+      if (r.ok) {
+        const d = await r.json() as { choices?: Array<{ message?: { content?: string } }> };
+        const content = d.choices?.[0]?.message?.content;
+        if (content) return content;
+      }
+    } catch { /* try next */ }
+  }
+
+  return null; // no free provider available, caller will use OpenAI or fail gracefully
+}
 
 const contentManager = new ContentManager(process.env.DATABASE_URL);
 
@@ -44,8 +93,20 @@ const contentManager = new ContentManager(process.env.DATABASE_URL);
 
 const NOVA_NICHES = ['resale flipping', 'stock trading', 'AI tools', 'personal finance', 'side hustles'];
 
-/** Call OpenAI with a JSON schema response. Returns null on failure. */
+/** Call AI with JSON response — tries free providers first, then OpenAI. */
 async function aiJSON<T>(systemPrompt: string, userPrompt: string): Promise<T | null> {
+  // Try free providers first
+  const jsonSystem = systemPrompt + '\n\nIMPORTANT: Return valid JSON only. No markdown, no code blocks.';
+  const freeResult = await callFreeAI(jsonSystem, userPrompt, 800);
+  if (freeResult) {
+    try {
+      // Strip any markdown wrapping the free provider might add
+      const clean = freeResult.replace(/^```(?:json)?\n?/m, '').replace(/\n?```$/m, '').trim();
+      return JSON.parse(clean) as T;
+    } catch { /* fall through to OpenAI */ }
+  }
+
+  // Fall back to OpenAI if available
   if (!openai) return null;
   try {
     const res = await openai.chat.completions.create({
@@ -61,7 +122,7 @@ async function aiJSON<T>(systemPrompt: string, userPrompt: string): Promise<T | 
     const text = res.choices[0]?.message?.content ?? '{}';
     return JSON.parse(text) as T;
   } catch (err) {
-    logger.warn('OpenAI call failed', { error: (err as Error).message });
+    logger.warn('AI call failed on all providers', { error: (err as Error).message });
     return null;
   }
 }

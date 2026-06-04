@@ -12171,55 +12171,33 @@ app.post('/v1/cards/generate', authMiddleware, async (req: AuthenticatedRequest,
     });
   }
 
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (!openaiKey) {
-    return res.status(503).json({
-      success: false,
-      error: { code: 'AI_NOT_CONFIGURED', message: 'AI generation not available.' },
-    });
-  }
-
   const systemPrompt = CARD_SYSTEM_PROMPTS[cardType] || 'You are a business advisor helping someone navigate a business situation.';
 
   try {
-    const { default: OpenAI } = await import('openai');
-    const client = new OpenAI({ apiKey: openaiKey });
+    const { generateCard } = await import('./ai-router');
+    const result = await generateCard({
+      system: `${systemPrompt}
 
-    const completion = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        { role: 'system', content: `${systemPrompt}
-
-The user has given you their specific situation. Generate a personalized action card with these sections:
-
-SITUATION SUMMARY: One sentence describing their specific situation.
-
-YOUR NEXT 3 MOVES: Numbered, specific, actionable steps for their exact situation.
-
-WHAT TO SAY: A script or message template filled in with their specific details.
-
+Generate a personalized action card with these sections:
+SITUATION SUMMARY: One sentence.
+YOUR NEXT 3 MOVES: Numbered, specific, actionable.
+WHAT TO SAY: Script with their specific details filled in.
 WATCH OUT FOR: 2-3 risks specific to their situation.
+TODAY'S ACTION: One concrete thing in the next hour.
 
-TODAY'S ACTION: One concrete thing they should do in the next hour.
-
-Keep it short, specific, and actionable. Use their actual details. No generic advice.` },
-        { role: 'user', content: `My situation: ${context}` },
-      ],
-      max_tokens: 600,
-      temperature: 0.7,
+Keep it short, specific, real. No generic advice.`,
+      user: `My situation: ${context}`,
+      maxTokens: 600,
     });
 
-    const content = completion.choices[0]?.message?.content || '';
-
-    // Log usage
     try {
       await query(
         `INSERT INTO usage_events (user_id, event_type, metadata, created_at) VALUES ($1, $2, $3, NOW())`,
-        [userId, 'card_generated', JSON.stringify({ cardType, contextLength: context.length })]
+        [userId, 'card_generated', JSON.stringify({ cardType, contextLength: context.length, provider: result.provider })]
       );
     } catch { /* non-fatal */ }
 
-    res.json({ success: true, data: { content, cardType } });
+    res.json({ success: true, data: { content: result.content, cardType, provider: result.provider, free: result.free } });
   } catch (err) {
     logger.error('Card generation failed', err as Error);
     res.status(500).json({ success: false, error: { code: 'GENERATION_FAILED', message: 'Could not generate card.' } });
@@ -12240,72 +12218,19 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
     });
   }
 
-  const openaiKey = process.env.OPENAI_API_KEY;
-  if (!openaiKey) {
-    return res.status(503).json({
-      success: false,
-      error: { code: 'AI_NOT_CONFIGURED', message: 'Card generation unavailable.' },
-    });
-  }
-
-  const situationText = [
-    haves && haves.length > 0 ? `What they have: ${haves.join(', ')}.` : '',
-    wants && wants.length > 0 ? `What they want: ${wants.join(', ')}.` : '',
-    context ? `Their situation: ${context}` : '',
-  ].filter(Boolean).join('\n');
-
   try {
-    const { default: OpenAI } = await import('openai');
-    const client = new OpenAI({ apiKey: openaiKey });
+    // Uses multi-provider router: Gemini (free) → Groq (free) → deterministic (always works)
+    const { generateIntakeCard } = await import('./ai-router');
+    const result = await generateIntakeCard(
+      context || '',
+      haves || [],
+      wants || []
+    );
 
-    const completion = await client.chat.completions.create({
-      model: 'gpt-4o-mini',
-      messages: [
-        {
-          role: 'system',
-          content: `You are Nova — a practical advisor who gives specific, honest next moves to real people in real situations.
-
-Your job is NOT to give business consulting advice. Your job is to give the EXACT NEXT MOVE to this specific person, in their specific situation.
-
-The person may be:
-- A content creator who wants to monetize their audience
-- Someone with a skill they give away for free
-- A hobbyist who has deep knowledge of something valuable
-- A community leader with followers but no income
-- A person running a business who is stuck
-- Someone dealing with a specific problem (unpaid client, bad deal, job situation, money issue)
-- A complete beginner who has never started anything
-
-You speak plainly. Not in corporate language. Not in business school language. Like a smart friend who has been through this.
-
-Generate a personal Decision Card with exactly these sections:
-
-WHAT YOU'RE ACTUALLY DEALING WITH:
-One honest sentence about their real situation.
-
-YOUR NEXT 3 MOVES (in order):
-Numbered. Specific. Each one is something they can do TODAY or THIS WEEK.
-
-WHAT TO SAY (if needed):
-A script or message template for the most important conversation or communication in their situation. Fill in brackets with their specifics.
-
-DON'T OVERLOOK THIS:
-2 things specific to their situation that most people miss or avoid.
-
-START HERE — TODAY:
-One concrete action they can take in the next hour.
-
-Keep it tight. Keep it real. Use their actual details. No padding. No generic advice. If you don't have enough information, make reasonable assumptions and note them.`,
-        },
-        { role: 'user', content: situationText || 'Someone who needs a next move but hasn\'t described their situation yet.' },
-      ],
-      max_tokens: 700,
-      temperature: 0.75,
+    res.json({
+      success: true,
+      data: { content: result.content, provider: result.provider, free: result.free },
     });
-
-    const content = completion.choices[0]?.message?.content || '';
-
-    res.json({ success: true, data: { content } });
   } catch (err) {
     logger.error('Intake card generation failed', err as Error);
     res.status(500).json({ success: false, error: { code: 'GENERATION_FAILED', message: 'Could not generate card.' } });
