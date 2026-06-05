@@ -997,6 +997,11 @@ app.all('/v1/admin/*', requireScopes(['ops.admin']), (req: Request, res: Respons
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Governance mode -> Nova Hub
+app.all('/v1/governance/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Nova Hub routes -> Nova Hub service (Journal / Backtests / Thesis / Portfolio)
 app.all('/v1/journal*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);

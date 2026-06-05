@@ -12242,6 +12242,61 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
   }
 });
 
+// ── POST /v1/admin/cleanup-test-accounts ─────────────────────────────
+// Deletes automated test accounts (ops-test+, @example.com, @test.io, etc.)
+// Requires ops.admin scope. Returns preview first, deletes on confirm=true.
+app.post('/v1/admin/cleanup-test-accounts', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const TEST_PATTERNS = ['@example.com', '@test.com', '@test.io', 'ops-test+', 'testuser@', 'qa+prod@', 'final1780', 'e2e1780', 'verify1780', 'test_probe@'];
+  const { confirm } = req.body || {};
+
+  try {
+    const users = await query<{ id: string; email: string; created_at: string }>(
+      'SELECT id, email, created_at FROM users ORDER BY created_at ASC'
+    );
+
+    const testAccounts = users.rows.filter(u => TEST_PATTERNS.some(p => u.email.includes(p)));
+    const realAccounts = users.rows.filter(u => !TEST_PATTERNS.some(p => u.email.includes(p)));
+
+    if (!confirm) {
+      return res.json({
+        success: true,
+        data: {
+          preview: true,
+          totalAccounts: users.rows.length,
+          realAccounts: realAccounts.map(u => u.email),
+          testAccountsToDelete: testAccounts.map(u => u.email),
+          message: 'Send confirm: true to execute deletion.',
+        },
+      });
+    }
+
+    if (testAccounts.length === 0) {
+      return res.json({ success: true, data: { deleted: 0, message: 'No test accounts found.' } });
+    }
+
+    const testIds = testAccounts.map(u => u.id);
+    const idList = testIds.map((_, i) => `$${i + 1}`).join(',');
+
+    for (const table of ['outcome_events', 'outcome_summaries', 'user_alerts', 'user_api_keys', 'user_screener_configs', 'udm_wallets', 'referral_codes', 'entitlements', 'org_members']) {
+      await query(`DELETE FROM ${table} WHERE user_id IN (${idList})`, testIds).catch(() => {});
+    }
+    const result = await query(`DELETE FROM users WHERE id IN (${idList})`, testIds);
+
+    logger.info('Test accounts cleaned', { deleted: result.rowCount, remaining: realAccounts.length });
+    res.json({
+      success: true,
+      data: {
+        deleted: result.rowCount,
+        remaining: realAccounts.length,
+        remainingEmails: realAccounts.map(u => u.email),
+      },
+    });
+  } catch (err) {
+    logger.error('Cleanup failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'CLEANUP_FAILED', message: (err as Error).message } });
+  }
+});
+
 // ── POST /v1/bootstrap/admin ─────────────────────────────────────────
 // ONE-TIME endpoint: elevates wyatt@novanexus-ai.com to FOUNDING/OWNER/ADMIN.
 // Protected by BOOTSTRAP_SECRET env var. Remove after use.
