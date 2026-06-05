@@ -19,7 +19,7 @@ import {
   Search,
 } from 'lucide-react';
 
-// ─── Available cities ─────────────────────────────────────────────────────────
+// ─── Available cities (presets + custom text input) ──────────────────────────
 
 const CITIES: { key: string; label: string }[] = [
   { key: 'miami',        label: 'Miami' },
@@ -37,7 +37,24 @@ const CITIES: { key: string; label: string }[] = [
   { key: 'lasvegas',     label: 'Las Vegas' },
   { key: 'nashville',    label: 'Nashville' },
   { key: 'austin',       label: 'Austin' },
+  { key: 'portland',     label: 'Portland' },
+  { key: 'minneapolis',  label: 'Minneapolis' },
+  { key: 'philadelphia', label: 'Philadelphia' },
+  { key: 'sfbay',        label: 'San Francisco' },
+  { key: 'detroit',      label: 'Detroit' },
+  { key: 'saltlakecity', label: 'Salt Lake City' },
+  { key: 'orlando',      label: 'Orlando' },
+  { key: 'tampabay',     label: 'Tampa' },
+  { key: 'raleigh',      label: 'Raleigh' },
+  { key: 'charlotte',    label: 'Charlotte' },
 ];
+
+// Convert any city text to a Craigslist subdomain key
+function cityToKey(input: string): string {
+  return input.toLowerCase()
+    .replace(/\s+/g, '')
+    .replace(/[^a-z0-9]/g, '');
+}
 
 const DEFAULT_CITIES = ['miami', 'chicago', 'losangeles'];
 
@@ -359,8 +376,12 @@ export default function FlipFinderPage() {
 
   // Scan config
   const [selectedCities, setSelectedCities] = useState<string[]>(DEFAULT_CITIES);
+  const [minPrice, setMinPrice] = useState(0);
   const [maxPrice, setMaxPrice] = useState(800);
   const [showConfig, setShowConfig] = useState(false);
+  const [customCity, setCustomCity] = useState('');
+  const [scanProgress, setScanProgress] = useState('');
+  const [scanController, setScanController] = useState<AbortController | null>(null);
 
   // Load skipped + existing opportunities on mount
   useEffect(() => {
@@ -383,21 +404,44 @@ export default function FlipFinderPage() {
     }
   }
 
+  const cancelScan = () => {
+    scanController?.abort();
+    setScanController(null);
+    setIsScanning(false);
+    setScanProgress('');
+  };
+
   const runScan = useCallback(async () => {
     if (selectedCities.length === 0) {
-      setError('Select at least one city to scan.');
+      setError('Select at least one city. Click a city chip or type one below.');
       return;
     }
+
+    const controller = new AbortController();
+    setScanController(controller);
     setIsScanning(true);
     setError(null);
+    setScanProgress(`Starting scan in ${selectedCities.length} city${selectedCities.length > 1 ? 'ies' : ''}…`);
+
+    // Timeout: kill after 120s
+    const timeout = setTimeout(() => {
+      controller.abort();
+      setIsScanning(false);
+      setScanProgress('');
+      setError('Scan timed out after 2 minutes. Try fewer cities or a narrower price range.');
+    }, 120_000);
+
     try {
+      setScanProgress(`Scanning Craigslist in ${selectedCities.map(c => formatCity(c)).join(', ')}…`);
       const res = await api.runScanner({
         cities: selectedCities,
         maxPrice,
-        minProfit: 15,
-        minConfidence: 30,
-        maxResults: 20,
+        minPrice,
+        minProfit: 10,
+        minConfidence: 25,
+        maxResults: 30,
       });
+      clearTimeout(timeout);
       if (res.success && res.data) {
         setOpportunities(res.data.opportunities);
         setScanSummary(res.data.summary);
@@ -406,11 +450,27 @@ export default function FlipFinderPage() {
         setError(res.error?.message ?? 'Scan failed. Try again.');
       }
     } catch (err) {
-      setError((err as Error).message ?? 'Scan failed. Check connection and try again.');
+      clearTimeout(timeout);
+      const msg = (err as Error).message ?? '';
+      if (msg.includes('abort') || msg.includes('cancel')) {
+        // user cancelled — already handled
+      } else {
+        setError('Scan failed. Craigslist may be temporarily blocking requests. Try again in a few minutes or select different cities.');
+      }
     } finally {
+      clearTimeout(timeout);
       setIsScanning(false);
+      setScanProgress('');
+      setScanController(null);
     }
-  }, [selectedCities, maxPrice]);
+  }, [selectedCities, maxPrice, minPrice]);
+
+  function addCustomCity() {
+    const key = cityToKey(customCity);
+    if (!key || selectedCities.includes(key)) return;
+    setSelectedCities(prev => [...prev, key]);
+    setCustomCity('');
+  }
 
   function skipCard(id: string) {
     const next = new Set(skipped);
@@ -450,8 +510,8 @@ export default function FlipFinderPage() {
               Flip Finder
             </h1>
             <p className="text-gray-400 mt-1">
-              Nova scans Craigslist for items worth buying and flipping.
-              Every card is a real listing with a real verdict.
+              Scans real Craigslist listings for items worth flipping. Evaluates margin, fees, and resale price.
+              Each result is a live listing with a real buy/pass verdict.
             </p>
             {scanSummary && (
               <p className="text-gray-600 text-xs mt-1">
@@ -482,9 +542,10 @@ export default function FlipFinderPage() {
 
         {/* ── Config panel ── */}
         {showConfig && (
-          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 space-y-4">
+          <div className="bg-gray-900 border border-gray-700 rounded-2xl p-5 space-y-5">
             <h2 className="text-sm font-semibold text-white">Scan Configuration</h2>
 
+            {/* City chips */}
             <div>
               <label className="text-xs text-gray-500 uppercase tracking-wider">Cities</label>
               <div className="flex flex-wrap gap-2 mt-2">
@@ -501,44 +562,79 @@ export default function FlipFinderPage() {
                     {city.label}
                   </button>
                 ))}
+                {/* Show any custom cities not in preset list */}
+                {selectedCities.filter(k => !CITIES.find(c => c.key === k)).map(key => (
+                  <button key={key} onClick={() => toggleCity(key)}
+                    className="px-3 py-1.5 rounded-full text-sm bg-pink-500/20 text-pink-300 border border-pink-500/40">
+                    {key} ×
+                  </button>
+                ))}
               </div>
             </div>
 
-            <div className="flex items-center gap-4">
-              <div>
-                <label className="text-xs text-gray-500 uppercase tracking-wider">
-                  Max asking price: ${maxPrice}
-                </label>
+            {/* Custom city input */}
+            <div>
+              <label className="text-xs text-gray-500 uppercase tracking-wider">Add any city</label>
+              <div className="flex gap-2 mt-2">
                 <input
-                  type="range"
-                  min={50}
-                  max={2000}
-                  step={50}
-                  value={maxPrice}
-                  onChange={e => setMaxPrice(Number(e.target.value))}
-                  className="block w-48 mt-2 accent-pink-500"
+                  value={customCity}
+                  onChange={e => setCustomCity(e.target.value)}
+                  onKeyDown={e => e.key === 'Enter' && addCustomCity()}
+                  placeholder="e.g. Tampa, Sacramento, Tucson…"
+                  className="flex-1 bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-pink-500/50"
                 />
+                <button onClick={addCustomCity}
+                  className="px-4 py-2 bg-pink-600/80 hover:bg-pink-500 text-white text-sm rounded-lg transition">
+                  Add
+                </button>
+              </div>
+              <p className="text-xs text-gray-700 mt-1">Type any US city. Nova will attempt to find that Craigslist market.</p>
+            </div>
+
+            {/* Price range — input boxes not slider */}
+            <div>
+              <label className="text-xs text-gray-500 uppercase tracking-wider">Price range (asking price)</label>
+              <div className="flex items-center gap-3 mt-2">
+                <div className="flex-1">
+                  <label className="text-xs text-gray-600 mb-1 block">Min $</label>
+                  <input type="number" min={0} step={10} value={minPrice}
+                    onChange={e => setMinPrice(Math.max(0, parseInt(e.target.value) || 0))}
+                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-pink-500/50" />
+                </div>
+                <span className="text-gray-600 mt-4">–</span>
+                <div className="flex-1">
+                  <label className="text-xs text-gray-600 mb-1 block">Max $</label>
+                  <input type="number" min={50} step={50} value={maxPrice}
+                    onChange={e => setMaxPrice(Math.max(50, parseInt(e.target.value) || 800))}
+                    className="w-full bg-gray-950 border border-gray-700 rounded-lg px-3 py-2 text-sm text-white outline-none focus:border-pink-500/50" />
+                </div>
               </div>
             </div>
 
             <p className="text-xs text-gray-600">
-              Scans Craigslist in {selectedCities.length} cities for items under ${maxPrice}.
-              May take 30–90 seconds depending on city count.
+              Scans Craigslist in {selectedCities.length} {selectedCities.length === 1 ? 'city' : 'cities'} for items
+              priced ${minPrice}–${maxPrice}. Takes 30–90s per city. Start with 1–2 cities for faster results.
             </p>
           </div>
         )}
 
-        {/* ── Scanning state ── */}
+        {/* ── Scanning state with cancel ── */}
         {isScanning && (
-          <div className="bg-gray-900 border border-pink-500/30 rounded-2xl p-8 text-center">
-            <div className="flex justify-center mb-4">
+          <div className="bg-gray-900 border border-pink-500/30 rounded-2xl p-8 text-center space-y-4">
+            <div className="flex justify-center">
               <div className="w-12 h-12 rounded-full border-2 border-pink-500 border-t-transparent animate-spin" />
             </div>
-            <p className="text-white font-semibold">Scanning {selectedCities.map(c => formatCity(c)).join(', ')}…</p>
-            <p className="text-gray-500 text-sm mt-1">
-              Checking listings, running flip engine, evaluating opportunities.
-              This takes 30–90 seconds.
-            </p>
+            <div>
+              <p className="text-white font-semibold">{scanProgress || 'Scanning…'}</p>
+              <p className="text-gray-500 text-sm mt-1">
+                Fetching real Craigslist listings, evaluating flip margins, building Decision Cards.
+                Takes 30–90 seconds. Select fewer cities for faster results.
+              </p>
+            </div>
+            <button onClick={cancelScan}
+              className="px-5 py-2 rounded-lg border border-gray-700 text-gray-400 hover:text-white hover:border-gray-500 text-sm transition">
+              Cancel Scan
+            </button>
           </div>
         )}
 

@@ -148,6 +148,9 @@ export default function DashboardPage() {
         </div>
       </div>
 
+      {/* DB Maintenance */}
+      <DbCleanup />
+
       {/* Service health grid */}
       {sysData && (
         <div>
@@ -202,6 +205,66 @@ function StatTile({
         <Icon className={`w-3.5 h-3.5 ${iconCls}`} />{label}
       </div>
       <div className="text-xl font-bold text-white">{value}</div>
+    </div>
+  );
+}
+
+function DbCleanup() {
+  const GATEWAY = process.env.NEXT_PUBLIC_GATEWAY_URL || 'http://localhost:3000';
+  const [preview, setPreview] = useState<{ realAccounts: string[]; testAccountsToDelete: string[] } | null>(null);
+  const [result, setResult] = useState<{ deleted: number; remaining: number } | null>(null);
+  const [loading, setLoading] = useState(false);
+
+  const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') || '' : '';
+
+  const runPreview = async () => {
+    setLoading(true);
+    const r = await fetch(`${GATEWAY}/v1/admin/cleanup-test-accounts`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: false }),
+    }).then(r => r.json()).catch(() => null);
+    setPreview(r?.data || null);
+    setLoading(false);
+  };
+
+  const runCleanup = async () => {
+    if (!confirm(`Delete ${preview?.testAccountsToDelete.length} test accounts? This cannot be undone.`)) return;
+    setLoading(true);
+    const r = await fetch(`${GATEWAY}/v1/admin/cleanup-test-accounts`, {
+      method: 'POST',
+      headers: { 'Authorization': `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({ confirm: true }),
+    }).then(r => r.json()).catch(() => null);
+    setResult(r?.data || null);
+    setPreview(null);
+    setLoading(false);
+  };
+
+  return (
+    <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 p-5">
+      <div className="flex items-center justify-between mb-3">
+        <div>
+          <div className="text-sm font-semibold text-amber-400">Database Cleanup</div>
+          <div className="text-xs text-gray-500">Remove CI/test accounts from user count</div>
+        </div>
+        <button onClick={runPreview} disabled={loading}
+          className="px-3 py-1.5 rounded-lg bg-amber-600/80 hover:bg-amber-500 text-xs font-semibold text-white transition disabled:opacity-50">
+          {loading ? 'Loading…' : 'Preview'}
+        </button>
+      </div>
+      {preview && !result && (
+        <div className="space-y-2">
+          <div className="text-xs text-emerald-400">Keeping: {preview.realAccounts.join(', ')}</div>
+          <div className="text-xs text-red-400">Deleting {preview.testAccountsToDelete.length} test accounts</div>
+          <button onClick={runCleanup} className="px-3 py-1.5 rounded-lg bg-red-600 hover:bg-red-500 text-xs font-semibold text-white transition">
+            Execute Cleanup
+          </button>
+        </div>
+      )}
+      {result && (
+        <div className="text-xs text-emerald-400">✓ Deleted {result.deleted} test accounts. {result.remaining} real accounts remain.</div>
+      )}
     </div>
   );
 }

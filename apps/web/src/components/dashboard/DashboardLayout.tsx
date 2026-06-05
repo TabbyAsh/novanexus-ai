@@ -32,6 +32,7 @@ const USER_NAV = [
       { name: 'Flip Finder',   href: '/dashboard/scanner',     icon: '🔍', badge: '' },
       { name: 'Income Tracker', href: '/dashboard/income',         icon: '📊', badge: 'NEW' },
       { name: 'Expense Audit',  href: '/dashboard/expense-audit',  icon: '🔍', badge: '' },
+      { name: 'Shopping Cards', href: '/dashboard/shopping',        icon: '🛒', badge: 'NEW' },
       { name: 'Quote Builder',  href: '/dashboard/quote-builder',  icon: '📋', badge: '' },
       { name: 'Invoice Builder',href: '/dashboard/invoice-builder',icon: '🧾', badge: '' },
       { name: 'Stock Research',href: '/dashboard/screener',    icon: '📈', badge: '' },

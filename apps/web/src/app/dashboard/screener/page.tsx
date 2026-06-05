@@ -7,6 +7,7 @@ import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { GradientText } from '@/components/ui/GlassCard';
 import TrustPanel from '@/components/trading/TrustPanel';
 import { RealityBanner, UdmDecisionPanel } from '@/components/udm';
+import { TradingViewTicker } from '@/components/trading/TradingViewChart';
 import { api } from '@/lib/api';
 
 type ConfidenceTag = 'high' | 'medium' | 'low';
@@ -945,6 +946,11 @@ export default function ScreenerPage() {
 
   return (
     <DashboardLayout>
+      {/* Live market ticker — real data from TradingView, free */}
+      <div className="border-b border-white/5 bg-[#0a0a0f]">
+        <TradingViewTicker symbols={['SPY', 'QQQ', 'AAPL', 'NVDA', 'TSLA', 'MSFT', 'AMZN', 'META', 'BTCUSD']} />
+      </div>
+
       {/* UDM v2: Reality Guardrail Banner */}
       <RealityBanner />
 
