@@ -1,87 +1,151 @@
+import type { Metadata } from 'next';
 import Link from 'next/link';
+
+export const metadata: Metadata = {
+  title: 'Privacy Policy — Nova Enterprises',
+  description: 'How Nova Enterprises collects, uses, and protects your personal information.',
+};
+
+const SECTIONS = [
+  {
+    title: '1. Information We Collect',
+    items: [
+      'Account information: email address, hashed password (never stored in plaintext), and organization name when you register.',
+      'Usage data: features you use, cards you generate, outcomes you log, and actions you take. This powers the calibration and learning systems.',
+      'Financial data: if you connect a broker account (e.g., Alpaca), we store encrypted API credentials. We do not store balances or execute trades without your explicit action.',
+      'Payment data: processed by Stripe. We do not store credit card numbers. We receive payment confirmation and your subscription tier.',
+      'Communication data: if you contact us by email, we retain that correspondence.',
+      'Device and access data: IP addresses, browser type, and timestamps for security and fraud prevention.',
+    ],
+  },
+  {
+    title: '2. How We Use Your Information',
+    items: [
+      'To provide, operate, and improve the Platform.',
+      'To generate personalized Decision Cards and calibrate recommendations from your logged outcomes.',
+      'To send transactional emails: account confirmations, receipts, and alerts you have opted into.',
+      'To detect and prevent fraud, abuse, and unauthorized access.',
+      'To comply with applicable laws and respond to legal requests.',
+      'We do not sell your personal information to third parties.',
+      'We do not use your data to train AI models sold to other companies.',
+    ],
+  },
+  {
+    title: '3. Data Retention',
+    items: [
+      'Your account data is retained as long as your account is active.',
+      'If you delete your account, personal information is removed within 30 days. Aggregated, anonymized data may be retained.',
+      'Outcome and decision data is stored to calibrate your personal recommendations. You may request deletion at any time.',
+    ],
+  },
+  {
+    title: '4. Third-Party Services',
+    items: [
+      'Stripe: payment processing. Stripe\'s privacy policy governs data handled during payment.',
+      'Resend: email delivery infrastructure.',
+      'Railway and Vercel: cloud hosting and infrastructure.',
+      'Alpaca Markets: optional broker integration. Your Alpaca account is subject to Alpaca\'s own terms.',
+      'Google Gemini / Groq: AI card generation. Situation descriptions you enter are sent to generate responses. We do not retain prompts beyond the active request.',
+    ],
+  },
+  {
+    title: '5. Cookies and Local Storage',
+    items: [
+      'We use browser local storage to maintain your login session and store some tool data locally (e.g., income tracker sessions).',
+      'We use minimal cookies for authentication only. We do not use advertising cookies or third-party tracking.',
+    ],
+  },
+  {
+    title: '6. Security',
+    items: [
+      'All data is transmitted over HTTPS.',
+      'Passwords are hashed using bcrypt and never stored in plaintext.',
+      'Broker API keys are encrypted at rest.',
+      'The event log uses hash chaining to maintain audit integrity.',
+      'If you discover a security vulnerability, contact hello@novanexus-ai.com.',
+    ],
+  },
+  {
+    title: '7. Your Rights',
+    items: [
+      'Access: request a copy of your personal data at any time.',
+      'Correction: update account information through the Settings page.',
+      'Deletion: request deletion of your account and associated data.',
+      'Portability: export your decision cards, outcomes, and journal entries using the built-in CSV export features.',
+      'To exercise any of these rights, email hello@novanexus-ai.com.',
+    ],
+  },
+  {
+    title: '8. Children\'s Privacy',
+    items: [
+      'The Platform is not intended for individuals under 18. We do not knowingly collect personal information from minors. If you believe a minor has registered, contact us immediately.',
+    ],
+  },
+  {
+    title: '9. International Users',
+    items: [
+      'The Platform is operated from the United States. If you access it from outside the US, your data may be transferred to and processed in the United States.',
+      'We apply GDPR principles of data minimization, purpose limitation, and user rights to all users regardless of location.',
+    ],
+  },
+  {
+    title: '10. Changes to This Policy',
+    items: [
+      'We may update this Privacy Policy. We will notify registered users of material changes by email. Continued use after changes constitutes acceptance of the updated policy.',
+    ],
+  },
+];
 
 export default function PrivacyPage() {
   return (
-    <div className="min-h-screen bg-gray-950 py-16 px-4">
-      <div className="max-w-4xl mx-auto">
-        <div className="mb-12">
-          <Link href="/" className="inline-flex items-center gap-2 mb-6">
-            <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg" />
-            <span className="text-2xl font-bold text-white">NovaNexus</span>
-          </Link>
-          <h1 className="text-4xl font-bold text-white mb-4">Privacy Policy</h1>
-          <p className="text-gray-400">Last updated: February 6, 2026</p>
-        </div>
+    <div className="min-h-screen bg-[#0a0a0f] text-white">
+      <nav className="border-b border-gray-800/60 px-6 py-4 flex items-center justify-between">
+        <Link href="/" className="flex items-center gap-2">
+          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-xs font-bold">N</div>
+          <span className="font-semibold text-sm">Nova Enterprises</span>
+        </Link>
+        <Link href="/terms" className="text-gray-500 text-sm hover:text-white transition">Terms of Service</Link>
+      </nav>
 
-        <div className="prose prose-invert prose-gray max-w-none">
-          <p className="text-gray-300">
-            This Privacy Policy describes how Nova Enterprises ("we") collects, uses, and protects
-            information when you use NovaNexus.
-          </p>
-
-          <h2 className="text-white text-2xl font-bold mt-8 mb-4">1. Information we collect</h2>
-          <ul className="text-gray-300 space-y-2">
-            <li>
-              <strong>Account data</strong> (e.g., email address, organization name) required to create and secure
-              your account.
-            </li>
-            <li>
-              <strong>Usage and audit data</strong> (e.g., events, request identifiers, and system logs) required for
-              governance, reliability, and security.
-            </li>
-            <li>
-              <strong>Billing metadata</strong> (e.g., Stripe customer/subscription identifiers) when you subscribe.
-              We do not store full card numbers.
-            </li>
-          </ul>
-
-          <h2 className="text-white text-2xl font-bold mt-8 mb-4">2. How we use information</h2>
-          <ul className="text-gray-300 space-y-2">
-            <li>To provide the service (authentication, entitlements, and core product functionality).</li>
-            <li>To maintain an auditable system of record (truth/trust ledgers and governance artifacts).</li>
-            <li>To prevent fraud, abuse, and unauthorized access.</li>
-          </ul>
-
-          <h2 className="text-white text-2xl font-bold mt-8 mb-4">3. Data retention</h2>
-          <p className="text-gray-300">
-            We retain audit and ledger data to support integrity, compliance, and replayability. Where applicable,
-            retention is minimized to what is necessary for operational and legal requirements.
-          </p>
-
-          <h2 className="text-white text-2xl font-bold mt-8 mb-4">4. Sharing</h2>
-          <p className="text-gray-300">
-            We may share limited data with service providers strictly to operate the platform (e.g., Stripe for billing).
-            We do not sell personal information.
-          </p>
-
-          <h2 className="text-white text-2xl font-bold mt-8 mb-4">5. Security</h2>
-          <p className="text-gray-300">
-            We use technical and organizational safeguards designed to protect your information. No system is
-            perfectly secure.
-          </p>
-
-          <h2 className="text-white text-2xl font-bold mt-8 mb-4">6. Contact</h2>
-          <p className="text-gray-300">
-            For privacy questions, contact{' '}
-            <a href="mailto:privacy@nova-enterprises.dev" className="text-blue-400 hover:underline">
-              privacy@nova-enterprises.dev
-            </a>
-            .
+      <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
+        <div>
+          <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
+          <p className="text-gray-500 text-sm">Last updated: June 4, 2026</p>
+          <p className="text-gray-400 text-sm mt-4 leading-relaxed">
+            Nova Enterprises operates NovaNexus and related services (the &quot;Platform&quot;). This policy explains what
+            information we collect, how we use it, and your rights regarding that information. By using the Platform, you agree
+            to this policy.
           </p>
         </div>
 
-        <div className="mt-12 flex gap-4">
-          <Link href="/" className="text-gray-400 hover:text-white transition">
-            Home
-          </Link>
-          <Link href="/terms" className="text-blue-400 hover:text-blue-300 transition">
-            Terms
-          </Link>
-          <Link href="/legal/risk-disclosure" className="text-gray-400 hover:text-white transition">
-            Risk Disclosure
-          </Link>
+        {SECTIONS.map(s => (
+          <div key={s.title}>
+            <h2 className="text-base font-semibold text-white mb-3">{s.title}</h2>
+            <ul className="space-y-2">
+              {s.items.map((item, i) => (
+                <li key={i} className="text-gray-400 text-sm leading-relaxed flex items-start gap-2">
+                  <span className="text-gray-700 mt-1.5 shrink-0">•</span>{item}
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+
+        <div className="pt-6 border-t border-gray-800">
+          <h2 className="text-base font-semibold text-white mb-2">Contact</h2>
+          <div className="text-gray-400 text-sm space-y-1">
+            <p>Nova Enterprises</p>
+            <p>Email: <a href="mailto:hello@novanexus-ai.com" className="text-emerald-400 hover:text-emerald-300">hello@novanexus-ai.com</a></p>
+            <p>Website: <a href="https://novanexus-ai.com" className="text-emerald-400 hover:text-emerald-300">novanexus-ai.com</a></p>
+          </div>
         </div>
-      </div>
+
+        <div className="text-xs text-gray-600 flex gap-4 pt-2">
+          <Link href="/terms"                className="hover:text-gray-400 transition">Terms of Service</Link>
+          <Link href="/legal/risk-disclosure" className="hover:text-gray-400 transition">Risk Disclosure</Link>
+          <Link href="/"                     className="hover:text-gray-400 transition">Home</Link>
+        </div>
+      </main>
     </div>
   );
 }

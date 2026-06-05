@@ -544,6 +544,16 @@ function Footer() {
             </ul>
           </div>
           <div>
+            <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Company</h4>
+            <ul className="space-y-2 text-xs text-gray-500">
+              <li><Link href="/about"      className="hover:text-white transition">About</Link></li>
+              <li><Link href="/careers"    className="hover:text-white transition">Careers</Link></li>
+              <li><Link href="/enterprise" className="hover:text-white transition">Enterprise</Link></li>
+              <li><Link href="/privacy"    className="hover:text-white transition">Privacy</Link></li>
+              <li><Link href="/terms"      className="hover:text-white transition">Terms</Link></li>
+            </ul>
+          </div>
+          <div>
             <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Account</h4>
             <ul className="space-y-2 text-xs text-gray-500">
               <li><Link href="/login"    className="hover:text-white transition">Sign In</Link></li>
