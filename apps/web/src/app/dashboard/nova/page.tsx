@@ -23,6 +23,7 @@ interface Message {
   role: 'user' | 'nova';
   content: string;
   branch?: { intent: string; label: string; href: string; description: string } | null;
+  action?: any | null;
 }
 
 const SUGGESTIONS = [
@@ -61,7 +62,7 @@ export default function NovaCorePage() {
       const d = await r.json();
       if (d.success) {
         setConversationId(d.data.conversationId);
-        setMessages(m => [...m, { role: 'nova', content: d.data.reply, branch: d.data.branch }]);
+        setMessages(m => [...m, { role: 'nova', content: d.data.reply, branch: d.data.branch, action: d.data.action }]);
       } else {
         setMessages(m => [...m, { role: 'nova', content: 'I had trouble responding just now. Try asking again.' }]);
       }
@@ -133,8 +134,53 @@ export default function NovaCorePage() {
                     }`}>
                       {m.content}
                     </div>
+                    {/* Inline flip result — Nova ran a real analysis */}
+                    {m.action?.type === 'flip' && m.action.card && (
+                      <div className="mt-2 rounded-xl border border-gray-800 bg-gray-950 p-4">
+                        <div className="flex items-center justify-between mb-3">
+                          <span className="text-xs font-semibold text-gray-500 uppercase tracking-wider">{m.action.card.item_title}</span>
+                          <span className={`text-xs font-bold px-2 py-0.5 rounded-full border ${
+                            m.action.card.verdict === 'BUY' ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' :
+                            m.action.card.verdict === 'PASS' ? 'bg-red-500/20 text-red-400 border-red-500/30' :
+                            'bg-amber-500/20 text-amber-400 border-amber-500/30'
+                          }`}>{m.action.card.verdict}</span>
+                        </div>
+                        <div className="grid grid-cols-3 gap-2 text-center">
+                          <div className="bg-gray-900 rounded-lg p-2">
+                            <div className="text-[10px] text-gray-600">Resale (mid)</div>
+                            <div className="text-sm font-bold text-white">${m.action.card.est_resale_mid}</div>
+                          </div>
+                          <div className="bg-gray-900 rounded-lg p-2">
+                            <div className="text-[10px] text-gray-600">Net profit</div>
+                            <div className={`text-sm font-bold ${m.action.card.est_net_profit_mid >= 0 ? 'text-emerald-400' : 'text-red-400'}`}>
+                              ${m.action.card.est_net_profit_mid}
+                            </div>
+                          </div>
+                          <div className="bg-gray-900 rounded-lg p-2">
+                            <div className="text-[10px] text-gray-600">ROI</div>
+                            <div className="text-sm font-bold text-white">{m.action.card.roi_percent}%</div>
+                          </div>
+                        </div>
+                        <Link href="/flip" className="block text-center mt-3 text-xs text-emerald-400 hover:text-emerald-300 transition">
+                          Open full Flip Card →
+                        </Link>
+                      </div>
+                    )}
+
+                    {/* Inline business status — Nova pulled real pipeline */}
+                    {m.action?.type === 'business' && (
+                      <Link href="/dashboard/business"
+                        className="mt-2 flex items-center gap-3 rounded-xl border border-cyan-500/25 bg-cyan-500/5 px-4 py-3 hover:bg-cyan-500/10 transition group">
+                        <div className="flex-1">
+                          <div className="text-sm font-semibold text-cyan-400">Open Business OS</div>
+                          <div className="text-xs text-gray-500">{m.action.followUps > 0 ? `${m.action.followUps} follow-up${m.action.followUps > 1 ? 's' : ''} due today` : 'Your live pipeline'}</div>
+                        </div>
+                        <ArrowRight className="w-4 h-4 text-cyan-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+                      </Link>
+                    )}
+
                     {/* Branch route card */}
-                    {m.branch && (
+                    {m.branch && !m.action && (
                       <Link href={m.branch.href}
                         className="mt-2 flex items-center gap-3 rounded-xl border border-emerald-500/25 bg-emerald-500/5 px-4 py-3 hover:bg-emerald-500/10 transition group">
                         <div className="flex-1">
