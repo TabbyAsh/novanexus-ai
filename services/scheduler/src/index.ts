@@ -1035,6 +1035,111 @@ async function jobWeeklyDigest(): Promise<void> {
 }
 
 // ============================================================================
+// JOB: BUSINESS OS FOLLOW-UP REMINDERS
+// Emails operators a list of leads that need following up today.
+// The #1 reason small operators lose money is forgetting to follow up.
+// ============================================================================
+
+async function jobBusinessFollowUps(): Promise<void> {
+  const startTime = Date.now();
+  logger.info('=== BUSINESS FOLLOW-UP REMINDERS STARTED ===');
+
+  try {
+    const today = new Date().toISOString().split('T')[0];
+
+    // Find all jobs needing follow-up, grouped by user
+    const due = await query<{
+      user_id: string; email: string; contact_name: string;
+      contact_phone: string; service: string; quoted_price: string; status: string;
+    }>(
+      `SELECT j.user_id, u.email, j.contact_name, j.contact_phone, j.service, j.quoted_price, j.status
+       FROM business_jobs j
+       JOIN users u ON u.id = j.user_id
+       WHERE j.follow_up_due IS NOT NULL
+         AND j.follow_up_due <= $1
+         AND j.status IN ('LEAD', 'QUOTED')
+         AND u.status = 'ACTIVE'
+       ORDER BY j.user_id, j.follow_up_due ASC`,
+      [today]
+    ).catch(() => ({ rows: [] as any[] }));
+
+    if (due.rows.length === 0) {
+      logger.info('No follow-ups due today');
+      await logSchedulerRun('business-followups', 'success', Date.now() - startTime, { reminders: 0 });
+      return;
+    }
+
+    // Group by user
+    const byUser: Record<string, { email: string; jobs: any[] }> = {};
+    for (const row of due.rows) {
+      if (!byUser[row.user_id]) byUser[row.user_id] = { email: row.email, jobs: [] };
+      byUser[row.user_id].jobs.push(row);
+    }
+
+    let emailed = 0;
+    for (const [, data] of Object.entries(byUser)) {
+      if (!RESEND_API_KEY || !data.email) continue;
+
+      const rows = data.jobs.map(j => {
+        const price = j.quoted_price ? `$${parseFloat(j.quoted_price).toFixed(0)}` : 'no quote yet';
+        const phone = j.contact_phone ? ` · ${j.contact_phone}` : '';
+        return `<tr>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;font-weight:bold;color:#fff">${j.contact_name}${phone}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#9ca3af">${j.service || 'service'}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#10b981">${price}</td>
+          <td style="padding:10px 8px;border-bottom:1px solid #1f2937;color:#6b7280">${j.status}</td>
+        </tr>`;
+      }).join('');
+
+      const html = `<div style="font-family:system-ui,sans-serif;background:#0a0a0f;color:#fff;padding:28px;max-width:560px;margin:0 auto">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px">
+          <div style="width:32px;height:32px;background:linear-gradient(135deg,#10b981,#06b6d4);border-radius:8px;display:flex;align-items:center;justify-content:center;font-weight:bold">N</div>
+          <div style="font-size:16px;font-weight:700">${data.jobs.length} lead${data.jobs.length > 1 ? 's' : ''} to follow up today</div>
+        </div>
+        <p style="color:#9ca3af;font-size:14px">The #1 way to lose a job is to forget to follow up. Here's who to reach out to:</p>
+        <table style="width:100%;border-collapse:collapse;margin:16px 0">
+          <thead><tr style="color:#6b7280;font-size:11px;text-transform:uppercase">
+            <th style="text-align:left;padding:8px">Customer</th><th style="text-align:left;padding:8px">Service</th>
+            <th style="text-align:left;padding:8px">Quote</th><th style="text-align:left;padding:8px">Stage</th>
+          </tr></thead>
+          <tbody>${rows}</tbody>
+        </table>
+        <a href="https://novanexus-ai.com/dashboard/business" style="display:inline-block;background:linear-gradient(135deg,#10b981,#06b6d4);color:#fff;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:600;font-size:14px">
+          Open Business OS →
+        </a>
+        <p style="color:#374151;font-size:11px;margin-top:20px">A quick text or call today is the difference between a job and a lost lead. Powered by Nova.</p>
+      </div>`;
+
+      try {
+        await fetch('https://api.resend.com/emails', {
+          method: 'POST',
+          headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            from: 'Nova Business OS <business@novanexus-ai.com>',
+            to: [data.email],
+            subject: `${data.jobs.length} lead${data.jobs.length > 1 ? 's' : ''} to follow up today`,
+            html,
+          }),
+        });
+        emailed++;
+      } catch (err: any) {
+        logger.warn('Follow-up email failed', { error: err.message });
+      }
+    }
+
+    await logSchedulerRun('business-followups', 'success', Date.now() - startTime, {
+      remindersDue: due.rows.length, usersEmailed: emailed,
+    });
+    if (emailed > 0) {
+      await sendDiscordAlert('📋 Business Follow-Up Reminders', `Sent ${emailed} operator${emailed > 1 ? 's' : ''} their follow-up list (${due.rows.length} leads total).`, 0x10b981);
+    }
+  } catch (err: any) {
+    await logSchedulerRun('business-followups', 'failure', Date.now() - startTime, { error: err.message });
+    logger.error('Business follow-ups failed', err instanceof Error ? err : new Error(String(err)));
+  }
+}
+
+// ============================================================================
 // CRON SCHEDULING
 // ============================================================================
 
@@ -1091,6 +1196,16 @@ function startSchedules(): void {
       });
     }, { timezone: 'UTC' });
     logger.info('📅 Scheduled: Weekly Digest — Saturday 9:00 AM ET (14:00 UTC)');
+
+    // Business OS Follow-Up Reminders: 8:00 AM ET = 13:00 UTC daily
+    // Emails operators which leads need following up. The #1 money-leak fix.
+    cron.schedule('0 13 * * *', () => {
+      logger.info('Cron triggered: Business OS follow-up reminders');
+      jobBusinessFollowUps().catch(err => {
+        logger.error('Follow-up reminder job failed', err instanceof Error ? err : new Error(String(err)));
+      });
+    }, { timezone: 'UTC' });
+    logger.info('📅 Scheduled: Business Follow-Ups — 8:00 AM ET (13:00 UTC) daily');
   } else {
     logger.info('⏸ Brief scheduling disabled (ENABLE_BRIEF_SCHEDULE=false)');
   }
