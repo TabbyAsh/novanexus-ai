@@ -36,7 +36,7 @@ const USER_NAV = [
     items: [
       { name: 'Resell & Flip', href: '/flip',               icon: '◇', badge: '' },
       { name: 'Business OS',   href: '/dashboard/business',  icon: '◈', badge: '' },
-      { name: 'Market',        href: '/dashboard/screener',  icon: '◹', badge: '' },
+      { name: 'Market',        href: '/dashboard/market',    icon: '◹', badge: '' },
       { name: 'Money Tools',   href: '/dashboard/tools',     icon: '◉', badge: '' },
     ],
   },
