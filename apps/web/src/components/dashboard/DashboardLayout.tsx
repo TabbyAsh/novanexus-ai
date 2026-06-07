@@ -42,8 +42,8 @@ const USER_NAV = [
     section: 'WORK',
     color: 'text-cyan-400',
     items: [
+      { name: 'Business OS',   href: '/dashboard/business',      icon: '🏢', badge: 'NEW' },
       { name: 'Decision Cards',href: '/decision-cards',        icon: '🗂️', badge: '' },
-      { name: 'Business OS',   href: '/services/back-office-os', icon: '🏢', badge: '' },
       { name: 'Field Manual',  href: '/field-manual',          icon: '📖', badge: '' },
       { name: 'Flip History',  href: '/dashboard/flip-history',icon: '🕐', badge: '' },
       { name: 'Outcomes',      href: '/dashboard/outcomes',    icon: '✓',  badge: '' },

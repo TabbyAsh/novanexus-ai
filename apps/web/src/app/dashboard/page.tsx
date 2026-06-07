@@ -54,12 +54,12 @@ const PATHS = [
   },
   {
     emoji: '🏢',
-    title: 'Organize my business',
-    desc: 'Templates, invoices, scripts, and admin systems. Done for you or self-serve.',
-    href: '/services/back-office-os',
-    color: 'border-gray-600/25 hover:border-gray-500/50',
-    bg: 'hover:bg-white/3',
-    cta: 'See Services',
+    title: 'Run my business',
+    desc: 'Track leads, quotes, jobs, and revenue in one pipeline. Never forget a follow-up. Your business operating system.',
+    href: '/dashboard/business',
+    color: 'border-emerald-500/25 hover:border-emerald-400/50',
+    bg: 'hover:bg-emerald-500/5',
+    cta: 'Open Business OS',
   },
 ];
 

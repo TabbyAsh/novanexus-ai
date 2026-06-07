@@ -12209,6 +12209,193 @@ Keep it short, specific, real. No generic advice.`,
   }
 });
 
+// ============================================================================
+// BUSINESS OS — the productized company-in-a-box
+// Persistent CRM/pipeline for service business operators.
+// What we built by hand for Apex, generalized for every user.
+// ============================================================================
+
+// Ensure tables exist (idempotent — survives if migration didn't run)
+let businessOsEnsured = false;
+async function ensureBusinessOsTables(): Promise<void> {
+  if (businessOsEnsured) return;
+  try {
+    await query(`
+      CREATE TABLE IF NOT EXISTS business_profiles (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL UNIQUE,
+        business_name VARCHAR(200), business_type VARCHAR(100), owner_name VARCHAR(200),
+        phone VARCHAR(40), email VARCHAR(200), service_area VARCHAR(200),
+        payment_methods VARCHAR(300) DEFAULT 'Venmo, Cash App, Zelle, Cash, Check',
+        services_json JSONB DEFAULT '[]',
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, []);
+    await query(`
+      CREATE TABLE IF NOT EXISTS business_contacts (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL, name VARCHAR(200) NOT NULL, phone VARCHAR(40),
+        email VARCHAR(200), address TEXT, city VARCHAR(120),
+        source VARCHAR(60) DEFAULT 'manual', notes TEXT,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, []);
+    await query(`
+      CREATE TABLE IF NOT EXISTS business_jobs (
+        id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+        user_id UUID NOT NULL, contact_id UUID,
+        contact_name VARCHAR(200), contact_phone VARCHAR(40),
+        service VARCHAR(200), description TEXT,
+        status VARCHAR(30) NOT NULL DEFAULT 'LEAD',
+        quoted_price DECIMAL(12,2), final_price DECIMAL(12,2),
+        scheduled_date DATE, completed_date DATE, paid_date DATE, notes TEXT,
+        last_contacted_at TIMESTAMPTZ, follow_up_due DATE,
+        created_at TIMESTAMPTZ DEFAULT NOW(), updated_at TIMESTAMPTZ DEFAULT NOW())`, []);
+    businessOsEnsured = true;
+  } catch (err) {
+    logger.warn('Business OS table ensure failed', { error: (err as Error).message });
+  }
+}
+
+// ── Business profile ──────────────────────────────────────────────────
+app.get('/v1/business/profile', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  const row = await queryOne('SELECT * FROM business_profiles WHERE user_id = $1', [userId]);
+  res.json({ success: true, data: { profile: row || null } });
+});
+
+app.put('/v1/business/profile', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  const { businessName, businessType, ownerName, phone, email, serviceArea, paymentMethods, services } = req.body || {};
+  try {
+    await query(`
+      INSERT INTO business_profiles (user_id, business_name, business_type, owner_name, phone, email, service_area, payment_methods, services_json, updated_at)
+      VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NOW())
+      ON CONFLICT (user_id) DO UPDATE SET
+        business_name=$2, business_type=$3, owner_name=$4, phone=$5, email=$6,
+        service_area=$7, payment_methods=$8, services_json=$9, updated_at=NOW()`,
+      [userId, businessName||null, businessType||null, ownerName||null, phone||null, email||null,
+       serviceArea||null, paymentMethods||'Venmo, Cash App, Zelle, Cash, Check', JSON.stringify(services||[])]);
+    res.json({ success: true, data: { saved: true } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'PROFILE_FAILED' } });
+  }
+});
+
+// ── Jobs (the pipeline) ───────────────────────────────────────────────
+app.get('/v1/business/jobs', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  try {
+    const rows = await query(
+      `SELECT * FROM business_jobs WHERE user_id = $1 ORDER BY created_at DESC LIMIT 500`, [userId]
+    );
+    // Compute metrics
+    const all = rows.rows as any[];
+    const revenue = all.filter(j => j.status === 'PAID').reduce((s, j) => s + parseFloat(j.final_price || j.quoted_price || 0), 0);
+    const pipeline = all.filter(j => ['LEAD','QUOTED','SCHEDULED'].includes(j.status))
+      .reduce((s, j) => s + parseFloat(j.quoted_price || 0), 0);
+    const today = new Date().toISOString().split('T')[0];
+    const followUpsDue = all.filter(j => j.follow_up_due && j.follow_up_due <= today && ['LEAD','QUOTED'].includes(j.status)).length;
+    const unpaid = all.filter(j => j.status === 'COMPLETED').length;
+
+    res.json({
+      success: true,
+      data: {
+        jobs: all,
+        metrics: {
+          total: all.length,
+          revenue,
+          pipeline,
+          followUpsDue,
+          unpaid,
+          leads: all.filter(j => j.status === 'LEAD').length,
+          scheduled: all.filter(j => j.status === 'SCHEDULED').length,
+          paid: all.filter(j => j.status === 'PAID').length,
+        },
+      },
+    });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'JOBS_FAILED' } });
+  }
+});
+
+app.post('/v1/business/jobs', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  const { contactName, contactPhone, service, description, status, quotedPrice, scheduledDate, notes, source } = req.body || {};
+  if (!contactName) return res.status(400).json({ success: false, error: { code: 'MISSING_NAME', message: 'Customer name is required.' } });
+  try {
+    // Auto-create a contact record too
+    const contact = await queryOne<{ id: string }>(
+      `INSERT INTO business_contacts (user_id, name, phone, source) VALUES ($1,$2,$3,$4) RETURNING id`,
+      [userId, contactName, contactPhone||null, source||'manual']
+    );
+    // Set follow-up 2 days out for new leads/quotes
+    const followUp = ['LEAD', 'QUOTED'].includes(status || 'LEAD')
+      ? new Date(Date.now() + 2*24*60*60*1000).toISOString().split('T')[0] : null;
+
+    const job = await queryOne<{ id: string }>(
+      `INSERT INTO business_jobs (user_id, contact_id, contact_name, contact_phone, service, description, status, quoted_price, scheduled_date, notes, follow_up_due, last_contacted_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,NOW()) RETURNING id`,
+      [userId, contact?.id||null, contactName, contactPhone||null, service||null, description||null,
+       status||'LEAD', quotedPrice||null, scheduledDate||null, notes||null, followUp]
+    );
+    res.status(201).json({ success: true, data: { id: job?.id } });
+  } catch (err) {
+    logger.error('Job create failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'JOB_CREATE_FAILED' } });
+  }
+});
+
+app.put('/v1/business/jobs/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  const { id } = req.params;
+  const b = req.body || {};
+  const fields: string[] = [];
+  const vals: any[] = [];
+  let i = 1;
+  const map: Record<string, string> = {
+    contactName: 'contact_name', contactPhone: 'contact_phone', service: 'service',
+    description: 'description', status: 'status', quotedPrice: 'quoted_price',
+    finalPrice: 'final_price', scheduledDate: 'scheduled_date', notes: 'notes',
+  };
+  for (const [k, col] of Object.entries(map)) {
+    if (b[k] !== undefined) { fields.push(`${col} = $${i++}`); vals.push(b[k] === '' ? null : b[k]); }
+  }
+  // Status-driven date stamps
+  if (b.status === 'COMPLETED') fields.push(`completed_date = COALESCE(completed_date, CURRENT_DATE)`);
+  if (b.status === 'PAID') fields.push(`paid_date = COALESCE(paid_date, CURRENT_DATE)`);
+  if (b.status && ['SCHEDULED','COMPLETED','PAID','LOST'].includes(b.status)) fields.push(`follow_up_due = NULL`);
+  fields.push(`updated_at = NOW()`);
+  vals.push(id, userId);
+
+  try {
+    await query(`UPDATE business_jobs SET ${fields.join(', ')} WHERE id = $${i++} AND user_id = $${i}`, vals);
+    res.json({ success: true, data: { updated: true } });
+  } catch (err) {
+    res.status(500).json({ success: false, error: { code: 'JOB_UPDATE_FAILED' } });
+  }
+});
+
+app.post('/v1/business/jobs/:id/contacted', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  // Mark contacted now, push follow-up 3 days out
+  const next = new Date(Date.now() + 3*24*60*60*1000).toISOString().split('T')[0];
+  await query(
+    `UPDATE business_jobs SET last_contacted_at = NOW(), follow_up_due = $1, updated_at = NOW() WHERE id = $2 AND user_id = $3`,
+    [next, req.params.id, userId]
+  );
+  res.json({ success: true, data: { followUpDue: next } });
+});
+
+app.delete('/v1/business/jobs/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  await ensureBusinessOsTables();
+  const { userId } = req.user!;
+  await query('DELETE FROM business_jobs WHERE id = $1 AND user_id = $2', [req.params.id, userId]);
+  res.json({ success: true, data: { deleted: true } });
+});
+
 // ── POST /v1/cards/intake ─────────────────────────────────────────────
 // Public (no auth required for 3 free cards). Generates a personalized
 // Decision Card for ANY human situation — not just business contexts.

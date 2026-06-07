@@ -1002,6 +1002,11 @@ app.all('/v1/governance/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Business OS (CRM/pipeline) -> Nova Hub
+app.all('/v1/business/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Nova Hub routes -> Nova Hub service (Journal / Backtests / Thesis / Portfolio)
 app.all('/v1/journal*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
