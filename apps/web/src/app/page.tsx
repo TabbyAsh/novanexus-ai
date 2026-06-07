@@ -90,9 +90,14 @@ function HeroSection() {
 
   return (
     <section className="relative pt-32 pb-20 px-6 overflow-hidden">
-      <div className="absolute inset-0 -z-10">
-        <div className="absolute top-1/4 left-1/2 -translate-x-1/2 w-[800px] h-[400px] rounded-full opacity-8 blur-[140px]"
-          style={{ background: 'radial-gradient(circle, #10b981 0%, transparent 70%)' }} />
+      {/* Nebula — interstellar cloud where the new light is born */}
+      <div className="absolute inset-0 -z-10 overflow-hidden">
+        <div className="absolute -top-[20%] left-[20%] w-[700px] h-[700px] rounded-full opacity-[0.14] blur-[140px]"
+          style={{ background: 'radial-gradient(circle, #6d28d9 0%, transparent 70%)' }} />
+        <div className="absolute top-[10%] right-[10%] w-[600px] h-[600px] rounded-full opacity-[0.11] blur-[130px]"
+          style={{ background: 'radial-gradient(circle, #0891b2 0%, transparent 70%)' }} />
+        <div className="absolute top-1/3 left-1/2 -translate-x-1/2 w-[700px] h-[500px] rounded-full opacity-[0.10] blur-[120px]"
+          style={{ background: 'radial-gradient(circle, #10b981 0%, #fbbf24 35%, transparent 70%)' }} />
       </div>
 
       <div className="max-w-3xl mx-auto text-center">
@@ -580,7 +585,7 @@ function Footer() {
 // ═════════════════════════════════════════════════════════════════════
 export default function HomePage() {
   return (
-    <main className="relative min-h-screen bg-[#0a0a0f] text-white overflow-x-hidden">
+    <main className="relative min-h-screen text-white overflow-x-hidden" style={{ background: '#06060d' }}>
       <div className="fixed inset-0 -z-10 opacity-[0.015] pointer-events-none"
         style={{
           backgroundImage: 'linear-gradient(rgba(255,255,255,0.1) 1px, transparent 1px), linear-gradient(90deg, rgba(255,255,255,0.1) 1px, transparent 1px)',

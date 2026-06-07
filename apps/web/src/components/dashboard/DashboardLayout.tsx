@@ -31,38 +31,29 @@ const USER_NAV = [
     ],
   },
   {
-    section: 'EARN',
+    section: 'BRANCHES',
     color: 'text-cyan-400',
     items: [
-      { name: 'Get My Card',   href: '/start',                 icon: '🃏', badge: 'FREE' },
-      { name: 'Flip Card',     href: '/flip',                  icon: '💰', badge: '' },
-      { name: 'Flip Finder',   href: '/dashboard/scanner',     icon: '🔍', badge: '' },
-      { name: 'Income Tracker', href: '/dashboard/income',         icon: '📊', badge: 'NEW' },
-      { name: 'Expense Audit',  href: '/dashboard/expense-audit',  icon: '🔍', badge: '' },
-      { name: 'Shopping Cards', href: '/dashboard/shopping',        icon: '🛒', badge: 'NEW' },
-      { name: 'Quote Builder',  href: '/dashboard/quote-builder',  icon: '📋', badge: '' },
-      { name: 'Invoice Builder',href: '/dashboard/invoice-builder',icon: '🧾', badge: '' },
-      { name: 'Stock Research',href: '/dashboard/screener',    icon: '📈', badge: '' },
+      { name: 'Resell & Flip', href: '/flip',               icon: '◇', badge: '' },
+      { name: 'Business OS',   href: '/dashboard/business',  icon: '◈', badge: '' },
+      { name: 'Market',        href: '/dashboard/screener',  icon: '◹', badge: '' },
+      { name: 'Money Tools',   href: '/dashboard/tools',     icon: '◉', badge: '' },
     ],
   },
   {
-    section: 'WORK',
-    color: 'text-cyan-400',
+    section: 'KNOWLEDGE',
+    color: 'text-violet-400',
     items: [
-      { name: 'Business OS',   href: '/dashboard/business',      icon: '🏢', badge: 'NEW' },
-      { name: 'Decision Cards',href: '/decision-cards',        icon: '🗂️', badge: '' },
-      { name: 'Field Manual',  href: '/field-manual',          icon: '📖', badge: '' },
-      { name: 'Flip History',  href: '/dashboard/flip-history',icon: '🕐', badge: '' },
-      { name: 'Outcomes',      href: '/dashboard/outcomes',    icon: '✓',  badge: '' },
+      { name: 'Decision Cards',href: '/decision-cards',     icon: '◇', badge: '' },
+      { name: 'Field Manual',  href: '/field-manual',       icon: '◈', badge: '' },
+      { name: 'Outcomes',      href: '/dashboard/outcomes', icon: '◉', badge: '' },
     ],
   },
   {
     section: 'ACCOUNT',
     color: 'text-gray-500',
     items: [
-      { name: 'Alerts',        href: '/dashboard/alerts',      icon: '🔔', badge: '' },
-      { name: 'Refer & Earn',  href: '/dashboard/referrals',   icon: '🎁', badge: '' },
-      { name: 'Settings',      href: '/dashboard/settings',    icon: '⚙️', badge: '' },
+      { name: 'Settings',      href: '/dashboard/settings', icon: '◌', badge: '' },
     ],
   },
 ];
@@ -339,7 +330,20 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
   const sidebarW = isMobile ? 0 : (sidebarCollapsed ? 68 : 240);
 
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white flex">
+    <div className="min-h-screen text-white flex relative" style={{ background: '#06060d' }}>
+      {/* Nebula field — interstellar clouds where light is born */}
+      <div className="fixed inset-0 -z-10 overflow-hidden pointer-events-none">
+        {/* deep violet gas cloud */}
+        <div className="absolute -top-[10%] left-[15%] w-[700px] h-[700px] rounded-full opacity-[0.13] blur-[130px]"
+          style={{ background: 'radial-gradient(circle, #6d28d9 0%, transparent 70%)' }} />
+        {/* cyan intersection — Nexus */}
+        <div className="absolute top-[30%] right-[5%] w-[600px] h-[600px] rounded-full opacity-[0.10] blur-[120px]"
+          style={{ background: 'radial-gradient(circle, #0891b2 0%, transparent 70%)' }} />
+        {/* the new light being born — warm emergence */}
+        <div className="absolute bottom-[5%] left-[40%] w-[500px] h-[500px] rounded-full opacity-[0.08] blur-[110px]"
+          style={{ background: 'radial-gradient(circle, #10b981 0%, #fbbf24 30%, transparent 70%)' }} />
+      </div>
+
       <Sidebar
         collapsed={sidebarCollapsed}
         onToggle={() => setSidebarCollapsed(p => !p)}

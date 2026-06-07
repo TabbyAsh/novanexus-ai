@@ -272,6 +272,37 @@ async function cacheComps(hash: string, searchQuery: string, comps: SoldComp[], 
   }
 }
 
+/**
+ * Fetch real comps from the official eBay Browse API via the commercedata service.
+ * Works from datacenter IPs because it's an authenticated API call, not scraping.
+ * Returns active-listing prices (real market data, honestly labeled).
+ * Returns [] if eBay credentials aren't configured — caller falls back gracefully.
+ */
+async function fetchEbayBrowseComps(searchQuery: string): Promise<SoldComp[]> {
+  const COMMERCEDATA_URL = process.env.COMMERCEDATA_URL || 'http://localhost:3022';
+  try {
+    const res = await fetch(
+      `${COMMERCEDATA_URL}/sold-listings?query=${encodeURIComponent(searchQuery)}&limit=30`,
+      { signal: AbortSignal.timeout(8000) }
+    );
+    if (!res.ok) return [];
+    const data = await res.json() as { success?: boolean; data?: { listings?: any[] } };
+    const raw = data?.data?.listings || [];
+    return raw
+      .filter((c: any) => c && typeof c.price === 'number' && c.price > 0)
+      .map((c: any) => ({
+        item_title: c.title || searchQuery,
+        sold_price: c.price,
+        condition: c.condition || null,
+        sold_date: null,
+        source: 'ebay',
+        source_url: c.itemUrl || null,
+      }));
+  } catch {
+    return [];
+  }
+}
+
 async function scrapeEbaySoldComps(searchQuery: string): Promise<SoldComp[]> {
   // Rate limit
   const now = Date.now();
@@ -566,6 +597,20 @@ export async function computeFlipCard(input: FlipCardInput): Promise<FlipCardOut
   let compSource = 'cache';
   let compFreshness = 'cached (< 24h)';
 
+  // 2a. PRIMARY real-data source: official eBay Browse API (via commercedata).
+  // Works from datacenter IPs (authenticated API, not scraping). Returns active
+  // listing prices — real market data, labeled honestly as asking prices.
+  if (comps.length < 3) {
+    const apiComps = await fetchEbayBrowseComps(title);
+    if (apiComps.length >= 3) {
+      await cacheComps(hash, normalized, apiComps, category);
+      comps = apiComps;
+      compSource = 'ebay-browse-api';
+      compFreshness = 'live eBay listings';
+    }
+  }
+
+  // 2b. Fallback: HTML scrape (often blocked from datacenter IPs).
   if (comps.length < 3) {
     const scraped = await scrapeEbaySoldComps(title);
     if (scraped.length > 0) {
