@@ -12210,6 +12210,49 @@ Keep it short, specific, real. No generic advice.`,
 });
 
 // ============================================================================
+// NOVACORE — the central AI command center (the TRUNK)
+// Everything else is a branch NovaCore routes to and coordinates.
+// ============================================================================
+
+app.post('/v1/nova/chat', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { message, conversationId } = req.body || {};
+  if (!message || message.trim().length < 1) {
+    return res.status(400).json({ success: false, error: { code: 'EMPTY_MESSAGE' } });
+  }
+  try {
+    const { novaChat } = await import('./nova-core');
+    const result = await novaChat(userId, conversationId || null, message.trim());
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('NovaCore chat failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'CHAT_FAILED', message: 'Nova could not respond. Try again.' } });
+  }
+});
+
+app.get('/v1/nova/conversations', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  try {
+    const { getConversations } = await import('./nova-core');
+    const conversations = await getConversations(userId);
+    res.json({ success: true, data: { conversations } });
+  } catch {
+    res.json({ success: true, data: { conversations: [] } });
+  }
+});
+
+app.get('/v1/nova/conversations/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  try {
+    const { getMessages } = await import('./nova-core');
+    const messages = await getMessages(userId, req.params.id);
+    res.json({ success: true, data: { messages } });
+  } catch {
+    res.json({ success: true, data: { messages: [] } });
+  }
+});
+
+// ============================================================================
 // BUSINESS OS — the productized company-in-a-box
 // Persistent CRM/pipeline for service business operators.
 // What we built by hand for Apex, generalized for every user.

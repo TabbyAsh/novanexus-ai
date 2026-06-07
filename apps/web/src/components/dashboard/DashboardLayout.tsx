@@ -23,10 +23,17 @@ import { useAuthStore } from '@/lib/store';
 
 const USER_NAV = [
   {
-    section: 'EARN',
+    section: 'NOVA',
     color: 'text-emerald-400',
     items: [
+      { name: 'Talk to Nova',  href: '/dashboard/nova',        icon: '◆', badge: '' },
       { name: 'Dashboard',     href: '/dashboard',             icon: '◈', badge: '' },
+    ],
+  },
+  {
+    section: 'EARN',
+    color: 'text-cyan-400',
+    items: [
       { name: 'Get My Card',   href: '/start',                 icon: '🃏', badge: 'FREE' },
       { name: 'Flip Card',     href: '/flip',                  icon: '💰', badge: '' },
       { name: 'Flip Finder',   href: '/dashboard/scanner',     icon: '🔍', badge: '' },

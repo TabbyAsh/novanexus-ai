@@ -1007,6 +1007,11 @@ app.all('/v1/business/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// NovaCore (the central AI command center) -> Nova Hub
+app.all('/v1/nova/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Nova Hub routes -> Nova Hub service (Journal / Backtests / Thesis / Portfolio)
 app.all('/v1/journal*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);

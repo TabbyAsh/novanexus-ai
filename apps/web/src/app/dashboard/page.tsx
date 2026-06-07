@@ -87,6 +87,19 @@ export default function DashboardPage() {
           </h1>
         </motion.div>
 
+        {/* Talk to Nova — the command center entry */}
+        <motion.div initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.4, delay: 0.05 }}>
+          <Link href="/dashboard/nova"
+            className="flex items-center gap-4 rounded-2xl border border-emerald-500/30 bg-gradient-to-r from-emerald-500/10 to-cyan-500/5 p-5 hover:border-emerald-400/50 transition group">
+            <div className="w-11 h-11 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-xl text-white shrink-0">N</div>
+            <div className="flex-1">
+              <div className="text-sm font-semibold text-white">Talk to Nova</div>
+              <div className="text-xs text-gray-400 mt-0.5">Tell me what you're working on or stuck on. I'll help you think and take you to the right tool.</div>
+            </div>
+            <ArrowRight className="w-5 h-5 text-emerald-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
+          </Link>
+        </motion.div>
+
         {/* Main paths */}
         <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-4">
           {PATHS.map((path, i) => (
