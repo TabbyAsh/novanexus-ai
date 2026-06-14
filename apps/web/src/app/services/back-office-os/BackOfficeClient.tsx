@@ -26,6 +26,9 @@ export default function BackOfficeClient() {
     } catch { setStatus('error'); }
   };
 
+  // Stripe Payment Links — set these in Vercel as NEXT_PUBLIC_PAY_* and the
+  // buttons below become a live storefront that takes recurring payments 24/7.
+  // (Create them at dashboard.stripe.com/payment-links — recurring, 2 min each.)
   const tiers = [
     {
       name: 'Starter',
@@ -41,6 +44,7 @@ export default function BackOfficeClient() {
         'Monthly admin cleanup',
       ],
       cta: 'Get Starter',
+      payUrl: process.env.NEXT_PUBLIC_PAY_STARTER || '',
       highlight: false,
     },
     {
@@ -57,6 +61,7 @@ export default function BackOfficeClient() {
         'Priority response',
       ],
       cta: 'Get Operator',
+      payUrl: process.env.NEXT_PUBLIC_PAY_OPERATOR || '',
       highlight: true,
     },
     {
@@ -73,6 +78,7 @@ export default function BackOfficeClient() {
         'Monthly strategy review',
       ],
       cta: 'Get Growth',
+      payUrl: process.env.NEXT_PUBLIC_PAY_GROWTH || '',
       highlight: false,
     },
   ];
@@ -183,14 +189,25 @@ export default function BackOfficeClient() {
                     </li>
                   ))}
                 </ul>
-                <a href="#contact"
-                  className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition ${
-                    tier.highlight
-                      ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                      : 'border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white'
-                  }`}>
-                  {tier.cta}
-                </a>
+                {tier.payUrl ? (
+                  <a href={tier.payUrl} target="_blank" rel="noopener noreferrer"
+                    className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition ${
+                      tier.highlight
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        : 'border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white'
+                    }`}>
+                    Pay &amp; Start →
+                  </a>
+                ) : (
+                  <a href="#contact"
+                    className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition ${
+                      tier.highlight
+                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                        : 'border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white'
+                    }`}>
+                    {tier.cta}
+                  </a>
+                )}
               </div>
             ))}
           </div>
