@@ -2,7 +2,7 @@
 
 import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { ArrowRight, Sparkles, ChevronRight } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
@@ -33,8 +33,8 @@ function Navbar() {
         </div>
         <div className="flex items-center gap-3">
           <Link href="/login"    className="text-gray-400 hover:text-white text-sm transition px-3 py-2">Sign In</Link>
-          <Link href="/start"    className="px-4 py-2 rounded-lg text-sm font-semibold bg-emerald-600 hover:bg-emerald-500 text-white transition">
-            Get My Move
+          <Link href="/radar"    className="px-4 py-2 rounded-lg text-sm font-semibold bg-white text-black hover:bg-gray-200 transition">
+            See the Radar
           </Link>
         </div>
       </div>
@@ -61,6 +61,17 @@ function HeroSection() {
   const [loading, setLoading] = useState(false);
   const [card, setCard] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [topTrend, setTopTrend] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetch(`${API}/v1/trends/public`)
+      .then(r => r.json())
+      .then(d => {
+        const t = d?.data?.cards?.[0];
+        if (t?.product) setTopTrend(`${t.product} · ${t.velocity}/100${t.regionCount > 1 ? ` · 🌍 ${t.regionCount} countries` : ''}`);
+      })
+      .catch(() => {});
+  }, []);
 
   const toggle = (id: string) =>
     setSelected(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -103,20 +114,40 @@ function HeroSection() {
       <div className="max-w-3xl mx-auto text-center">
         <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.6 }}>
 
-          <div className="inline-flex items-center gap-2 bg-white/5 border border-white/8 text-gray-500 text-xs px-4 py-1.5 rounded-full mb-8">
-            <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse" />
-            For anyone — no business required
+          <div className="inline-flex items-center gap-2 bg-violet-500/10 border border-violet-500/20 text-violet-300 text-xs px-4 py-1.5 rounded-full mb-8">
+            <span className="w-1.5 h-1.5 rounded-full bg-violet-400 animate-pulse" />
+            Live demand radar · updates every 30 min
           </div>
 
           <h1 className="text-5xl md:text-6xl font-bold text-white leading-[1.1] mb-5">
-            You have more to work with<br />
-            <span className="text-emerald-400">than you think.</span>
+            Nova finds the opportunity<br />
+            <span className="text-transparent bg-clip-text bg-gradient-to-r from-violet-400 to-cyan-400">before everyone else.</span>
           </h1>
 
-          <p className="text-xl text-gray-400 max-w-xl mx-auto mb-10 leading-relaxed">
-            Tell Nova what you have and what you&apos;re dealing with.
-            Get the exact next move — checklist, script, and action — for your specific situation.
+          <p className="text-xl text-gray-400 max-w-xl mx-auto mb-7 leading-relaxed">
+            A live radar on what&apos;s about to sell — scored across multiple countries — plus a clear next move for any situation you&apos;re in. One intelligence, pointed at your upside.
           </p>
+
+          {/* Live radar proof + primary CTA */}
+          <div className="flex flex-col items-center gap-4 mb-12">
+            {topTrend && (
+              <Link href="/radar" className="group inline-flex items-center gap-2 text-xs bg-white/5 border border-white/10 rounded-full pl-2 pr-4 py-1.5 hover:border-violet-500/40 transition">
+                <span className="px-2 py-0.5 rounded-full bg-violet-500/20 text-violet-300 font-semibold">LIVE</span>
+                <span className="text-gray-300">{topTrend}</span>
+                <ArrowRight className="w-3 h-3 text-gray-500 group-hover:translate-x-0.5 transition" />
+              </Link>
+            )}
+            <div className="flex items-center gap-3">
+              <Link href="/radar" className="inline-flex items-center gap-2 px-7 py-3.5 rounded-xl bg-white text-black font-semibold hover:bg-gray-200 transition">
+                See the live radar <ArrowRight className="w-4 h-4" />
+              </Link>
+              <Link href="/register" className="px-7 py-3.5 rounded-xl border border-white/15 text-white font-semibold hover:bg-white/5 transition">
+                Start free
+              </Link>
+            </div>
+          </div>
+
+          <div className="text-xs text-gray-600 uppercase tracking-[0.2em] mb-4">or — tell Nova your situation</div>
 
           {/* Intake widget */}
           <div className="rounded-2xl border border-white/10 bg-white/[0.03] backdrop-blur-sm p-6 text-left space-y-5 max-w-2xl mx-auto">
