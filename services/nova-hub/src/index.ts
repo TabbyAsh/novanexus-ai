@@ -12253,6 +12253,49 @@ app.get('/v1/nova/conversations/:id', authMiddleware, async (req: AuthenticatedR
 });
 
 // ============================================================================
+// TREND RADAR — the demand-detection engine ("sell the shovel")
+// Detects what's heating up before it peaks and emits Trend Opportunity Cards.
+// Free data (Google Trends) + free AI classifier. No gatekeeper, no inventory.
+// ============================================================================
+
+// Full radar — authed users get the complete ranked board.
+app.get('/v1/trends', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const geo = typeof req.query.geo === 'string' ? req.query.geo.toUpperCase().slice(0, 5) : 'US';
+  const productsOnly = req.query.productsOnly === 'true';
+  try {
+    const { getTrendRadar } = await import('./trend-radar');
+    const result = await getTrendRadar(geo);
+    const cards = productsOnly ? result.cards.filter((c) => c.isProductOpportunity) : result.cards;
+    res.json({ success: true, data: { ...result, cards } });
+  } catch (err) {
+    logger.error('Trend Radar failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'TREND_RADAR_FAILED', message: 'Could not run the trend radar.' } });
+  }
+});
+
+// Public teaser — top 3 product opportunities, no auth. Drives signups + sharing.
+app.get('/v1/trends/public', async (_req: Request, res: Response) => {
+  try {
+    const { getTrendRadar } = await import('./trend-radar');
+    const result = await getTrendRadar('US');
+    const teaser = result.cards.filter((c) => c.isProductOpportunity).slice(0, 3);
+    res.json({
+      success: true,
+      data: {
+        cards: teaser,
+        productOpportunities: result.productOpportunities,
+        scanned: result.scanned,
+        generatedAt: result.generatedAt,
+        locked: Math.max(0, result.productOpportunities - teaser.length),
+      },
+    });
+  } catch (err) {
+    logger.error('Trend Radar public teaser failed', err as Error);
+    res.json({ success: true, data: { cards: [], productOpportunities: 0, scanned: 0, locked: 0 } });
+  }
+});
+
+// ============================================================================
 // BUSINESS OS — the productized company-in-a-box
 // Persistent CRM/pipeline for service business operators.
 // What we built by hand for Apex, generalized for every user.
