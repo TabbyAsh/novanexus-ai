@@ -2052,6 +2052,7 @@ class ApiClient {
   async runScanner(params?: {
     cities?: string[];
     maxPrice?: number;
+    minPrice?: number;
     minProfit?: number;
     minConfidence?: number;
     maxResults?: number;

@@ -118,7 +118,7 @@ function loadSkipped(): Set<string> {
 }
 function saveSkipped(set: Set<string>) {
   if (typeof window !== 'undefined') {
-    localStorage.setItem(SKIP_KEY, JSON.stringify([...set]));
+    localStorage.setItem(SKIP_KEY, JSON.stringify(Array.from(set)));
   }
 }
 

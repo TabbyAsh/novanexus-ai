@@ -25,9 +25,10 @@ const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@nova/shared'],
   output: 'standalone',
-  // Skip type checking during build (handled by CI)
+  // Type checking enforced on build — the app is clean, keep it that way.
+  // (If a future type error blocks a ship, FIX it, don't flip this back to true.)
   typescript: {
-    ignoreBuildErrors: true,
+    ignoreBuildErrors: false,
   },
   // Skip ESLint during build (handled by CI)
   eslint: {

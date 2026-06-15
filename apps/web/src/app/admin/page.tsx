@@ -618,7 +618,7 @@ export default function CommandCenter() {
                         'bg-amber-500/20 text-amber-400'
                       }`}>{g.status.toUpperCase()}</span>
                       <span className="text-sm font-medium text-white">{g.setup_type}</span>
-                      {g.manual_override && <Lock className="w-3 h-3 text-amber-400" title="Manual override" />}
+                      {g.manual_override && <span title="Manual override" className="inline-flex"><Lock className="w-3 h-3 text-amber-400" /></span>}
                     </div>
                     <div className="text-xs text-gray-500 mt-1">
                       {g.reason}
