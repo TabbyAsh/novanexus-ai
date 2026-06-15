@@ -103,6 +103,8 @@ const PUBLIC_ROUTES = [
   '/v1/marketplace/ingest/',
   // Value Radar - public for landing page
   '/v1/value-radar/',
+  // Trend Radar - public teaser for landing page / sharing
+  '/v1/trends/public',
   // Dashboard stats
   '/v1/dashboard/',
   // Flip Card — public decision product
@@ -1009,6 +1011,11 @@ app.all('/v1/business/*', (req: Request, res: Response) => {
 
 // NovaCore (the central AI command center) -> Nova Hub
 app.all('/v1/nova/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Trend Radar -> Nova Hub (demand-detection engine; /public is unauthenticated)
+app.all('/v1/trends*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
