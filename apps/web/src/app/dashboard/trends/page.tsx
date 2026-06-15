@@ -27,6 +27,8 @@ interface TrendCard {
   velocity: number;
   stage: 'rising' | 'hot' | 'peaking';
   trafficLabel: string;
+  regions: string[];
+  regionCount: number;
 }
 
 const stageColor: Record<string, string> = {
@@ -129,6 +131,11 @@ export default function TrendsPage() {
                   <div className="flex flex-col items-end gap-1 shrink-0">
                     <span className={`text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border ${stageColor[c.stage]}`}>{c.stage}</span>
                     <span className="text-xs font-mono text-gray-400">{c.velocity}/100</span>
+                    {c.regionCount > 1 && (
+                      <span className="text-[10px] font-semibold text-emerald-400" title={`Trending in: ${c.regions.join(', ')}`}>
+                        🌍 {c.regionCount} countries
+                      </span>
+                    )}
                   </div>
                 </div>
 

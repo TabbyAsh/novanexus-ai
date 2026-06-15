@@ -31,6 +31,10 @@ export interface RawTrend {
   /** Optional news context Google attaches to the trend. */
   context?: string;
   pubDate?: string;
+  /** Which country feeds this term surfaced in (the proprietary cross-border signal). */
+  regions?: string[];
+  /** How many countries it's trending in at once. >1 = stronger, earlier signal. */
+  regionCount?: number;
 }
 
 export interface TrendCard {
@@ -51,6 +55,9 @@ export interface TrendCard {
   /** 'rising' | 'hot' | 'peaking' — lifecycle stage estimate. */
   stage: 'rising' | 'hot' | 'peaking';
   trafficLabel: string;
+  /** Countries it's trending in (the proprietary cross-border early signal). */
+  regions: string[];
+  regionCount: number;
   provider: string;
 }
 
@@ -117,13 +124,53 @@ export async function fetchGoogleTrends(geo = 'US'): Promise<RawTrend[]> {
   }
 }
 
-// ── 3. SCORE — velocity from traffic volume ────────────────────────────────────
+// ── Multi-region ingest — the proprietary cross-border signal ───────────────────
 
-function velocityScore(traffic: number, rank: number, total: number): number {
+/** Which countries to scan for a given primary geo. US gets the English-market set
+ *  so we catch products surging abroad *before* they hit the US. */
+function regionsFor(geo: string): string[] {
+  if (geo === 'US') return ['US', 'GB', 'CA', 'AU'];
+  return [geo];
+}
+
+/** Fetch several countries' trends and merge: dedupe by term, keep the highest
+ *  traffic, and count how many countries each term appears in (the early signal). */
+export async function ingestMultiRegion(geo = 'US'): Promise<RawTrend[]> {
+  const regions = regionsFor(geo);
+  const settled = await Promise.all(regions.map((r) => fetchGoogleTrends(r).then((trends) => ({ r, trends }))));
+
+  const merged = new Map<string, RawTrend>();
+  for (const { r, trends } of settled) {
+    for (const t of trends) {
+      const key = t.term.toLowerCase().trim();
+      const existing = merged.get(key);
+      if (existing) {
+        existing.traffic = Math.max(existing.traffic, t.traffic);
+        if (t.traffic > parseTraffic(existing.trafficLabel)) existing.trafficLabel = t.trafficLabel;
+        if (!existing.regions!.includes(r)) existing.regions!.push(r);
+        existing.regionCount = existing.regions!.length;
+        if (!existing.context && t.context) existing.context = t.context;
+      } else {
+        merged.set(key, { ...t, regions: [r], regionCount: 1 });
+      }
+    }
+  }
+  // Order: multi-region first (earliest/strongest), then by traffic.
+  return Array.from(merged.values()).sort((a, b) => {
+    if ((b.regionCount || 1) !== (a.regionCount || 1)) return (b.regionCount || 1) - (a.regionCount || 1);
+    return b.traffic - a.traffic;
+  });
+}
+
+// ── 3. SCORE — velocity from traffic volume + cross-border momentum ─────────────
+
+function velocityScore(traffic: number, rank: number, total: number, regionCount = 1): number {
   // Traffic is the dominant signal (log-scaled), rank gives early-list a small boost.
-  const trafficComponent = traffic > 0 ? Math.min(70, Math.log10(traffic) * 14) : 20;
-  const rankComponent = total > 0 ? Math.round((1 - rank / total) * 30) : 0;
-  return Math.max(1, Math.min(100, Math.round(trafficComponent + rankComponent)));
+  const trafficComponent = traffic > 0 ? Math.min(60, Math.log10(traffic) * 12) : 18;
+  const rankComponent = total > 0 ? Math.round((1 - rank / total) * 22) : 0;
+  // Proprietary: trending in multiple countries at once is a stronger, earlier signal.
+  const crossBorderComponent = Math.min(18, (regionCount - 1) * 9);
+  return Math.max(1, Math.min(100, Math.round(trafficComponent + rankComponent + crossBorderComponent)));
 }
 
 function stageFromScore(v: number): TrendCard['stage'] {
@@ -134,21 +181,27 @@ function stageFromScore(v: number): TrendCard['stage'] {
 
 // ── 2. ENRICH — free AI turns raw trends into product opportunity cards ─────────
 
-const ENRICH_SYSTEM = `You are Nova's Trend Radar — a product-opportunity analyst for online resellers and e-commerce sellers.
-You are given a batch of raw trending search terms (from Google Trends) with their search traffic.
-Most trends are NEWS, PEOPLE, SPORTS, or EVENTS — those are NOT product opportunities. Be ruthless: only flag a term as a product opportunity if a seller could realistically source and sell a physical or digital product tied to it RIGHT NOW.
+const ENRICH_SYSTEM = `You are Nova's Trend Radar — a sharp product-opportunity analyst for online resellers, dropshippers, and print-on-demand sellers.
+You are given raw trending search terms (Google Trends) with traffic. Your job is to find the SELLABLE ANGLE in as many as you reasonably can — a great seller monetizes attention, not just "products."
 
-For EACH input term, return a JSON object with EXACTLY these fields:
+Think like an operator:
+- A viral GADGET/TOY/BEAUTY/HOME item → sell the item (AliExpress, wholesale, Amazon FBA).
+- A PERSON, TEAM, SHOW, GAME, MOVIE, or MEME blowing up → sell print-on-demand merch (shirts, posters, stickers, mugs, hats) tied to it. This is huge and low-risk — no inventory.
+- An EVENT, HOLIDAY, SEASON, or ANNIVERSARY → sell themed/seasonal products and decor.
+- A NEWS topic with a hobby/interest behind it (e.g. "world war 2" → history buffs) → sell books, models, memorabilia, collectibles.
+Only mark isProductOpportunity=false when there is genuinely NO honest way to sell something tied to it (e.g. a tragedy, a generic weather event, a pure breaking-news headline).
+
+For EACH input term return a JSON object with EXACTLY these fields:
 {
   "term": "<the input term>",
   "isProductOpportunity": <true|false>,
-  "product": "<the concrete sellable product, or '' if none>",
-  "category": "<e.g. Apparel, Gadgets, Home, Collectible, Digital, Beauty, or 'News' if not a product>",
-  "audience": "<who buys it / who should sell it, or ''>",
-  "whyNow": "<one sentence on why it's rising, or ''>",
-  "sourcing": "<where a seller sources it cheaply: AliExpress, wholesale, print-on-demand, thrift, local, etc., or ''>"
+  "product": "<the concrete sellable product/angle, or '' if none>",
+  "category": "<Apparel, Print-on-Demand, Gadgets, Home, Toys, Beauty, Collectible, Seasonal, Digital, Books, or 'None'>",
+  "audience": "<who buys it, in plain words, or ''>",
+  "whyNow": "<one tight sentence on why it's surging RIGHT NOW, or ''>",
+  "sourcing": "<exactly where/how a seller gets it cheaply: Printful/print-on-demand, AliExpress, wholesale, Amazon, thrift, local, etc., or ''>"
 }
-Return ONLY a JSON array of these objects, same order as input. No prose, no markdown fences.`;
+Be specific and real — no filler. Return ONLY a JSON array, same order as input. No prose, no markdown fences.`;
 
 interface EnrichResult {
   term: string;
@@ -165,13 +218,22 @@ function safeParseEnrichment(content: string): EnrichResult[] {
   const cleaned = content.replace(/```json/gi, '').replace(/```/g, '').trim();
   const start = cleaned.indexOf('[');
   const end = cleaned.lastIndexOf(']');
-  if (start === -1 || end === -1) return [];
-  try {
-    const arr = JSON.parse(cleaned.slice(start, end + 1));
-    return Array.isArray(arr) ? arr : [];
-  } catch {
-    return [];
+  if (start !== -1 && end !== -1 && end > start) {
+    try {
+      const arr = JSON.parse(cleaned.slice(start, end + 1));
+      if (Array.isArray(arr) && arr.length) return arr;
+    } catch { /* fall through to object salvage */ }
   }
+  // Salvage: the array was truncated (token limit). Parse each flat {...} object we can.
+  const objects = cleaned.match(/\{[^{}]*\}/g) || [];
+  const results: EnrichResult[] = [];
+  for (const obj of objects) {
+    try {
+      const parsed = JSON.parse(obj);
+      if (parsed && typeof parsed.term === 'string') results.push(parsed);
+    } catch { /* skip the partial/last object */ }
+  }
+  return results;
 }
 
 async function enrichTrends(raw: RawTrend[]): Promise<{ results: EnrichResult[]; provider: string }> {
@@ -183,7 +245,7 @@ async function enrichTrends(raw: RawTrend[]): Promise<{ results: EnrichResult[];
   const ai = await generateCard({
     system: ENRICH_SYSTEM,
     user: `Classify these ${raw.length} trending terms:\n${userPayload}`,
-    maxTokens: 1800,
+    maxTokens: 3600,
     temperature: 0.4,
   });
 
@@ -205,7 +267,8 @@ export interface TrendRadarResult {
 
 export async function runTrendRadar(opts: { geo?: string; productsOnly?: boolean } = {}): Promise<TrendRadarResult> {
   const geo = opts.geo || 'US';
-  const raw = await fetchGoogleTrends(geo);
+  // Cap to the strongest signals (multi-region first) so the AI batch fits its token budget.
+  const raw = (await ingestMultiRegion(geo)).slice(0, 28);
   const generatedAt = new Date().toISOString();
 
   if (raw.length === 0) {
@@ -217,7 +280,8 @@ export async function runTrendRadar(opts: { geo?: string; productsOnly?: boolean
 
   const cards: TrendCard[] = raw.map((t, i) => {
     const e = enrichByTerm.get(t.term.toLowerCase().trim());
-    const velocity = velocityScore(t.traffic, i, raw.length);
+    const regionCount = t.regionCount || 1;
+    const velocity = velocityScore(t.traffic, i, raw.length, regionCount);
     return {
       term: t.term,
       isProductOpportunity: e?.isProductOpportunity ?? false,
@@ -229,6 +293,8 @@ export async function runTrendRadar(opts: { geo?: string; productsOnly?: boolean
       velocity,
       stage: stageFromScore(velocity),
       trafficLabel: t.trafficLabel || '',
+      regions: t.regions || [geo],
+      regionCount,
       provider,
     };
   });
@@ -239,8 +305,18 @@ export async function runTrendRadar(opts: { geo?: string; productsOnly?: boolean
     return b.velocity - a.velocity;
   });
 
-  const finalCards = opts.productsOnly ? cards.filter((c) => c.isProductOpportunity) : cards;
-  const productOpportunities = cards.filter((c) => c.isProductOpportunity).length;
+  // Dedupe product opportunities by product name (highest-velocity wins — already first after sort).
+  const seenProduct = new Set<string>();
+  const deduped = cards.filter((c) => {
+    if (!c.isProductOpportunity) return true;
+    const key = (c.product || c.term).toLowerCase().trim();
+    if (seenProduct.has(key)) return false;
+    seenProduct.add(key);
+    return true;
+  });
+
+  const finalCards = opts.productsOnly ? deduped.filter((c) => c.isProductOpportunity) : deduped;
+  const productOpportunities = deduped.filter((c) => c.isProductOpportunity).length;
 
   // Persist the scan (best-effort) for history + future ML on what actually sold.
   await persistScan(finalCards, geo).catch((err) =>
