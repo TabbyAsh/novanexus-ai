@@ -47,22 +47,30 @@ export default function TrendsPage() {
   const load = useCallback(async () => {
     setLoading(true);
     setError('');
-    try {
-      const r = await fetch(`${API}/v1/trends?productsOnly=${productsOnly}`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
-      });
-      const d = await r.json();
+    // The radar can run cold on the first hit after a deploy — be patient and
+    // retry once on a transient blip instead of failing the user immediately.
+    let d: { success?: boolean; data?: { cards?: TrendCard[]; scanned?: number; productOpportunities?: number; generatedAt?: string } } | null = null;
+    for (let attempt = 0; attempt < 2 && !d; attempt++) {
+      try {
+        const r = await fetch(`${API}/v1/trends?productsOnly=${productsOnly}`, {
+          headers: { Authorization: `Bearer ${getToken()}` },
+          signal: AbortSignal.timeout(45000),
+        });
+        d = await r.json();
+      } catch {
+        if (attempt === 0) { await new Promise((res) => setTimeout(res, 1500)); continue; }
+        setError('The radar is warming up — give it a few seconds and tap Rescan.');
+      }
+    }
+    if (d) {
       if (d.success && d.data) {
         setCards(d.data.cards || []);
-        setMeta({ scanned: d.data.scanned, productOpportunities: d.data.productOpportunities, generatedAt: d.data.generatedAt });
+        setMeta({ scanned: d.data.scanned || 0, productOpportunities: d.data.productOpportunities || 0, generatedAt: d.data.generatedAt });
       } else {
-        setError('Could not load the radar. Try again.');
+        setError('Could not load the radar. Tap Rescan to try again.');
       }
-    } catch {
-      setError('Could not reach the radar.');
-    } finally {
-      setLoading(false);
     }
+    setLoading(false);
   }, [productsOnly]);
 
   useEffect(() => { load(); }, [load]);

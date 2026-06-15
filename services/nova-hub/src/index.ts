@@ -12747,6 +12747,20 @@ app.post('/v1/contact', async (req: Request, res: Response) => {
 
 app.listen(PORT, () => {
   logger.info(`Nova Hub service started on port ${PORT}`);
+
+  // Self-warm the Trend Radar so users never hit a cold start (cache TTL is 30 min).
+  // Warm shortly after boot, then keep it hot every 25 minutes.
+  const warmRadar = async () => {
+    try {
+      const { getTrendRadar } = await import('./trend-radar');
+      const r = await getTrendRadar('US');
+      logger.info('Trend Radar cache warmed', { products: r.productOpportunities, scanned: r.scanned });
+    } catch (err) {
+      logger.warn('Trend Radar warm failed', { error: (err as Error).message });
+    }
+  };
+  setTimeout(warmRadar, 4000);
+  setInterval(warmRadar, 25 * 60 * 1000);
 });
 
 export default app;
