@@ -66,24 +66,32 @@ export default function StudioClient() {
             <h2 className="text-xs font-bold tracking-[0.3em] uppercase text-gray-400">Recent Work</h2>
             <span className="text-xs text-gray-600">Live · built start to finish</span>
           </div>
-          <a href="https://yalanti-poc-production.up.railway.app" target="_blank" rel="noopener noreferrer"
-            className="group block rounded-2xl border border-white/10 overflow-hidden hover:border-white/25 transition">
-            <div className="aspect-[16/7] bg-gradient-to-br from-[#141414] to-[#0a0a0a] flex items-center justify-center relative">
-              <span className="text-5xl md:text-7xl font-thin tracking-[0.4em] pl-[0.4em] text-white/90">YALANTI</span>
-              <span className="absolute bottom-4 right-5 text-[10px] tracking-widest uppercase text-gray-500 group-hover:text-emerald-400 transition">View live ↗</span>
-            </div>
-            <div className="p-6 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-              <div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            {/* Yalanti */}
+            <a href="https://yalanti-poc-production.up.railway.app" target="_blank" rel="noopener noreferrer"
+              className="group block rounded-2xl border border-white/10 overflow-hidden hover:border-white/25 transition">
+              <div className="aspect-[16/10] bg-gradient-to-br from-[#141414] to-[#0a0a0a] flex items-center justify-center relative">
+                <span className="text-4xl md:text-5xl font-thin tracking-[0.4em] pl-[0.4em] text-white/90">YALANTI</span>
+                <span className="absolute bottom-3 right-4 text-[10px] tracking-widest uppercase text-gray-500 group-hover:text-emerald-400 transition">View live ↗</span>
+              </div>
+              <div className="p-5">
                 <div className="font-semibold">Yalanti — Designer Clothing Brand</div>
-                <div className="text-sm text-gray-500 mt-0.5">Black-and-white storefront, lookbook, and live waitlist capture.</div>
+                <div className="text-sm text-gray-500 mt-0.5">Minimal black-and-white storefront, lookbook, and live waitlist.</div>
               </div>
-              <div className="flex gap-2 flex-wrap">
-                {['Storefront', 'Brand design', 'Waitlist backend'].map(t => (
-                  <span key={t} className="text-[11px] text-gray-400 border border-white/10 rounded-full px-3 py-1">{t}</span>
-                ))}
+            </a>
+            {/* Evergreen */}
+            <a href="/work/evergreen/index.html" target="_blank" rel="noopener noreferrer"
+              className="group block rounded-2xl border border-white/10 overflow-hidden hover:border-white/25 transition">
+              <div className="aspect-[16/10] bg-gradient-to-br from-[#16402b] to-[#0c2418] flex items-center justify-center relative">
+                <span className="text-3xl md:text-4xl font-extrabold tracking-tight text-emerald-200/90">Evergreen</span>
+                <span className="absolute bottom-3 right-4 text-[10px] tracking-widest uppercase text-gray-400 group-hover:text-emerald-300 transition">View live ↗</span>
               </div>
-            </div>
-          </a>
+              <div className="p-5">
+                <div className="font-semibold">Evergreen — Lawn &amp; Landscape</div>
+                <div className="text-sm text-gray-500 mt-0.5">Local service site built to convert: services, reviews, instant quote form.</div>
+              </div>
+            </a>
+          </div>
         </section>
 
         {/* Services + pricing */}
