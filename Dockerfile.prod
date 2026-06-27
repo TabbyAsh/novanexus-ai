@@ -39,7 +39,7 @@ RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=
 # Every service listed here is REQUIRED for production. If it fails, the
 # build fails. That is intentional.
 # Cache-bust token — increment this to force all esbuild layers to rebuild:
-ENV NOVA_BUILD_TOKEN=2026-06-03-v3
+ENV NOVA_BUILD_TOKEN=2026-06-27-v4
 # ==========================================================================
 
 RUN esbuild services/gateway/src/index.ts \
