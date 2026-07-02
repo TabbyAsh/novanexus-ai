@@ -121,6 +121,25 @@ async function collectPulse(): Promise<PulseEvent[]> {
     }
   }).catch(() => {});
 
+  // Forged agents at work — world_agent_findings (027). Law Five: the public
+  // feed never shows WHICH symbol a stranger's agent watches — only that the
+  // forge burns and the watchers work.
+  await query<{ id: string; kind: string; significance: number; created_at: string }>(
+    `SELECT id, kind, significance, created_at FROM world_agent_findings ORDER BY created_at DESC LIMIT 15`
+  ).then(r => {
+    for (const row of r.rows) {
+      out.push({
+        id: `forge-${row.id}`,
+        kind: 'agent',
+        sector: 'market',
+        label: row.kind === 'DEPLOYED' ? 'An agent was forged and deployed'
+             : row.significance >= 3 ? 'A watcher flared — its operator was told first'
+             : 'A watcher reported movement',
+        ts: row.created_at,
+      });
+    }
+  }).catch(() => {});
+
   // The event-sourced spine — events (001). Type + actor only, never payload.
   await query<{ id: string; type: string; actor_type: string; ts: string }>(
     `SELECT id, type, actor_type, ts FROM events ORDER BY ts DESC LIMIT 20`

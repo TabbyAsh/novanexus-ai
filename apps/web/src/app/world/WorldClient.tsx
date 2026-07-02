@@ -31,6 +31,18 @@ interface Pulse {
 interface Msg { role: 'nova' | 'visitor'; text: string }
 
 const SEEN_KEY = 'nova_world_seen';
+const VISITOR_KEY = 'nova_visitor_id';
+
+function getVisitorId(): string {
+  let v = localStorage.getItem(VISITOR_KEY);
+  if (!v) {
+    v = 'v_' + Array.from(crypto.getRandomValues(new Uint8Array(16)), b => b.toString(16).padStart(2, '0')).join('');
+    localStorage.setItem(VISITOR_KEY, v);
+  }
+  return v;
+}
+
+interface MyAgent { id: string; name: string; symbol: string | null; latest_finding: string | null }
 
 // Evaluated once per page load, before the marker is written — StrictMode
 // re-runs effects in dev, and she must never claim memory she does not have.
@@ -54,6 +66,17 @@ export default function WorldClient() {
   const [thinking, setThinking] = useState(false);
   const returning = useRef(false);
   const firstPulseIds = useRef<Set<string> | null>(null);
+  const visitorId = useRef<string>('');
+  const [myAgents, setMyAgents] = useState<MyAgent[]>([]);
+
+  const fetchMyAgents = useCallback(async () => {
+    if (!visitorId.current) return;
+    try {
+      const r = await fetch(`/api/proxy/v1/world/agents?visitor=${visitorId.current}`);
+      const d = await r.json();
+      if (d?.success) setMyAgents(d.data.agents || []);
+    } catch { /* they remain even when we cannot see them */ }
+  }, []);
 
   const open = beat === 'open';
 
@@ -67,6 +90,9 @@ export default function WorldClient() {
     setReduced(window.matchMedia('(prefers-reduced-motion: reduce)').matches);
     setIsMobile(window.innerWidth < 768);
     returning.current = evaluateReturning();
+    visitorId.current = getVisitorId();
+    fetchMyAgents();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── The pulse — poll real activity every 20s ────────────────────────
@@ -101,7 +127,11 @@ export default function WorldClient() {
     setMessages(prev => {
       if (prev.length > 0) return prev;
       const lines: string[] = [];
-      if (returning.current) {
+      if (myAgents.length > 0) {
+        const a = myAgents[0];
+        lines.push(`Your ${a.name} remained while you were gone.${a.latest_finding ? ` Last report: ${a.latest_finding}.` : ''}`);
+        lines.push('Tell me the situation — or forge another watcher.');
+      } else if (returning.current) {
         lines.push('You have been here before. The work kept moving.');
         const f = pulse?.sectors.forge, b = pulse?.sectors.bazaar;
         const recent: string[] = [];
@@ -114,7 +144,7 @@ export default function WorldClient() {
       }
       return [{ role: 'nova', text: lines.join(' ') }];
     });
-  }, [pulse]);
+  }, [pulse, myAgents]);
 
   const onBeat = useCallback((b: Beat) => {
     setBeat(b);
@@ -136,10 +166,11 @@ export default function WorldClient() {
       const r = await fetch('/api/proxy/v1/world/hail', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, returning: returning.current }),
+        body: JSON.stringify({ message: text, returning: returning.current, visitorId: visitorId.current }),
       });
       const d = await r.json();
       const reply = d?.data?.reply || d?.error?.message || 'Unavailable. The light is not there yet.';
+      if (d?.data?.provider === 'forge') fetchMyAgents();
       // She stills when the move is found — the answer arrives with weight.
       stage.current.mode = 'found';
       setTimeout(() => {
@@ -287,6 +318,23 @@ export default function WorldClient() {
               Quiet. The systems are young — every light here will be earned.
             </div>
           )}
+        </div>
+      )}
+
+      {/* YOUR AGENTS — they remain (canon §I) */}
+      {open && myAgents.length > 0 && (
+        <div className="absolute left-4 top-16 w-60 select-none" style={{ pointerEvents: 'none' }}>
+          <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
+            your agents
+          </div>
+          {myAgents.map(a => (
+            <div key={a.id} className="mb-2">
+              <div className="text-[12px]" style={{ color: '#9be8ff' }}>◆ {a.name}</div>
+              {a.latest_finding && (
+                <div className="text-[10px] leading-snug" style={{ color: '#5d7891' }}>{a.latest_finding}</div>
+              )}
+            </div>
+          ))}
         </div>
       )}
 

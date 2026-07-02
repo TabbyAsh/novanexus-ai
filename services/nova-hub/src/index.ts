@@ -10497,6 +10497,30 @@ app.get('/v1/world/pulse', async (_req: Request, res: Response) => {
   }
 });
 
+// Your agents — they remain (canon §I). Visitor-token scoped.
+app.get('/v1/world/agents', async (req: Request, res: Response) => {
+  try {
+    const visitorId = String(req.query.visitor || '').slice(0, 64);
+    if (!visitorId) { res.json({ success: true, data: { agents: [] } }); return; }
+    const { listAgents } = await import('./forge');
+    const agents = await listAgents(visitorId);
+    res.json({ success: true, data: { agents: agents.map(a => ({
+      id: a.id, name: a.name, symbol: a.symbol, sector: a.sector,
+      created_at: a.created_at, latest_finding: a.latest_finding,
+    })) } });
+  } catch (err) {
+    logger.error('World agents list failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'WORLD_DARK', message: 'Unavailable.' } });
+  }
+});
+
+// The Forge tick — agents scan real data on a real cadence.
+setInterval(() => {
+  import('./forge').then(({ runForgeTick }) => runForgeTick()).catch(err =>
+    logger.warn('Forge tick failed', { error: (err as Error).message })
+  );
+}, 5 * 60 * 1000);
+
 app.post('/v1/world/hail', async (req: Request, res: Response) => {
   try {
     const { hail, hailAllowed } = await import('./world');
@@ -10514,6 +10538,34 @@ app.post('/v1/world/hail', async (req: Request, res: Response) => {
       return;
     }
     const returning = Boolean(req.body?.returning);
+    const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.slice(0, 64) : null;
+
+    // THE FORGE — some hails are commands, not questions.
+    if (visitorId) {
+      const { parseForgeIntent, forgeAgent, attachEmail } = await import('./forge');
+      const emailMatch = message.match(/\bnotify me at\s+([^\s@]+@[^\s@]+\.[^\s@]+)/i);
+      if (emailMatch) {
+        const updated = await attachEmail(visitorId, emailMatch[1].toLowerCase());
+        res.json({ success: true, data: {
+          reply: updated > 0
+            ? `Done. When an agent of yours flares, I contact you first at ${emailMatch[1].toLowerCase()}.`
+            : `You have no active agents yet. Tell me to watch a symbol — "watch TSLA" — and I will forge one.`,
+          provider: 'forge', available: true,
+        }});
+        return;
+      }
+      const intent = parseForgeIntent(message);
+      if (intent) {
+        const forged = await forgeAgent({ visitorId, symbol: intent.symbol });
+        res.json({ success: true, data: {
+          reply: 'error' in forged ? forged.error : forged.reply,
+          provider: 'forge', available: true,
+          agent: 'error' in forged ? null : { id: forged.agent.id, name: forged.agent.name, symbol: forged.agent.symbol },
+        }});
+        return;
+      }
+    }
+
     const result = await hail(message, { returning });
     res.json({ success: true, data: result });
   } catch (err) {
