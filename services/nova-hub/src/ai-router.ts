@@ -113,6 +113,47 @@ async function callGroq(req: AIRequest): Promise<AIResponse | null> {
   }
 }
 
+// ── Provider: xAI Grok (OpenAI-compatible) ────────────────────────────
+async function callGrok(req: AIRequest): Promise<AIResponse | null> {
+  const key = process.env.XAI_API_KEY;
+  if (!key) return null;
+
+  try {
+    const res = await fetch('https://api.x.ai/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${key}`,
+      },
+      body: JSON.stringify({
+        model: 'grok-3-mini',
+        messages: [
+          { role: 'system', content: req.system },
+          { role: 'user',   content: req.user },
+        ],
+        max_tokens: req.maxTokens ?? 700,
+        temperature: req.temperature ?? 0.7,
+      }),
+      signal: AbortSignal.timeout(20000),
+    });
+
+    if (!res.ok) {
+      const err = await res.text();
+      logger.warn('Grok failed', { status: res.status, error: err.slice(0, 200) });
+      return null;
+    }
+
+    const d = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = d.choices?.[0]?.message?.content;
+    if (!content) return null;
+
+    return { content, provider: 'grok-3-mini', free: false };
+  } catch (err) {
+    logger.warn('Grok error', { error: (err as Error).message });
+    return null;
+  }
+}
+
 // ── Provider 3: Anthropic Claude Haiku ───────────────────────────────
 async function callClaude(req: AIRequest): Promise<AIResponse | null> {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -314,6 +355,7 @@ export async function generateCard(req: AIRequest): Promise<AIResponse> {
   const providers = [callGemini, callGroq];
 
   // Add paid providers if keys exist
+  if (process.env.XAI_API_KEY)       providers.push(callGrok);
   if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
   if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
 
@@ -337,6 +379,7 @@ export async function generateCard(req: AIRequest): Promise<AIResponse> {
 // voice. Law One of the World: nothing fake renders.
 export async function generateChat(req: AIRequest): Promise<AIResponse | null> {
   const providers = [callGemini, callGroq];
+  if (process.env.XAI_API_KEY)       providers.push(callGrok);
   if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
   if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
 

@@ -171,19 +171,19 @@ export default function WorldClient() {
     const f = pulse?.sectors.forge ?? null;
     return [
       {
-        key: 'market', label: 'The Market', href: '/trading',
+        key: 'market', label: 'The Market', href: '/market',
         sub: m ? `${m.symbol} $${m.price.toFixed(2)} · ${m.changePct >= 0 ? '+' : ''}${m.changePct.toFixed(2)}% · session ${m.session}` : null,
         active: m ? (m.session === 'open' ? 0.9 : 0.4) : 0.08,
         weather: m ? Math.max(-1, Math.min(1, m.changePct / 2)) : 0,
       },
       {
-        key: 'bazaar', label: 'The Bazaar', href: '/flip',
+        key: 'bazaar', label: 'The Bazaar', href: '/bazaar',
         sub: b ? `${b.flipsTracked} items tracked · ${b.appraised24h} appraised today` : null,
         active: b ? Math.min(1, 0.3 + b.appraised24h * 0.2) : 0.08,
         weather: 0,
       },
       {
-        key: 'forge', label: 'The Forge', href: '/analyze',
+        key: 'forge', label: 'The Forge', href: '/forge',
         sub: f ? `${f.cardsTotal} cards forged · ${f.forged24h} today` : null,
         active: f ? Math.min(1, 0.3 + f.forged24h * 0.15) : 0.08,
         weather: 0,
