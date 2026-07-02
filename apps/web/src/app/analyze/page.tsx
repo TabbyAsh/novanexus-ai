@@ -6,6 +6,7 @@ import Link from 'next/link';
 // ─── Types ───────────────────────────────────────────────────────────
 interface FlipAppraisal {
   decision: 'BUY' | 'PASS' | 'WATCH' | 'NEGOTIATE';
+  estimateBasis?: 'MANUAL_COMPS' | 'LIVE_COMPS' | 'CATEGORY_MODEL';
   confidence: number;
   maxBuyPrice: number | null;
   expectedResaleLow: number | null;
@@ -353,6 +354,18 @@ export default function AnalyzePage() {
                     {Math.round(result.appraisal.confidence * 100)}% confidence · {result.appraisal.riskLevel} risk
                   </span>
                 </div>
+                {result.appraisal.estimateBasis === 'CATEGORY_MODEL' && (
+                  <div className="mb-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs leading-relaxed">
+                    <strong className="uppercase tracking-wider">Category-model estimate</strong> — no sold listings were
+                    found, so these figures come from category pricing models, not real comps. Treat them as a rough band.
+                    Paste 3+ real sold prices (from eBay &quot;sold items&quot;) into the form for a real verdict.
+                  </div>
+                )}
+                {result.appraisal.estimateBasis === 'MANUAL_COMPS' && (
+                  <div className="mb-3 px-3 py-2 rounded-lg bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 text-xs">
+                    Based on the sold comps you provided.
+                  </div>
+                )}
                 <div className="grid grid-cols-2 gap-3 text-sm mb-3">
                   <Row label="Decision" value={result.appraisal.decision} />
                   <Row label="Max buy price" value={fmtMaybe(result.appraisal.maxBuyPrice)} />

@@ -6597,11 +6597,18 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     let maxBuyPrice: number | null = null;
     const unavailableReasons: string[] = [];
 
+    // Basis of the numbers shown — the label IS the Trust Law here:
+    // category-model figures are never presented as comps.
+    const estimateBasis: 'MANUAL_COMPS' | 'LIVE_COMPS' | 'CATEGORY_MODEL' =
+      manualComps.length >= 3 ? 'MANUAL_COMPS' : liveCompCount > 0 ? 'LIVE_COMPS' : 'CATEGORY_MODEL';
+
     if (!hasComparableData) {
-      expectedResaleLow = null;
-      expectedResaleHigh = null;
-      fastSalePrice = null;
-      unavailableReasons.push('Resale estimates unavailable because no comparable sold listings were provided or found.');
+      // No comps found — keep the engine's category-model band, clearly
+      // labeled, instead of bricking the tool. Confidence stays capped at
+      // 0.2 below and BUY is unreachable on this tier (needs >= 0.65).
+      unavailableReasons.push(
+        'No sold listings found — these figures are category-model estimates, NOT comps. Paste 3+ real sold prices below for a real verdict.'
+      );
     }
     if (shippingMode === 'shipping' && estimatedShipping === null) {
       unavailableReasons.push('Shipping estimate unavailable because shipping details or dimensions were not provided.');
@@ -6739,6 +6746,7 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
 
     const appraisalPayload = {
       decision,
+      estimateBasis,
       maxBuyPrice,
       expectedResaleLow,
       expectedResaleHigh,
