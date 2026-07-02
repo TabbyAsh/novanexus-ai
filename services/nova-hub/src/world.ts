@@ -307,9 +307,19 @@ export async function hail(
   });
 
   if (!result) {
-    // Law One, expressed as absence. Her honest line, verbatim from canon.
+    // Law One, expressed as absence — but Nova's law also says: if AI is
+    // unavailable, say so AND still produce value. Rule-based truth, not
+    // a generated mind: real routes, real data, no invented signal.
+    const still: string[] = [];
+    if (pulse?.sectors.bazaar) still.push('appraise an item against real eBay comps — the Bazaar (/flip)');
+    if (pulse?.sectors.market) still.push('show you the market as it actually stands — the Market (/trading)');
+    still.push('take your situation and forge it into a concrete next move — the Forge (/analyze)');
     return {
-      reply: 'Unavailable. The light is not there yet. I will not invent a signal — come back when the systems wake, or write to the founder directly.',
+      reply:
+        'My deeper mind is asleep right now — I will not invent a signal.\n\n' +
+        'What still works, because it runs on real data, not on me:\n' +
+        still.map(s => '— ' + s).join('\n') +
+        '\n\nSay the word, or come back when the light is lit.',
       provider: 'none',
       available: false,
     };
