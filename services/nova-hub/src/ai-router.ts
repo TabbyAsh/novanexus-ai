@@ -47,7 +47,7 @@ async function callGemini(req: AIRequest): Promise<AIResponse | null> {
           'Authorization': `Bearer ${key}`,
         },
         body: JSON.stringify({
-          model: 'gemini-1.5-flash',
+          model: 'gemini-2.5-flash',
           messages: [
             { role: 'system', content: req.system },
             { role: 'user',   content: req.user },
@@ -69,7 +69,7 @@ async function callGemini(req: AIRequest): Promise<AIResponse | null> {
     const content = d.choices?.[0]?.message?.content;
     if (!content) return null;
 
-    return { content, provider: 'gemini-1.5-flash', free: true };
+    return { content, provider: 'gemini-2.5-flash', free: true };
   } catch (err) {
     logger.warn('Gemini error', { error: (err as Error).message });
     return null;
