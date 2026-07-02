@@ -331,6 +331,25 @@ export async function generateCard(req: AIRequest): Promise<AIResponse> {
   return { content, provider: 'deterministic', free: true };
 }
 
+// ── Chat router — providers only, NO deterministic fallback ──────────
+// For conversational surfaces (the World hail). If no provider answers,
+// return null and let the caller say "Unavailable" honestly, in Nova's
+// voice. Law One of the World: nothing fake renders.
+export async function generateChat(req: AIRequest): Promise<AIResponse | null> {
+  const providers = [callGemini, callGroq];
+  if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
+  if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
+
+  for (const provider of providers) {
+    const result = await provider(req);
+    if (result) {
+      logger.info('AI chat generated', { provider: result.provider, free: result.free });
+      return result;
+    }
+  }
+  return null;
+}
+
 // ── Intake-specific wrapper ───────────────────────────────────────────
 export async function generateIntakeCard(
   context: string,

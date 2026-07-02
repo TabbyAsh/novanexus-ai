@@ -10472,6 +10472,48 @@ app.get('/v1/platform/stats', async (_req: Request, res: Response) => {
   }
 });
 
+// ============================================================================
+// THE WORLD — public arrival surface (pulse + hail). Law One: nothing fake
+// renders. See src/world.ts and NOVA-WORLD-CANON.md.
+// ============================================================================
+
+app.get('/v1/world/pulse', async (_req: Request, res: Response) => {
+  try {
+    const { getWorldPulse } = await import('./world');
+    const data = await getWorldPulse();
+    res.json({ success: true, data });
+  } catch (err) {
+    logger.error('World pulse failed', err as Error);
+    // The world goes dark honestly — no fabricated activity.
+    res.status(503).json({ success: false, error: { code: 'WORLD_DARK', message: 'The pulse is unavailable.' } });
+  }
+});
+
+app.post('/v1/world/hail', async (req: Request, res: Response) => {
+  try {
+    const { hail, hailAllowed } = await import('./world');
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+    if (!hailAllowed(ip)) {
+      res.status(429).json({
+        success: false,
+        error: { code: 'HAIL_LIMIT', message: 'The threshold is open, not infinite. Return in an hour.' },
+      });
+      return;
+    }
+    const message = String(req.body?.message || '').trim();
+    if (!message) {
+      res.status(400).json({ success: false, error: { code: 'EMPTY_HAIL', message: 'Say something real.' } });
+      return;
+    }
+    const returning = Boolean(req.body?.returning);
+    const result = await hail(message, { returning });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('World hail failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'WORLD_DARK', message: 'Unavailable. The light is not there yet.' } });
+  }
+});
+
 // ── GET /v1/admin/users ───────────────────────────────────────────────────────
 // Founder-only user list with outcome value per user.
 // Requires ops.admin scope (enforced at gateway).

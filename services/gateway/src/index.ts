@@ -110,6 +110,8 @@ const PUBLIC_ROUTES = [
   // Flip Card — public decision product
   '/v1/flip/',
   '/v1/flip-card/',
+  // The World — public arrival surface (pulse + hail)
+  '/v1/world/',
 ];
 
 // Premium features that require paid plan (LITE or higher)
@@ -1517,6 +1519,11 @@ app.all('/v1/scheduler/*', (req: Request, res: Response) => {
 // ============================================
 
 app.get('/v1/platform/stats', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// The World — public arrival surface (pulse + hail) -> Nova Hub
+app.all('/v1/world/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 

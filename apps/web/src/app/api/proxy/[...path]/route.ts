@@ -4,7 +4,7 @@ import { NextRequest, NextResponse } from 'next/server';
 const BACKEND_URL = process.env.BACKEND_URL || 'https://abackend-production.up.railway.app';
 
 // Headers to forward from client
-const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id'];
+const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id', 'x-forwarded-for'];
 
 // Headers to NOT forward back (hop-by-hop)
 const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive'];
