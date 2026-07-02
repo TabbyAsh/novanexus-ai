@@ -113,8 +113,10 @@ export default function AnalyzePage() {
         .split(/[,\n]/)
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isFinite(value) && value > 0);
-      const fees = Number(estimatedFees);
-      const shipping = Number(estimatedShipping);
+      // Number('') === 0 — an empty optional field must mean "unknown",
+      // never "free". Zero fees would overstate profit.
+      const fees = estimatedFees.trim() === '' ? NaN : Number(estimatedFees);
+      const shipping = estimatedShipping.trim() === '' ? NaN : Number(estimatedShipping);
       const res = await fetch('/api/proxy/v1/flip/appraise', {
         method: 'POST',
         headers: hdrs,
