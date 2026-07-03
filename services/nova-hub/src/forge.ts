@@ -158,6 +158,10 @@ export async function runForgeTick(): Promise<void> {
       // Mission report to the substrate (Manifesto §3/§4): anomalies[] is
       // mandatory — a ≥4% move against baseline is a model-deviation, logged
       // as an anomaly, not averaged away.
+      // RETURN PROTOCOL (§5): what returns is never a raw dump — it is a
+      // structured delta. Weight changes are PROPOSED in the report, then
+      // applied by the integration step below; the artifact is the audit
+      // trail proving nothing was silently overwritten.
       writeArtifact({
         kind: 'mission_report',
         regime: 'EXPLOITATION',
@@ -169,6 +173,9 @@ export async function runForgeTick(): Promise<void> {
           findings: [headline],
           anomalies: significance >= 3
             ? [{ observation: headline, expected: `drift within ±4% of $${base.toFixed(2)} baseline` }]
+            : [],
+          proposed_updates: significance >= 3
+            ? [{ field: 'base_price', from: base, to: quote.price, reason: 'flare resets baseline so one move cannot flare forever' }]
             : [],
           quote,
         },

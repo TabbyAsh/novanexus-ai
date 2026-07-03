@@ -10521,6 +10521,20 @@ setInterval(() => {
   );
 }, 5 * 60 * 1000);
 
+// THE MIRROR (Manifesto §6) — the second-order agent audits Nova herself
+// every 6 hours; first pass 3 minutes after boot, once migrations settle.
+setTimeout(() => {
+  import('./auditor').then(async ({ ensureAuditorExists, runAudit }) => {
+    await ensureAuditorExists();
+    await runAudit();
+  }).catch(err => logger.warn('Auditor bootstrap failed', { error: (err as Error).message }));
+}, 3 * 60 * 1000);
+setInterval(() => {
+  import('./auditor').then(({ runAudit }) => runAudit()).catch(err =>
+    logger.warn('Audit run failed', { error: (err as Error).message })
+  );
+}, 6 * 60 * 60 * 1000);
+
 app.post('/v1/world/hail', async (req: Request, res: Response) => {
   try {
     const { hail, hailAllowed } = await import('./world');
