@@ -1,0 +1,4 @@
+- ema_cross:N
+- breakout_snipe:N
+- liquidity_trap:N
+- smc_zones:N
