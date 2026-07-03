@@ -12607,6 +12607,18 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
       wants || []
     );
 
+    // The substrate remembers (Manifesto §4): every card becomes a permanent,
+    // outcome-annotatable artifact. Fire-and-forget — the user never waits.
+    import('./substrate').then(({ writeArtifact }) =>
+      writeArtifact({
+        kind: 'decision_card',
+        regime: result.regime,
+        authorType: 'nova',
+        authorId: `intake:${result.provider}`,
+        payload: { content: result.content, context: context || '', haves: haves || [], wants: wants || [] },
+      })
+    ).catch(() => {});
+
     res.json({
       success: true,
       data: {

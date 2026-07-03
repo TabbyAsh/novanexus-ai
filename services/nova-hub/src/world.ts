@@ -42,6 +42,7 @@ export interface WorldPulse {
     users: number;
     agentRunsCompleted: number;
     outcomeValue: number;
+    artifacts?: number; // permanent records on the substrate (028)
   } | null;
   generatedAt: string;
 }
@@ -224,10 +225,12 @@ async function collectStanding(): Promise<WorldPulse['standing']> {
          FROM agent_runs WHERE status = 'COMPLETED'`
       ),
     ]);
+    const artifacts = await queryOne<{ count: string }>(`SELECT COUNT(*) AS count FROM artifacts`).catch(() => null);
     return {
       users: parseInt(users?.count || '0', 10),
       agentRunsCompleted: parseInt(runs?.count || '0', 10),
       outcomeValue: parseFloat(runs?.total_value || '0'),
+      ...(artifacts ? { artifacts: parseInt(artifacts.count, 10) } : {}),
     };
   } catch {
     return null; // unknown is unknown, not zero

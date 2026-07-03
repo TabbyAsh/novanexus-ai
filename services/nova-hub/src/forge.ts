@@ -11,6 +11,7 @@
 
 import { query, queryOne } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
+import { writeArtifact } from './substrate';
 
 const logger = createLogger('forge');
 
@@ -154,6 +155,25 @@ export async function runForgeTick(): Promise<void> {
     }
 
     if (kind) {
+      // Mission report to the substrate (Manifesto §3/§4): anomalies[] is
+      // mandatory — a ≥4% move against baseline is a model-deviation, logged
+      // as an anomaly, not averaged away.
+      writeArtifact({
+        kind: 'mission_report',
+        regime: 'EXPLOITATION',
+        authorType: 'agent',
+        authorId: agent.id,
+        payload: {
+          agent: agent.name,
+          symbol: agent.symbol,
+          findings: [headline],
+          anomalies: significance >= 3
+            ? [{ observation: headline, expected: `drift within ±4% of $${base.toFixed(2)} baseline` }]
+            : [],
+          quote,
+        },
+      }).catch(() => {});
+
       const finding = await queryOne<{ id: string }>(
         `INSERT INTO world_agent_findings (agent_id, kind, headline, detail_json, significance)
          VALUES ($1, $2, $3, $4, $5) RETURNING id`,
