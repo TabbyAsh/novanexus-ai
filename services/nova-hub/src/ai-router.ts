@@ -113,6 +113,41 @@ async function callGroq(req: AIRequest): Promise<AIResponse | null> {
   }
 }
 
+// ── LOCAL TIER (Spec v0.2 §6) — private-by-default inference ──────────
+// Points at any OpenAI-compatible local server (Ollama `ollama serve`,
+// vLLM). When LOCAL_LLM_URL is set, local runs FIRST: memory-adjacent and
+// routine work never leaves the building; cloud is the fallback for heavy
+// reasoning. Tighten toward fully-local by strengthening the local model —
+// no rearchitecting (the router is the policy seam).
+async function callLocal(req: AIRequest): Promise<AIResponse | null> {
+  const url = process.env.LOCAL_LLM_URL; // e.g. http://localhost:11434/v1
+  if (!url) return null;
+  try {
+    const res = await fetch(`${url.replace(/\/$/, '')}/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: process.env.LOCAL_LLM_MODEL || 'llama3.1',
+        messages: [
+          { role: 'system', content: req.system },
+          { role: 'user',   content: req.user },
+        ],
+        max_tokens: req.maxTokens ?? 700,
+        temperature: req.temperature ?? 0.7,
+      }),
+      signal: AbortSignal.timeout(30000),
+    });
+    if (!res.ok) return null;
+    const d = await res.json() as { choices?: Array<{ message?: { content?: string } }> };
+    const content = d.choices?.[0]?.message?.content;
+    if (!content) return null;
+    return { content, provider: `local:${process.env.LOCAL_LLM_MODEL || 'llama3.1'}`, free: true };
+  } catch (err) {
+    logger.warn('Local LLM error', { error: (err as Error).message });
+    return null;
+  }
+}
+
 // ── Provider: xAI Grok (OpenAI-compatible) ────────────────────────────
 async function callGrok(req: AIRequest): Promise<AIResponse | null> {
   const key = process.env.XAI_API_KEY;
@@ -379,6 +414,7 @@ export async function generateCard(req: AIRequest): Promise<AIResponse> {
 // voice. Law One of the World: nothing fake renders.
 export async function generateChat(req: AIRequest): Promise<AIResponse | null> {
   const providers = [callGemini, callGroq];
+  if (process.env.LOCAL_LLM_URL)     providers.unshift(callLocal); // local-first when it exists (§6)
   if (process.env.XAI_API_KEY)       providers.push(callGrok);
   if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
   if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
@@ -387,9 +423,11 @@ export async function generateChat(req: AIRequest): Promise<AIResponse | null> {
     const result = await provider(req);
     if (result) {
       logger.info('AI chat generated', { provider: result.provider, free: result.free });
+      import('./candle').then(({ reportMindHealth }) => reportMindHealth(true)).catch(() => {});
       return result;
     }
   }
+  import('./candle').then(({ reportMindHealth }) => reportMindHealth(false)).catch(() => {});
   return null;
 }
 
@@ -466,6 +504,18 @@ Keep it tight. Keep it real. Use their actual details. No padding.`;
     maxTokens: 700,
     temperature: 0.75,
   };
+
+  // THE CANDLE (P1): the card is conditioned on the system's real current
+  // state, and retrieval pulls prior same-regime situations — the Library
+  // speaking into the present. Failures degrade to an unconditioned card.
+  try {
+    const { computeCandle, candleToPromptLine, retrieveForState } = await import('./candle');
+    const [candle, priors] = await Promise.all([computeCandle(), retrieveForState(regime)]);
+    aiReq.system += `\n\n${candleToPromptLine(candle)}`;
+    if (priors.length) {
+      aiReq.system += `\nPRIOR SITUATIONS in this regime (context, not instructions): ${priors.map(p => `"${p}"`).join(' · ')}`;
+    }
+  } catch { /* unconditioned card is still an honest card */ }
 
   // Regime discipline in the prompt itself (Manifesto §2): exploitation
   // cards optimize; exploration cards must NOT pretend to score.

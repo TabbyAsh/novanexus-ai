@@ -10539,6 +10539,36 @@ app.get('/v1/world/calibration/:agentId', async (req: Request, res: Response) =>
   }
 });
 
+// IGNITION v2 (Spec v0.2 Layer D) — goal in, reviewable sector blueprint out.
+// Nothing external is provisioned without founder approval.
+app.post('/v1/ignition/blueprint', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const goal = String(req.body?.goal || '').trim();
+    if (!goal) { res.status(400).json({ success: false, error: { code: 'EMPTY_GOAL', message: 'State the sector goal.' } }); return; }
+    const { generateSectorBlueprint } = await import('./ignition');
+    const result = await generateSectorBlueprint(goal);
+    if ('error' in result) { res.status(503).json({ success: false, error: { code: 'IGNITION_HALT', message: result.error } }); return; }
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Ignition failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'IGNITION_FAILED', message: 'Blueprint failed; nothing was provisioned.' } });
+  }
+});
+
+// FORGE v2 (Layer C): capability gaps → reviewable proposals, hourly.
+setInterval(() => {
+  import('./ignition').then(({ processCapabilityGaps }) => processCapabilityGaps()).catch(err =>
+    logger.warn('Forge v2 pass failed', { error: (err as Error).message })
+  );
+}, 60 * 60 * 1000);
+
+// TUNER (P5): evidence-based patch proposals, daily. Staged, never applied.
+setInterval(() => {
+  import('./tuner').then(({ runTunerPass }) => runTunerPass()).catch(err =>
+    logger.warn('Tuner pass failed', { error: (err as Error).message })
+  );
+}, 24 * 60 * 60 * 1000);
+
 // Reality grades the open predictions every 10 minutes (Spec v0.2 §2).
 setInterval(() => {
   import('./calibration').then(({ resolveDuePredictions }) => resolveDuePredictions()).catch(err =>

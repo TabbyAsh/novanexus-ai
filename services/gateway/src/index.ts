@@ -1538,6 +1538,11 @@ app.all('/v1/executor/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Ignition v2 (Spec v0.2 Layer D, authed) -> Nova Hub
+app.all('/v1/ignition/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 app.get('/v1/platform/brief-proof', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
