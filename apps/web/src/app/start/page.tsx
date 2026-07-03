@@ -42,6 +42,7 @@ export default function StartPage() {
   const [situation, setSituation] = useState('');
   const [loading, setLoading] = useState(false);
   const [card, setCard] = useState<string | null>(null);
+  const [regime, setRegime] = useState<{ regime: string; rationale: string } | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   const toggleHave = (id: string) =>
@@ -70,7 +71,10 @@ export default function StartPage() {
         body: JSON.stringify({ context, haves: haveLabels, wants: wantLabels }),
       });
       const d = await res.json();
-      if (d.success) { setCard(d.data?.content || null); }
+      if (d.success) {
+        setCard(d.data?.content || null);
+        setRegime(d.data?.regime ? { regime: d.data.regime, rationale: d.data.regimeRationale || '' } : null);
+      }
       else { setError('Nova couldn\'t generate your card. Try adding more detail about your specific situation.'); }
     } catch { setError('Network error. Please try again.'); }
     finally { setLoading(false); }
@@ -78,7 +82,7 @@ export default function StartPage() {
 
   const reset = () => {
     setStep(0); setHaves([]); setWants([]); setSituation('');
-    setCard(null); setError(null);
+    setCard(null); setError(null); setRegime(null);
   };
 
   return (
@@ -249,6 +253,15 @@ export default function StartPage() {
                   </div>
 
                   <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
+                    {regime && (
+                      <div className="mb-4 px-3 py-2 rounded-lg text-xs leading-relaxed"
+                        style={regime.regime === 'EXPLOITATION'
+                          ? { background: 'rgba(16,185,129,0.08)', border: '1px solid rgba(16,185,129,0.3)', color: '#6ee7b7' }
+                          : { background: 'rgba(139,92,246,0.08)', border: '1px solid rgba(139,92,246,0.3)', color: '#c4b5fd' }}>
+                        <strong className="uppercase tracking-wider">{regime.regime === 'EXPLOITATION' ? 'Execution decision' : 'Exploration decision'}</strong>
+                        {regime.rationale ? ` — ${regime.rationale}` : ''}
+                      </div>
+                    )}
                     <div className="text-sm text-gray-100 whitespace-pre-wrap leading-relaxed">{card}</div>
                   </div>
 

@@ -393,12 +393,44 @@ export async function generateChat(req: AIRequest): Promise<AIResponse | null> {
   return null;
 }
 
+// ── Regime classification (Manifesto §2 — the load-bearing idea) ──────
+// Every Decision Card carries a regime, populated BEFORE any scoring:
+// (a) how fast/honest is feedback? (b) is the causal chain understood?
+// (c) has this path been walked before? Misclassifying the regime is the
+// primary failure mode of the entire system.
+export type Regime = 'EXPLOITATION' | 'EXPLORATION';
+
+export function classifyRegime(text: string): { regime: Regime; rationale: string } {
+  const t = text.toLowerCase();
+  const exploitSignals = t.match(
+    /\b(client|customer|invoice|quote|pricing|price|paid|owes?|deadline|schedule|deliver|refund|late|follow.?up|renewal|existing|already (?:sell|selling|have|run|running|charg))\b/g
+  ) || [];
+  const exploreSignals = t.match(
+    /\b(idea|new|launch|start(?:up)?|could become|maybe|wondering|dream|invent|pivot|what if|no idea|never (?:done|sold|tried)|untested|experiment|someday)\b/g
+  ) || [];
+  if (exploitSignals.length > exploreSignals.length) {
+    return {
+      regime: 'EXPLOITATION',
+      rationale: `Known terrain with fast, honest feedback (${exploitSignals.slice(0, 3).join(', ')}). Optimize and measure hard.`,
+    };
+  }
+  return {
+    regime: 'EXPLORATION',
+    rationale: exploreSignals.length > 0
+      ? `Unknown terrain (${exploreSignals.slice(0, 3).join(', ')}). Scoring against current objectives would mislead — evaluate novelty, optionality, learning-per-dollar.`
+      : 'Path not walked before and feedback loop unproven — treated as exploration until a real signal exists.',
+  };
+}
+
 // ── Intake-specific wrapper ───────────────────────────────────────────
 export async function generateIntakeCard(
   context: string,
   haves: string[] = [],
   wants: string[] = []
-): Promise<AIResponse> {
+): Promise<AIResponse & { regime: Regime; regimeRationale: string }> {
+  const { regime, rationale } = classifyRegime(
+    [context, haves.join(' '), wants.join(' ')].join(' ')
+  );
   const situationText = [
     haves.length > 0 ? `What they have: ${haves.join(', ')}.` : '',
     wants.length > 0 ? `What they want: ${wants.join(', ')}.` : '',
@@ -435,17 +467,24 @@ Keep it tight. Keep it real. Use their actual details. No padding.`;
     temperature: 0.75,
   };
 
+  // Regime discipline in the prompt itself (Manifesto §2): exploitation
+  // cards optimize; exploration cards must NOT pretend to score.
+  aiReq.system += regime === 'EXPLOITATION'
+    ? `\n\nREGIME: EXPLOITATION — this is known terrain with fast feedback. Be concrete: real numbers, prices, deadlines, and one measurable target per move.`
+    : `\n\nREGIME: EXPLORATION — this is unknown terrain. Do NOT invent scores, projections, or revenue estimates. Frame moves as cheap experiments: what each one would LEARN, what doors it opens, and the smallest real-world test that discriminates between futures.`;
+
   // Try AI providers first
   const providers = [callGemini, callGroq];
+  if (process.env.XAI_API_KEY)       providers.push(callGrok);
   if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
   if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
 
   for (const provider of providers) {
     const result = await provider(aiReq);
-    if (result) return result;
+    if (result) return { ...result, regime, regimeRationale: rationale };
   }
 
   // Deterministic fallback using the richer context
   const content = deterministicCard(context, haves, wants);
-  return { content, provider: 'deterministic', free: true };
+  return { content, provider: 'deterministic', free: true, regime, regimeRationale: rationale };
 }

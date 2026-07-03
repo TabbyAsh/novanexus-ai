@@ -12609,7 +12609,10 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
 
     res.json({
       success: true,
-      data: { content: result.content, provider: result.provider, free: result.free },
+      data: {
+        content: result.content, provider: result.provider, free: result.free,
+        regime: result.regime, regimeRationale: result.regimeRationale,
+      },
     });
   } catch (err) {
     logger.error('Intake card generation failed', err as Error);
