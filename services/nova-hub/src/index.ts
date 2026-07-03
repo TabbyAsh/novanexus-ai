@@ -10535,6 +10535,21 @@ setInterval(() => {
   );
 }, 6 * 60 * 60 * 1000);
 
+// THE EXPLORATION BUDGET (Manifesto §2, build-order #6) — the protected
+// slice. Its cadence is a code constant, not a knob: exploitation pressure
+// cannot eat it, and it cannot balloon. First walk 4 minutes after boot.
+setTimeout(() => {
+  import('./explorer').then(async ({ ensureExplorerExists, runExploration }) => {
+    await ensureExplorerExists();
+    await runExploration();
+  }).catch(err => logger.warn('Explorer bootstrap failed', { error: (err as Error).message }));
+}, 4 * 60 * 1000);
+setInterval(() => {
+  import('./explorer').then(({ runExploration }) => runExploration()).catch(err =>
+    logger.warn('Exploration run failed', { error: (err as Error).message })
+  );
+}, 6 * 60 * 60 * 1000);
+
 app.post('/v1/world/hail', async (req: Request, res: Response) => {
   try {
     const { hail, hailAllowed } = await import('./world');
