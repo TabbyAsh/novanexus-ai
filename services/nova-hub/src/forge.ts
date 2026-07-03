@@ -12,6 +12,7 @@
 import { query, queryOne } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { writeArtifact } from './substrate';
+import { logPrediction, mayClaimConfidence, calibrationFor } from './calibration';
 
 const logger = createLogger('forge');
 
@@ -186,6 +187,23 @@ export async function runForgeTick(): Promise<void> {
          VALUES ($1, $2, $3, $4, $5) RETURNING id`,
         [agent.id, kind, headline, JSON.stringify({ ...quote, movePct }), significance]
       );
+      // CALIBRATION (Spec v0.2 §2): every notable move also logs a PREDICTION —
+      // an honest momentum-continuation claim, graded by reality at horizon.
+      // Below-alert-threshold moves log too; that's the point of the ledger.
+      if (Math.abs(movePct) >= 2 || Math.abs(quote.changePct) >= 3) {
+        const strength = Math.min(Math.abs(movePct) / 10, 0.25);
+        logPrediction({
+          agentId: agent.id,
+          signal: 'move_continuation',
+          symbol: agent.symbol!,
+          claimedProbability: +(0.3 + strength).toFixed(2), // a model, not a vibe — the ledger will judge it
+          baselinePrice: quote.price,
+          direction: movePct >= 0 ? 'up' : 'down',
+          thresholdPct: 1.5,
+          horizonMinutes: 24 * 60,
+        }).catch(() => {});
+      }
+
       // significance 3 resets the baseline so one move doesn't flare forever
       if (significance >= 3) {
         await query(`UPDATE world_agents SET state_json = $2 WHERE id = $1`,
@@ -200,8 +218,19 @@ export async function runForgeTick(): Promise<void> {
   }
 }
 
-// She prompts you first.
+// She prompts you first. Facts alert freely; CONFIDENCE claims appear only
+// once the monitor has earned calibration (Spec v0.2 rail 4).
 async function sendFlareEmail(agent: WorldAgent, headline: string): Promise<boolean> {
+  let confidenceLine = '';
+  try {
+    if (await mayClaimConfidence(agent.id)) {
+      const cal = await calibrationFor(agent.id);
+      confidenceLine = `\nThis monitor is calibrated: ${cal.reason}`;
+    } else {
+      const cal = await calibrationFor(agent.id);
+      confidenceLine = `\n(No confidence claim attached — ${cal.reason})`;
+    }
+  } catch { /* facts still alert */ }
   try {
     const r = await fetch('https://api.resend.com/emails', {
       method: 'POST',
@@ -210,7 +239,7 @@ async function sendFlareEmail(agent: WorldAgent, headline: string): Promise<bool
         from: FROM_EMAIL,
         to: [agent.email],
         subject: `Nova: your ${agent.symbol} agent flared`,
-        text: `${headline}\n\nThis is movement, not meaning yet — verify before acting. Nothing here is financial advice.\n\nYour agent remains on watch: ${APP_URL}/world\n\n— Nova`,
+        text: `${headline}\n${confidenceLine}\n\nThis is movement, not meaning yet — verify before acting. Nothing here is financial advice.\n\nYour agent remains on watch: ${APP_URL}/world\n\n— Nova`,
       }),
       signal: AbortSignal.timeout(10000),
     });

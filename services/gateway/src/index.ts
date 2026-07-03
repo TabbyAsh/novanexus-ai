@@ -1533,6 +1533,11 @@ app.all('/v1/alerts*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Executor agents (Spec v0.2 Layer A, authed) -> Nova Hub
+app.all('/v1/executor/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 app.get('/v1/platform/brief-proof', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });

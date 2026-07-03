@@ -10514,6 +10514,38 @@ app.get('/v1/world/agents', async (req: Request, res: Response) => {
   }
 });
 
+// EXECUTOR (Spec v0.2 Layer A) — goal in, evidence-linked deliverable out.
+app.post('/v1/executor/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const goal = String(req.body?.goal || '').trim();
+    if (!goal) { res.status(400).json({ success: false, error: { code: 'EMPTY_GOAL', message: 'State the goal.' } }); return; }
+    const { runExecutorTask } = await import('./executor');
+    const result = await runExecutorTask(goal);
+    if ('error' in result) { res.status(503).json({ success: false, error: { code: 'EXECUTOR_HALT', message: result.error } }); return; }
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Executor run failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'EXECUTOR_FAILED', message: 'Task failed; nothing was fabricated.' } });
+  }
+});
+
+// Calibration profile — public-safe per-agent honesty (Spec v0.2 §2).
+app.get('/v1/world/calibration/:agentId', async (req: Request, res: Response) => {
+  try {
+    const { calibrationFor } = await import('./calibration');
+    res.json({ success: true, data: await calibrationFor(String(req.params.agentId)) });
+  } catch (err) {
+    res.status(503).json({ success: false, error: { code: 'CAL_DARK', message: 'Unavailable.' } });
+  }
+});
+
+// Reality grades the open predictions every 10 minutes (Spec v0.2 §2).
+setInterval(() => {
+  import('./calibration').then(({ resolveDuePredictions }) => resolveDuePredictions()).catch(err =>
+    logger.warn('Prediction resolution failed', { error: (err as Error).message })
+  );
+}, 10 * 60 * 1000);
+
 // The Forge tick — agents scan real data on a real cadence.
 setInterval(() => {
   import('./forge').then(({ runForgeTick }) => runForgeTick()).catch(err =>
