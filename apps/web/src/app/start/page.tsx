@@ -43,6 +43,7 @@ export default function StartPage() {
   const [loading, setLoading] = useState(false);
   const [card, setCard] = useState<string | null>(null);
   const [regime, setRegime] = useState<{ regime: string; rationale: string } | null>(null);
+  const [provider, setProvider] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
 
   const toggleHave = (id: string) =>
@@ -74,6 +75,7 @@ export default function StartPage() {
       if (d.success) {
         setCard(d.data?.content || null);
         setRegime(d.data?.regime ? { regime: d.data.regime, rationale: d.data.regimeRationale || '' } : null);
+        setProvider(d.data?.provider || '');
       }
       else { setError('Nova couldn\'t generate your card. Try adding more detail about your specific situation.'); }
     } catch { setError('Network error. Please try again.'); }
@@ -253,6 +255,14 @@ export default function StartPage() {
                   </div>
 
                   <div className="rounded-2xl border border-emerald-500/25 bg-emerald-500/5 p-6">
+                    {provider === 'deterministic' && (
+                      <div className="mb-4 px-3 py-2 rounded-lg text-xs leading-relaxed"
+                        style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', color: '#fcd34d' }}>
+                        <strong className="uppercase tracking-wider">Structured template</strong> — Nova&apos;s deep mind is at
+                        capacity right now, so this card comes from her rule-based engine. It&apos;s a solid framework, but it
+                        hasn&apos;t read your specifics. Come back in a few hours for a personalized read.
+                      </div>
+                    )}
                     {regime && (
                       <div className="mb-4 px-3 py-2 rounded-lg text-xs leading-relaxed"
                         style={regime.regime === 'EXPLOITATION'

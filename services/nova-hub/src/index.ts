@@ -12409,11 +12409,16 @@ app.get('/v1/trends/public', async (_req: Request, res: Response) => {
   try {
     const { getTrendRadar } = await import('./trend-radar');
     const result = await getTrendRadar('US');
-    const teaser = result.cards.filter((c) => c.isProductOpportunity).slice(0, 6);
+    const products = result.cards.filter((c) => c.isProductOpportunity).slice(0, 6);
+    // News-heavy days used to render the flagship EMPTY ("recalibrating").
+    // The radar still scanned real trends — show them, labeled for what
+    // they are, instead of showing nothing.
+    const teaser = products.length > 0 ? products : result.cards.slice(0, 6);
     res.json({
       success: true,
       data: {
         cards: teaser,
+        teaserKind: products.length > 0 ? 'products' : 'all-trends',
         productOpportunities: result.productOpportunities,
         scanned: result.scanned,
         generatedAt: result.generatedAt,

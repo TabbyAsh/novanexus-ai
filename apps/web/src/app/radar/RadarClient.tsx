@@ -90,7 +90,8 @@ export default function RadarClient() {
           <div className="text-center py-16 text-gray-500 text-sm">Reading live demand signal…</div>
         ) : cards.length === 0 ? (
           <div className="text-center py-12 text-gray-500 text-sm">
-            The radar is recalibrating. <Link href="/register" className="text-violet-400 underline">Sign up</Link> and we&apos;ll have your board ready.
+            The signal feed is briefly unreachable — the radar rescans every 30 minutes.{' '}
+            <Link href="/register" className="text-violet-400 underline">Sign up</Link> to get the board delivered when it refreshes.
           </div>
         ) : (
           <>

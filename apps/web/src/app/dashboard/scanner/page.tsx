@@ -679,17 +679,32 @@ export default function FlipFinderPage() {
             <div className="w-16 h-16 rounded-full bg-pink-500/10 flex items-center justify-center mx-auto mb-4">
               <Search className="w-8 h-8 text-pink-400" />
             </div>
-            <h3 className="text-white font-semibold text-lg">No opportunities yet</h3>
-            <p className="text-gray-500 mt-2 max-w-sm mx-auto">
-              Run a scan and Nova will check Craigslist listings across your selected cities
-              for items worth flipping. BUY-rated opportunities appear here first.
-            </p>
-            <button
-              onClick={() => { setShowConfig(true); }}
-              className="mt-6 px-6 py-2.5 bg-pink-600 hover:bg-pink-500 text-white rounded-lg font-medium transition-colors"
-            >
-              Configure &amp; Scan
-            </button>
+            {scanSummary && scanSummary.totalFetched === 0 ? (
+              <>
+                <h3 className="text-white font-semibold text-lg">The listing feed is unreachable</h3>
+                <p className="text-gray-500 mt-2 max-w-md mx-auto">
+                  The scan ran, but Craigslist returned zero listings — they shut off the feed
+                  this scanner was built on. We&apos;re rebuilding sourcing on eBay&apos;s official
+                  API. Until then: find a listing anywhere and{' '}
+                  <a href="/flip" className="text-pink-400 underline">analyze it here</a> —
+                  that verdict engine works today.
+                </p>
+              </>
+            ) : (
+              <>
+                <h3 className="text-white font-semibold text-lg">No opportunities yet</h3>
+                <p className="text-gray-500 mt-2 max-w-sm mx-auto">
+                  Run a scan and Nova will check live listings across your selected cities
+                  for items worth flipping. BUY-rated opportunities appear here first.
+                </p>
+                <button
+                  onClick={() => { setShowConfig(true); }}
+                  className="mt-6 px-6 py-2.5 bg-pink-600 hover:bg-pink-500 text-white rounded-lg font-medium transition-colors"
+                >
+                  Configure &amp; Scan
+                </button>
+              </>
+            )}
           </div>
         )}
 

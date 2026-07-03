@@ -236,8 +236,36 @@ function safeParseEnrichment(content: string): EnrichResult[] {
   return results;
 }
 
+// Terms persist on Google Trends for hours — re-classifying the same 28
+// terms every 30 minutes burned ~48 heavy AI calls/day and starved the
+// free-tier quota that user-facing cards depend on. Classify only what's
+// new; remember the rest.
+const enrichCache = new Map<string, EnrichResult>();
+const ENRICH_CACHE_MAX = 300;
+
 async function enrichTrends(raw: RawTrend[]): Promise<{ results: EnrichResult[]; provider: string }> {
   if (raw.length === 0) return { results: [], provider: 'none' };
+
+  const cached: EnrichResult[] = [];
+  const fresh: RawTrend[] = [];
+  for (const t of raw) {
+    const hit = enrichCache.get(t.term.toLowerCase().trim());
+    if (hit) cached.push(hit); else fresh.push(t);
+  }
+  if (fresh.length === 0) return { results: cached, provider: 'cache' };
+
+  const { results: newResults, provider } = await enrichTrendsUncached(fresh);
+  for (const r of newResults) {
+    enrichCache.set(r.term.toLowerCase().trim(), r);
+    if (enrichCache.size > ENRICH_CACHE_MAX) {
+      const oldest = enrichCache.keys().next().value;
+      if (oldest !== undefined) enrichCache.delete(oldest);
+    }
+  }
+  return { results: [...cached, ...newResults], provider: cached.length ? `${provider}+cache` : provider };
+}
+
+async function enrichTrendsUncached(raw: RawTrend[]): Promise<{ results: EnrichResult[]; provider: string }> {
   const userPayload = raw
     .map((t, i) => `${i + 1}. "${t.term}" (traffic: ${t.trafficLabel || 'n/a'}${t.context ? `, context: ${t.context}` : ''})`)
     .join('\n');

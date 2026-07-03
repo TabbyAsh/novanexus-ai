@@ -1527,6 +1527,12 @@ app.all('/v1/world/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// Alerts (unread count + list) -> Nova Hub. The endpoint existed for months;
+// the gateway never routed it — every dashboard page 404'd on it.
+app.all('/v1/alerts*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 app.get('/v1/platform/brief-proof', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
