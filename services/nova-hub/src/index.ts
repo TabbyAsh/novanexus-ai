@@ -10531,6 +10531,26 @@ app.post('/v1/smith/build', authMiddleware, async (req: AuthenticatedRequest, re
   }
 });
 
+// SOVEREIGN MIND LAYER — provider health, sovereignty score, failure memory.
+// Public read: Forge Control shows whether Nova can run agent jobs at all.
+app.get('/v1/agents/providers', async (_req: Request, res: Response) => {
+  try {
+    const { providerHealth } = await import('./ai-router');
+    const { recallFailureMemory } = await import('./failure-memory');
+    const health = providerHealth();
+    const failureMemory = await recallFailureMemory(6).catch(() => []);
+    res.json({ success: true, data: { ...health, failureMemory } });
+  } catch (err) {
+    logger.error('Provider health failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'HEALTH_DARK', message: 'Unavailable.' } });
+  }
+});
+
+// Seed the founding sovereignty lesson once, shortly after boot.
+setTimeout(() => {
+  import('./failure-memory').then(({ seedQuotaLesson }) => seedQuotaLesson()).catch(() => {});
+}, 90 * 1000);
+
 // AGENT EVALS (Phase 5) — the recursive-improvement loop, objectively gated.
 app.post('/v1/agents/evals/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {

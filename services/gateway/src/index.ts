@@ -114,6 +114,8 @@ const PUBLIC_ROUTES = [
   '/v1/world/',
   // Agent eval leaderboard — public read (Forge Control surface)
   '/v1/agents/evals/leaderboard',
+  // Sovereign Mind Layer provider health — public read (Forge Control)
+  '/v1/agents/providers',
 ];
 
 // Premium features that require paid plan (LITE or higher)

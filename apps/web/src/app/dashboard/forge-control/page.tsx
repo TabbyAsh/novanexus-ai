@@ -17,6 +17,13 @@ interface SmithResult {
   artifactId: string | null;
 }
 interface EvalRow { agent: string; suite: string; passed: number; total: number; score: number; created_at: string }
+interface ProviderH { name: string; configured: boolean; available: boolean; lastSuccessAt: string | null; lastFailureReason: string | null; quotaExhaustedUntil: string | null }
+interface Health {
+  providers: ProviderH[]; capableOfLLM: boolean; fallbackOrder: string[];
+  sovereignty: { score: number; band: string; localAvailable: boolean; externalConfigured: number; rationale: string };
+  lastRun: { provider: string | null; at: string | null; tier: string | null };
+  failureMemory: Array<{ observation: string; lesson: string; at: string }>;
+}
 
 function token() { return typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null; }
 
@@ -28,6 +35,7 @@ export default function ForgeControl() {
   const [improving, setImproving] = useState(false);
   const [improveMsg, setImproveMsg] = useState<string | null>(null);
   const [board, setBoard] = useState<EvalRow[]>([]);
+  const [health, setHealth] = useState<Health | null>(null);
 
   const loadBoard = useCallback(async () => {
     try {
@@ -36,7 +44,14 @@ export default function ForgeControl() {
       if (d?.success) setBoard(d.data.runs || []);
     } catch { /* leave empty */ }
   }, []);
-  useEffect(() => { loadBoard(); }, [loadBoard]);
+  const loadHealth = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/v1/agents/providers`);
+      const d = await r.json();
+      if (d?.success) setHealth(d.data);
+    } catch { /* leave null */ }
+  }, []);
+  useEffect(() => { loadBoard(); loadHealth(); }, [loadBoard, loadHealth]);
 
   const build = useCallback(async () => {
     if (!problem.trim() || building) return;
@@ -78,6 +93,64 @@ export default function ForgeControl() {
         The Smith writes code, runs it in a sealed sandbox, and repairs its own failures. Solutions are
         <span className="text-cyan-300"> proposals</span> — reviewed and committed by a human, never auto-merged.
       </p>
+
+      {/* Sovereign Mind Layer — provider health + sovereignty score */}
+      <section className="rounded-xl border border-gray-800 bg-[#111117] p-5 mb-6">
+        <div className="flex items-center justify-between mb-3">
+          <h2 className="text-sm font-semibold text-gray-300 uppercase tracking-wider">Sovereign Mind Layer</h2>
+          {health && (
+            <span className={`text-[11px] px-2 py-1 rounded ${health.capableOfLLM ? 'bg-emerald-500/15 text-emerald-300' : 'bg-red-500/15 text-red-300'}`}>
+              {health.capableOfLLM ? '● Nova can run agent jobs' : '○ No mind available — agent jobs will halt honestly'}
+            </span>
+          )}
+        </div>
+        {!health ? (
+          <div className="text-sm text-gray-600">Loading provider health…</div>
+        ) : (
+          <>
+            <div className="flex items-center gap-4 mb-4">
+              <div className="text-3xl font-bold" style={{ color: health.sovereignty.score >= 75 ? '#34d399' : health.sovereignty.score >= 50 ? '#fbbf24' : '#f87171' }}>
+                {health.sovereignty.score}%
+              </div>
+              <div>
+                <div className="text-xs uppercase tracking-wider text-gray-400">sovereignty · {health.sovereignty.band}</div>
+                <div className="text-[11px] text-gray-500 max-w-lg">{health.sovereignty.rationale}</div>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-2 mb-3">
+              {health.providers.map(p => (
+                <div key={p.name} className="flex items-center justify-between text-xs rounded-lg px-3 py-2 bg-black/30 border border-gray-800">
+                  <span className="text-gray-300">{p.name}{p.name === 'local' && ' 🔒'}</span>
+                  <span className={
+                    !p.configured ? 'text-gray-600'
+                      : p.available ? 'text-emerald-400'
+                      : p.quotaExhaustedUntil ? 'text-amber-400' : 'text-red-400'
+                  }>
+                    {!p.configured ? 'not configured' : p.available ? 'ready' : p.quotaExhaustedUntil ? 'quota-dark' : (p.lastFailureReason || 'down')}
+                  </span>
+                </div>
+              ))}
+            </div>
+            <div className="text-[11px] text-gray-500">
+              Fallback order: <span className="text-gray-400">{health.fallbackOrder.join(' → ')}</span>
+              {health.lastRun.provider && <> · last run powered by <span className="text-cyan-300">{health.lastRun.provider}</span></>}
+            </div>
+            {health.sovereignty.score < 75 && (
+              <div className="mt-3 text-[11px] text-violet-300">
+                → Next move to reduce dependency: run a local model (Ollama/vLLM) and set <code className="text-violet-200">LOCAL_LLM_URL</code>. It becomes the first-choice backend and crosses you to 75% sovereign.
+              </div>
+            )}
+            {health.failureMemory.length > 0 && (
+              <div className="mt-4 border-t border-gray-800 pt-3">
+                <div className="text-[10px] uppercase tracking-wider text-gray-500 mb-1">Failure memory</div>
+                {health.failureMemory.slice(0, 2).map((f, i) => (
+                  <div key={i} className="text-[11px] text-gray-500 mb-1">⚠ {f.lesson}</div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
+      </section>
 
       {/* The Smith */}
       <section className="rounded-xl border border-cyan-900/40 bg-[#111117] p-5 mb-6">

@@ -16,6 +16,10 @@
  */
 
 import { createLogger } from '@nova/telemetry';
+import {
+  type ProviderName, type ProviderOutcome, type TaskTier,
+  PROVIDER_CAPS, setConfigured, runProviderChain, orderFor, healthSnapshot,
+} from './providers';
 
 const logger = createLogger('ai-router');
 
@@ -32,7 +36,110 @@ export interface AIResponse {
   free: boolean;
 }
 
-// ── Provider 1: Google Gemini (OpenAI-compatible endpoint) ────────────
+// ── SOVEREIGN MIND LAYER: normalized outcome-callers behind the registry ──
+// Each provider reports ok / quota (HTTP 429) / error / absent (unconfigured)
+// so the registry can fail over intelligently and never fabricate.
+
+const OAI_PROVIDERS: Partial<Record<ProviderName, { url: string; model: string; keyEnv: string }>> = {
+  gemini: { url: 'https://generativelanguage.googleapis.com/v1beta/openai/chat/completions', model: 'gemini-2.5-flash', keyEnv: 'GEMINI_API_KEY' },
+  groq:   { url: 'https://api.groq.com/openai/v1/chat/completions', model: 'llama-3.3-70b-versatile', keyEnv: 'GROQ_API_KEY' },
+  grok:   { url: 'https://api.x.ai/v1/chat/completions', model: 'grok-3-mini', keyEnv: 'XAI_API_KEY' },
+  openai: { url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keyEnv: 'OPENAI_API_KEY' },
+};
+
+// Register which providers are configured (present keys / local url), once.
+function syncConfigured(): void {
+  for (const [name, cfg] of Object.entries(OAI_PROVIDERS)) setConfigured(name as ProviderName, !!process.env[cfg!.keyEnv]);
+  setConfigured('local', !!process.env.LOCAL_LLM_URL);
+  setConfigured('claude', !!process.env.ANTHROPIC_API_KEY);
+}
+syncConfigured();
+
+// The provider used by the most recent successful LLM call (for Forge Control).
+let lastRun: { provider: ProviderName | null; at: string | null; tier: TaskTier | null } = { provider: null, at: null, tier: null };
+export function lastRunProvider() { return { ...lastRun }; }
+export function providerHealth() { syncConfigured(); return { ...healthSnapshot(), lastRun }; }
+
+function parseEnvOrder(): ProviderName[] {
+  const raw = process.env.AI_FALLBACK_ORDER;
+  if (!raw) return [];
+  const valid = new Set(Object.keys(PROVIDER_CAPS));
+  return raw.split(',').map(s => s.trim()).filter(s => valid.has(s)) as ProviderName[];
+}
+
+async function providerOutcome(name: ProviderName, req: AIRequest): Promise<ProviderOutcome> {
+  const messages = [{ role: 'system', content: req.system }, { role: 'user', content: req.user }];
+  try {
+    if (name === 'local') {
+      const url = process.env.LOCAL_LLM_URL;
+      if (!url) return { status: 'absent' };
+      const res = await fetch(`${url.replace(/\/$/, '')}/chat/completions`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ model: process.env.LOCAL_LLM_MODEL || 'llama3.1', messages, max_tokens: req.maxTokens ?? 700, temperature: req.temperature ?? 0.7 }),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (res.status === 429) return { status: 'quota' };
+      if (!res.ok) return { status: 'error', reason: `http ${res.status}` };
+      const d = await res.json() as any;
+      const content = d?.choices?.[0]?.message?.content;
+      return content ? { status: 'ok', content } : { status: 'error', reason: 'empty' };
+    }
+    if (name === 'claude') {
+      const key = process.env.ANTHROPIC_API_KEY;
+      if (!key) return { status: 'absent' };
+      const res = await fetch('https://api.anthropic.com/v1/messages', {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'x-api-key': key, 'anthropic-version': '2023-06-01' },
+        body: JSON.stringify({ model: 'claude-haiku-4-5', max_tokens: req.maxTokens ?? 700, system: req.system, messages: [{ role: 'user', content: req.user }] }),
+        signal: AbortSignal.timeout(20000),
+      });
+      if (res.status === 429) return { status: 'quota' };
+      if (!res.ok) return { status: 'error', reason: `http ${res.status}` };
+      const d = await res.json() as any;
+      const content = d?.content?.[0]?.text;
+      return content ? { status: 'ok', content } : { status: 'error', reason: 'empty' };
+    }
+    const cfg = OAI_PROVIDERS[name];
+    if (!cfg) return { status: 'absent' };
+    const key = process.env[cfg.keyEnv];
+    if (!key) return { status: 'absent' };
+    const res = await fetch(cfg.url, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
+      body: JSON.stringify({ model: cfg.model, messages, max_tokens: req.maxTokens ?? 700, temperature: req.temperature ?? 0.7 }),
+      signal: AbortSignal.timeout(name === 'grok' ? 20000 : 15000),
+    });
+    if (res.status === 429) return { status: 'quota' };
+    if (!res.ok) { const err = await res.text().catch(() => ''); return { status: 'error', reason: `http ${res.status} ${err.slice(0, 80)}` }; }
+    const d = await res.json() as any;
+    const content = d?.choices?.[0]?.message?.content;
+    return content ? { status: 'ok', content } : { status: 'error', reason: 'empty' };
+  } catch (e) {
+    const msg = (e as Error).message || 'error';
+    return { status: /timeout|abort/i.test(msg) ? 'error' : 'error', reason: msg };
+  }
+}
+
+// Route a request through the tiered chain. Returns provider used + content,
+// or providerUnavailable (never fabricated).
+export async function route(req: AIRequest, tier: TaskTier, prefer?: ProviderName) {
+  syncConfigured();
+  const order = orderFor(tier, { prefer, envOrder: parseEnvOrder() });
+  const chain = await runProviderChain(order.map((n) => ({ name: n, call: () => providerOutcome(n, req) })));
+  if (!chain.providerUnavailable && chain.content && chain.provider) {
+    lastRun = { provider: chain.provider, at: new Date().toISOString(), tier };
+    import('./candle').then(({ reportMindHealth }) => reportMindHealth(true)).catch(() => {});
+    logger.info('LLM routed', { provider: chain.provider, tier, attempts: chain.attempts });
+  } else {
+    import('./candle').then(({ reportMindHealth }) => reportMindHealth(false)).catch(() => {});
+    // Quota-darkness is a SOVEREIGNTY failure, not a mere API blip — remember it.
+    import('./failure-memory').then(({ recordProviderUnavailable }) => recordProviderUnavailable(tier, chain.attempts)).catch(() => {});
+    logger.warn('All providers unavailable', { tier, attempts: chain.attempts });
+  }
+  return chain;
+}
+
+// ── LEGACY CALLERS (superseded by providerOutcome + the registry above) ──
+// Retained temporarily for reference; not on any live path. Remove next pass.
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 async function callGemini(req: AIRequest): Promise<AIResponse | null> {
   const key = process.env.GEMINI_API_KEY;
   if (!key) return null;
@@ -384,50 +491,29 @@ START HERE — TODAY:
 Write one sentence: "In 90 days, I want to have [specific result]." If you can write it clearly, you have a destination. Everything else is navigation.`;
 }
 
-// ── Main router — tries providers in order, never fails ──────────────
+// ── Main router — deterministic fallback means this NEVER fails ──────────
+// Cards route at the 'coding' tier (structured generation) with a
+// deterministic sovereignty floor: even with every provider dark, a real
+// card comes back (labeled 'deterministic' so the UI can say so).
 export async function generateCard(req: AIRequest): Promise<AIResponse> {
-  // Try free providers in order
-  const providers = [callGemini, callGroq];
-
-  // Add paid providers if keys exist
-  if (process.env.XAI_API_KEY)       providers.push(callGrok);
-  if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
-  if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
-
-  for (const provider of providers) {
-    const result = await provider(req);
-    if (result) {
-      logger.info('AI card generated', { provider: result.provider, free: result.free });
-      return result;
-    }
+  const chain = await route(req, 'coding');
+  if (!chain.providerUnavailable && chain.content && chain.provider) {
+    return { content: chain.content, provider: chain.provider, free: PROVIDER_CAPS[chain.provider].costPer1kUsd === 0 };
   }
-
-  // Deterministic fallback — always works
-  logger.info('Using deterministic card engine (no AI providers available)');
-  const content = deterministicCard(req.user);
-  return { content, provider: 'deterministic', free: true };
+  logger.info('Using deterministic card engine (all providers dark — sovereignty floor)');
+  return { content: deterministicCard(req.user), provider: 'deterministic', free: true };
 }
 
 // ── Chat router — providers only, NO deterministic fallback ──────────
-// For conversational surfaces (the World hail). If no provider answers,
-// return null and let the caller say "Unavailable" honestly, in Nova's
-// voice. Law One of the World: nothing fake renders.
-export async function generateChat(req: AIRequest): Promise<AIResponse | null> {
-  const providers = [callGemini, callGroq];
-  if (process.env.LOCAL_LLM_URL)     providers.unshift(callLocal); // local-first when it exists (§6)
-  if (process.env.XAI_API_KEY)       providers.push(callGrok);
-  if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
-  if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
-
-  for (const provider of providers) {
-    const result = await provider(req);
-    if (result) {
-      logger.info('AI chat generated', { provider: result.provider, free: result.free });
-      import('./candle').then(({ reportMindHealth }) => reportMindHealth(true)).catch(() => {});
-      return result;
-    }
+// For conversational surfaces (the World hail). If no provider reasons,
+// return null and let the caller say "Unavailable" honestly. Law One of
+// the World: nothing fake renders. The registry records the sovereignty
+// failure so quota-darkness becomes memory, not just a null.
+export async function generateChat(req: AIRequest, tier: TaskTier = 'reasoning'): Promise<AIResponse | null> {
+  const chain = await route(req, tier);
+  if (!chain.providerUnavailable && chain.content && chain.provider) {
+    return { content: chain.content, provider: chain.provider, free: PROVIDER_CAPS[chain.provider].costPer1kUsd === 0 };
   }
-  import('./candle').then(({ reportMindHealth }) => reportMindHealth(false)).catch(() => {});
   return null;
 }
 
@@ -523,18 +609,13 @@ Keep it tight. Keep it real. Use their actual details. No padding.`;
     ? `\n\nREGIME: EXPLOITATION — this is known terrain with fast feedback. Be concrete: real numbers, prices, deadlines, and one measurable target per move.`
     : `\n\nREGIME: EXPLORATION — this is unknown terrain. Do NOT invent scores, projections, or revenue estimates. Frame moves as cheap experiments: what each one would LEARN, what doors it opens, and the smallest real-world test that discriminates between futures.`;
 
-  // Try AI providers first
-  const providers = [callGemini, callGroq];
-  if (process.env.XAI_API_KEY)       providers.push(callGrok);
-  if (process.env.ANTHROPIC_API_KEY) providers.push(callClaude);
-  if (process.env.OPENAI_API_KEY)    providers.push(callOpenAI as any);
-
-  for (const provider of providers) {
-    const result = await provider(aiReq);
-    if (result) return { ...result, regime, regimeRationale: rationale };
+  // Route through the sovereign registry (coding tier — structured card).
+  const chain = await route(aiReq, 'coding');
+  if (!chain.providerUnavailable && chain.content && chain.provider) {
+    return { content: chain.content, provider: chain.provider, free: PROVIDER_CAPS[chain.provider].costPer1kUsd === 0, regime, regimeRationale: rationale };
   }
 
-  // Deterministic fallback using the richer context
+  // Deterministic fallback using the richer context — sovereignty floor.
   const content = deterministicCard(context, haves, wants);
   return { content, provider: 'deterministic', free: true, regime, regimeRationale: rationale };
 }
