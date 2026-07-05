@@ -67,6 +67,9 @@ const ROUTE_SCOPES: Record<string, Scope[]> = {
 const PUBLIC_ROUTES = [
   '/v1/bootstrap/',   // one-time admin setup — remove after use
   '/v1/cards/intake', // situation intake — public (3 free/month)
+  '/v1/cards/outcome', // Phase 1: mark what happened (visitor-scoped)
+  '/v1/cards/calibration', // Phase 1: Nova's real track record (honest 0-state)
+  '/v1/cards/mine', // Phase 1: a visitor's own cards to resolve
   '/health',
   '/version',
   '/v1/auth/register',

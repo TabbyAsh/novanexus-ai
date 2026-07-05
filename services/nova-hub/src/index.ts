@@ -12753,6 +12753,8 @@ app.delete('/v1/business/jobs/:id', authMiddleware, async (req: AuthenticatedReq
 // This is the core product differentiator: works for anyone.
 app.post('/v1/cards/intake', async (req: Request, res: Response) => {
   const { context, haves, wants } = req.body || {};
+  const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.slice(0, 64) : null;
+  const userId = (req.headers['x-user-id'] as string) || null;
 
   if (!context && (!haves || haves.length === 0) && (!wants || wants.length === 0)) {
     return res.status(400).json({
@@ -12782,9 +12784,20 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
       })
     ).catch(() => {});
 
+    // PHASE 1 — persist the card so its outcome can close the loop later.
+    let cardId: string | null = null;
+    try {
+      const { persistCard } = await import('./card-outcomes');
+      cardId = await persistCard({
+        userId, visitorId, context: context || '', haves: haves || [], wants: wants || [],
+        regime: result.regime, provider: result.provider, content: result.content,
+      });
+    } catch { /* card still returns; loop just can't close for this one */ }
+
     res.json({
       success: true,
       data: {
+        cardId,
         content: result.content, provider: result.provider, free: result.free,
         regime: result.regime, regimeRationale: result.regimeRationale,
       },
@@ -12792,6 +12805,52 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
   } catch (err) {
     logger.error('Intake card generation failed', err as Error);
     res.status(500).json({ success: false, error: { code: 'GENERATION_FAILED', message: 'Could not generate card.' } });
+  }
+});
+
+// PHASE 1 — the second half of the loop: what happened? (cardId in body so
+// the route is a clean public path; the UUID is an unguessable capability.)
+app.post('/v1/cards/outcome', async (req: Request, res: Response) => {
+  try {
+    const cardId = String(req.body?.cardId || '');
+    const outcome = String(req.body?.outcome || '');
+    if (!cardId || !['worked', 'partial', 'failed'].includes(outcome)) {
+      res.status(400).json({ success: false, error: { code: 'BAD_OUTCOME', message: 'cardId + outcome (worked|partial|failed) required.' } });
+      return;
+    }
+    const value = Number.isFinite(Number(req.body?.value)) ? Number(req.body.value) : null;
+    const { markOutcome } = await import('./card-outcomes');
+    const r = await markOutcome(cardId, outcome as any, String(req.body?.note || ''), value);
+    if (!r.ok) { res.status(404).json({ success: false, error: { code: 'CARD_NOT_FOUND', message: 'No such card.' } }); return; }
+    res.json({ success: true, data: r });
+  } catch (err) {
+    logger.error('Card outcome failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'OUTCOME_FAILED', message: 'Could not record outcome.' } });
+  }
+});
+
+// PHASE 1 — Nova's real track record (public; honest 0-state).
+app.get('/v1/cards/calibration', async (req: Request, res: Response) => {
+  try {
+    const { calibration } = await import('./card-outcomes');
+    const visitorId = typeof req.query.visitor === 'string' ? req.query.visitor : undefined;
+    const userId = (req.headers['x-user-id'] as string) || undefined;
+    res.json({ success: true, data: await calibration(userId ? { userId } : visitorId ? { visitorId } : undefined) });
+  } catch {
+    res.status(503).json({ success: false, error: { code: 'CAL_DARK', message: 'Unavailable.' } });
+  }
+});
+
+// PHASE 1 — a person's own cards, to mark what happened.
+app.get('/v1/cards/mine', async (req: Request, res: Response) => {
+  try {
+    const { listCards } = await import('./card-outcomes');
+    const visitorId = typeof req.query.visitor === 'string' ? req.query.visitor : undefined;
+    const userId = (req.headers['x-user-id'] as string) || undefined;
+    if (!userId && !visitorId) { res.json({ success: true, data: { cards: [] } }); return; }
+    res.json({ success: true, data: { cards: await listCards(userId ? { userId } : { visitorId }) } });
+  } catch {
+    res.status(503).json({ success: false, error: { code: 'CARDS_DARK', message: 'Unavailable.' } });
   }
 });
 

@@ -45,6 +45,27 @@ export default function StartPage() {
   const [regime, setRegime] = useState<{ regime: string; rationale: string } | null>(null);
   const [provider, setProvider] = useState<string>('');
   const [error, setError] = useState<string | null>(null);
+  const [cardId, setCardId] = useState<string | null>(null);
+  const [outcomeMarked, setOutcomeMarked] = useState<string | null>(null);
+
+  // Anonymous continuity so a card's outcome can close the loop later.
+  function visitorId(): string {
+    if (typeof window === 'undefined') return '';
+    let v = localStorage.getItem('nova_visitor_id');
+    if (!v) { v = 'v_' + Math.random().toString(16).slice(2) + Date.now().toString(16); localStorage.setItem('nova_visitor_id', v); }
+    return v;
+  }
+
+  const markOutcome = async (outcome: 'worked' | 'partial' | 'failed') => {
+    if (!cardId) return;
+    setOutcomeMarked(outcome);
+    try {
+      await fetch(`${API}/v1/cards/outcome`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ cardId, outcome }),
+      });
+    } catch { /* the mark is optimistic; the record is what matters */ }
+  };
 
   const toggleHave = (id: string) =>
     setHaves(prev => prev.includes(id) ? prev.filter(x => x !== id) : [...prev, id]);
@@ -69,13 +90,14 @@ export default function StartPage() {
       const res = await fetch(`${API}/v1/cards/intake`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context, haves: haveLabels, wants: wantLabels }),
+        body: JSON.stringify({ context, haves: haveLabels, wants: wantLabels, visitorId: visitorId() }),
       });
       const d = await res.json();
       if (d.success) {
         setCard(d.data?.content || null);
         setRegime(d.data?.regime ? { regime: d.data.regime, rationale: d.data.regimeRationale || '' } : null);
         setProvider(d.data?.provider || '');
+        setCardId(d.data?.cardId || null);
       }
       else { setError('Nova couldn\'t generate your card. Try adding more detail about your specific situation.'); }
     } catch { setError('Network error. Please try again.'); }
@@ -274,6 +296,25 @@ export default function StartPage() {
                     )}
                     <div className="text-sm text-gray-100 whitespace-pre-wrap leading-relaxed">{card}</div>
                   </div>
+
+                  {/* THE OUTCOME LOOP — close it. This is what makes Nova learn. */}
+                  {cardId && (
+                    <div className="rounded-xl border border-cyan-900/40 bg-cyan-950/10 p-4">
+                      {!outcomeMarked ? (
+                        <>
+                          <div className="text-xs font-semibold text-cyan-300 mb-2">When you know how this played out, tell Nova.</div>
+                          <div className="text-[11px] text-gray-500 mb-3">She learns from every real outcome — that&apos;s what makes the next card sharper. Come back and mark it.</div>
+                          <div className="flex gap-2">
+                            <button onClick={() => markOutcome('worked')} className="flex-1 py-2 rounded-lg bg-emerald-600/20 border border-emerald-600/40 text-emerald-300 text-xs font-medium hover:bg-emerald-600/30 transition">It worked</button>
+                            <button onClick={() => markOutcome('partial')} className="flex-1 py-2 rounded-lg bg-amber-600/20 border border-amber-600/40 text-amber-300 text-xs font-medium hover:bg-amber-600/30 transition">Partly</button>
+                            <button onClick={() => markOutcome('failed')} className="flex-1 py-2 rounded-lg bg-red-600/15 border border-red-600/40 text-red-300 text-xs font-medium hover:bg-red-600/25 transition">It didn&apos;t</button>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="text-xs text-cyan-300">Logged — Nova remembers. This is now part of her track record. Thank you; that&apos;s how she gets better.</div>
+                      )}
+                    </div>
+                  )}
 
                   {/* Actions */}
                   <div className="grid grid-cols-2 gap-3">
