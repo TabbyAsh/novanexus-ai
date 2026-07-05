@@ -21,61 +21,49 @@ import { useAuthStore } from '@/lib/store';
 // USER NAV — what regular users see (clean, guided, no admin)
 // ─────────────────────────────────────────────────────────────────────
 
+// THREE SECTORS + Nova. Each sector is one door to a unified value loop —
+// no more twelve redundant tools. (Rebuild Phase 0.)
 const USER_NAV = [
   {
     section: 'NOVA',
     color: 'text-emerald-400',
     items: [
-      { name: 'Talk to Nova',  href: '/dashboard/nova',        icon: '◆', badge: '' },
-      { name: 'Dashboard',     href: '/dashboard',             icon: '◈', badge: '' },
+      { name: 'Talk to Nova',  href: '/dashboard/nova',   icon: '◆', badge: '' },
+      { name: 'Home',          href: '/dashboard',        icon: '◈', badge: '' },
     ],
   },
   {
-    section: 'BRANCHES',
+    section: 'SECTORS',
     color: 'text-cyan-400',
     items: [
-      { name: 'Flip Analyzer', href: '/flip',                    icon: '◇', badge: '' },
-      { name: 'Flip Finder',   href: '/dashboard/scanner',       icon: '◈', badge: '' },
-      { name: 'Flip Pipeline', href: '/dashboard/flips',         icon: '◇', badge: '' },
-      { name: 'Trend Radar',   href: '/dashboard/trends',        icon: '◎', badge: '' },
-      { name: 'Value Radar',   href: '/dashboard/value-radar',   icon: '◉', badge: 'NEW' },
-      { name: 'Market',        href: '/dashboard/market',        icon: '◹', badge: '' },
-      { name: 'Screener',      href: '/dashboard/screener',      icon: '◹', badge: '' },
-      { name: 'Business OS',   href: '/dashboard/business',      icon: '◈', badge: '' },
-      { name: 'Money Tools',   href: '/dashboard/tools',         icon: '◉', badge: '' },
-      { name: 'Forge Control', href: '/dashboard/forge-control', icon: '⚒', badge: 'NEW' },
-    ],
-  },
-  {
-    section: 'KNOWLEDGE',
-    color: 'text-violet-400',
-    items: [
-      { name: 'Decision Cards',href: '/decision-cards',     icon: '◇', badge: '' },
-      { name: 'Field Manual',  href: '/field-manual',       icon: '◈', badge: '' },
-      { name: 'Outcomes',      href: '/dashboard/outcomes', icon: '◉', badge: '' },
+      { name: 'The Market',    href: '/dashboard/market',  icon: '◹', badge: '' },
+      { name: 'The Bazaar',    href: '/dashboard/bazaar',  icon: '◇', badge: '' },
+      { name: 'The Forge',     href: '/dashboard/forge',   icon: '⚒', badge: '' },
     ],
   },
   {
     section: 'ACCOUNT',
     color: 'text-gray-500',
     items: [
+      { name: 'Outcomes',      href: '/dashboard/outcomes', icon: '◉', badge: '' },
       { name: 'Settings',      href: '/dashboard/settings', icon: '◌', badge: '' },
     ],
   },
 ];
 
-// Admin-only items — only visible to OWNER/ADMIN role
+// THE WORLD — the founder's private cockpit. Nova runs the company from here;
+// the operator watches and approves. Only visible to OWNER/ADMIN.
 const ADMIN_NAV = [
-  { name: 'Safety & Kill Switch',href: '/dashboard/safety',         icon: '🛡️' },
-  { name: 'AI Agents',           href: '/dashboard/agents',         icon: '🤖' },
-  { name: 'Analytics',           href: '/dashboard/analytics',      icon: '📉' },
-  { name: 'API Keys',            href: '/dashboard/api-keys',       icon: '🔑' },
-  { name: 'Team',                href: '/dashboard/team',           icon: '👥' },
-  { name: 'Custom Indicators',   href: '/dashboard/custom-indicators', icon: '⚙️' },
-  { name: 'Journal',             href: '/dashboard/journal',        icon: '📓' },
-  { name: 'Daily Brief',         href: '/dashboard/nexus',          icon: '📰' },
-  { name: 'Social Content',      href: '/dashboard/social',         icon: '📣' },
-  { name: 'Marketplace',         href: '/dashboard/marketplace',    icon: '🏪' },
+  { name: 'Enter the World',    href: '/world',                   icon: '✦' },
+  { name: 'Command Center',     href: '/dashboard/cockpit',       icon: '◉' },
+  { name: 'Agent Workforce',    href: '/dashboard/forge-control', icon: '⚒' },
+  { name: 'Operations',         href: '/dashboard/business',      icon: '◈' },
+  { name: 'Safety & Kill Switch', href: '/dashboard/safety',      icon: '🛡️' },
+  { name: 'Analytics',          href: '/dashboard/analytics',     icon: '📉' },
+  { name: 'Daily Brief',        href: '/dashboard/nexus',         icon: '📰' },
+  { name: 'Social Content',     href: '/dashboard/social',        icon: '📣' },
+  { name: 'API Keys',           href: '/dashboard/api-keys',      icon: '🔑' },
+  { name: 'Team',               href: '/dashboard/team',          icon: '👥' },
 ];
 
 function useIsMobile() {
@@ -212,7 +200,7 @@ function Sidebar({ collapsed, onToggle, isMobile }: {
             <div className="mt-4 pt-4 border-t border-white/[0.06]">
               {(!collapsed || isMobile) && (
                 <div className="px-3 py-1 text-[9px] font-bold tracking-[0.18em] uppercase text-amber-500/60">
-                  ADMIN
+                  THE WORLD
                 </div>
               )}
               {ADMIN_NAV.map(item => {
