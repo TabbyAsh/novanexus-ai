@@ -162,7 +162,7 @@ CREATE INDEX IF NOT EXISTS idx_forge_workspaces_status ON forge_workspaces(statu
 
 CREATE TABLE IF NOT EXISTS forge_command_rules (
     id VARCHAR(120) PRIMARY KEY,               -- stable human-readable id, e.g. 'git-status'
-    binary VARCHAR(80) NOT NULL,               -- executable name (no paths)
+    "binary" VARCHAR(80) NOT NULL,             -- executable name (no paths); quoted — reserved word
     args_pattern TEXT NOT NULL,                -- anchored regex over args.join(' ')
     forbidden_args_pattern TEXT,               -- optional regex that voids the match
     tier VARCHAR(2) NOT NULL CHECK (tier IN ('T0', 'T1', 'T2', 'T3')),
@@ -304,7 +304,7 @@ ON CONFLICT (slug) DO NOTHING;
 -- Human-owned. Patterns are anchored regexes over args.join(' ').
 -- ============================================
 
-INSERT INTO forge_command_rules (id, binary, args_pattern, forbidden_args_pattern, tier, description) VALUES
+INSERT INTO forge_command_rules (id, "binary", args_pattern, forbidden_args_pattern, tier, description) VALUES
   -- T0: read-only
   ('git-status',      'git',  '^status( .*)?$',                          NULL,                                'T0', 'git status'),
   ('git-diff',        'git',  '^diff( .*)?$',                            NULL,                                'T0', 'git diff (workspace)'),

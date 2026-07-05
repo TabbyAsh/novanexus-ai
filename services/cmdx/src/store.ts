@@ -20,7 +20,7 @@ export async function loadCommandRules(): Promise<{ rules: CommandRule[]; source
       description: string;
       enabled: boolean;
     }>(
-      `SELECT id, binary, args_pattern, forbidden_args_pattern, tier, description, enabled
+      `SELECT id, "binary", args_pattern, forbidden_args_pattern, tier, description, enabled
        FROM forge_command_rules WHERE enabled = true ORDER BY tier ASC, id ASC`
     );
     if (result.rows.length > 0) {

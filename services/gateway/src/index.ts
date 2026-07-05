@@ -112,6 +112,8 @@ const PUBLIC_ROUTES = [
   '/v1/flip-card/',
   // The World — public arrival surface (pulse + hail)
   '/v1/world/',
+  // Agent eval leaderboard — public read (Forge Control surface)
+  '/v1/agents/evals/leaderboard',
 ];
 
 // Premium features that require paid plan (LITE or higher)
@@ -1538,11 +1540,9 @@ app.all('/v1/executor/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
-// The Smith + agent eval loop (builder-agent layer, authed) -> Nova Hub
+// The Smith (builder-agent layer, authed) -> Nova Hub. Agent evals are
+// already forwarded by the existing /v1/agents/* route below.
 app.all('/v1/smith/*', (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.novaHub, req, res);
-});
-app.all('/v1/agents/evals*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
