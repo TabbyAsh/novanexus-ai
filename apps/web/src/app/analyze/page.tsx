@@ -7,6 +7,7 @@ import Link from 'next/link';
 interface FlipAppraisal {
   decision: 'BUY' | 'PASS' | 'WATCH' | 'NEGOTIATE';
   estimateBasis?: 'MANUAL_COMPS' | 'LIVE_COMPS' | 'CATEGORY_MODEL';
+  flipAccuracy?: { category: string; samples: number; medianAbsErrorPct: number | null; earned: boolean } | null;
   confidence: number;
   maxBuyPrice: number | null;
   expectedResaleLow: number | null;
@@ -356,6 +357,11 @@ export default function AnalyzePage() {
                     {Math.round(result.appraisal.confidence * 100)}% confidence · {result.appraisal.riskLevel} risk
                   </span>
                 </div>
+                {result.appraisal.flipAccuracy?.earned && (
+                  <div className="mb-3 px-3 py-2 rounded-lg bg-cyan-500/10 border border-cyan-500/30 text-cyan-300 text-xs">
+                    <strong>Earned accuracy:</strong> Nova&apos;s appraisal has been within ~{result.appraisal.flipAccuracy.medianAbsErrorPct}% on the last {result.appraisal.flipAccuracy.samples} {result.appraisal.flipAccuracy.category} sales you&apos;ve logged. This band is corrected by real outcomes, not just a model.
+                  </div>
+                )}
                 {result.appraisal.estimateBasis === 'CATEGORY_MODEL' && (
                   <div className="mb-3 px-3 py-2 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-300 text-xs leading-relaxed">
                     <strong className="uppercase tracking-wider">Category-model estimate</strong> — no sold listings were

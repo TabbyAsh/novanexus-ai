@@ -6474,6 +6474,40 @@ function incrementFlipCardUsage(ip: string): void {
   if (entry) entry.count++;
 }
 
+// PHASE 2 — close the flip loop: record what an item ACTUALLY sold for.
+app.post('/v1/flip/sale', async (req: Request, res: Response) => {
+  try {
+    const estimatedMid = Number(req.body?.estimatedMid);
+    const actualPrice = Number(req.body?.actualPrice);
+    if (!(estimatedMid > 0) || !(actualPrice >= 0)) {
+      res.status(400).json({ success: false, error: { code: 'BAD_SALE', message: 'estimatedMid and actualPrice required.' } });
+      return;
+    }
+    const { recordSale, accuracyFor } = await import('./flip-accuracy');
+    const category = String(req.body?.category || 'General');
+    const r = await recordSale({
+      userId: (req.headers['x-user-id'] as string) || null,
+      visitorId: typeof req.body?.visitorId === 'string' ? req.body.visitorId.slice(0, 64) : null,
+      category, itemTitle: String(req.body?.itemTitle || ''), estimatedMid, actualPrice,
+    });
+    const accuracy = await accuracyFor(category);
+    res.json({ success: true, data: { ...r, accuracy } });
+  } catch (err) {
+    logger.error('Flip sale failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'SALE_FAILED', message: 'Could not record sale.' } });
+  }
+});
+
+// PHASE 2 — a category's earned accuracy (public read).
+app.get('/v1/flip/accuracy', async (req: Request, res: Response) => {
+  try {
+    const { accuracyFor } = await import('./flip-accuracy');
+    res.json({ success: true, data: await accuracyFor(String(req.query.category || 'General')) });
+  } catch {
+    res.status(503).json({ success: false, error: { code: 'ACC_DARK', message: 'Unavailable.' } });
+  }
+});
+
 app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
   const userId = req.headers['x-user-id'] as string;
   const isAuthenticated = !!userId;
@@ -6601,6 +6635,18 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     // category-model figures are never presented as comps.
     const estimateBasis: 'MANUAL_COMPS' | 'LIVE_COMPS' | 'CATEGORY_MODEL' =
       manualComps.length >= 3 ? 'MANUAL_COMPS' : liveCompCount > 0 ? 'LIVE_COMPS' : 'CATEGORY_MODEL';
+
+    // PHASE 2 — the flip accuracy loop: shift the category-model band by what
+    // this category has ACTUALLY sold for. No-op until enough real sales exist.
+    let flipAccuracy: any = null;
+    if (estimateBasis === 'CATEGORY_MODEL') {
+      try {
+        const { correctBand } = await import('./flip-accuracy');
+        const corrected = await correctBand(flipCard.item_category || 'General', resaleLow, resaleMid, resaleHigh);
+        if (corrected.accuracy.earned) { resaleLow = corrected.low; resaleMid = corrected.mid; resaleHigh = corrected.high; }
+        flipAccuracy = corrected.accuracy;
+      } catch { /* uncorrected band is still an honest band */ }
+    }
 
     if (!hasComparableData) {
       // No comps found — keep the engine's category-model band, clearly
@@ -6747,6 +6793,7 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     const appraisalPayload = {
       decision,
       estimateBasis,
+      flipAccuracy, // Phase 2: earned track record for this category, or null
       maxBuyPrice,
       expectedResaleLow,
       expectedResaleHigh,
