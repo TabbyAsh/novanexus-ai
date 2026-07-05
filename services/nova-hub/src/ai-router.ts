@@ -47,9 +47,36 @@ const OAI_PROVIDERS: Partial<Record<ProviderName, { url: string; model: string; 
   openai: { url: 'https://api.openai.com/v1/chat/completions', model: 'gpt-4o-mini', keyEnv: 'OPENAI_API_KEY' },
 };
 
-// Register which providers are configured (present keys / local url), once.
+// KEY-PREFIX-AWARE RESOLUTION — route by what the key actually IS, not which
+// env box it was pasted in. Groq keys start 'gsk_', xAI 'xai-', OpenAI 'sk-'.
+// This defends against the common mixup of a Groq key in the XAI slot (and
+// vice versa) so a valid free key is never wasted.
+function resolveKey(name: ProviderName): string | undefined {
+  const xai = process.env.XAI_API_KEY?.trim();
+  const groq = process.env.GROQ_API_KEY?.trim();
+  const openai = process.env.OPENAI_API_KEY?.trim();
+  if (name === 'groq') {
+    if (groq?.startsWith('gsk_')) return groq;
+    if (xai?.startsWith('gsk_')) return xai;   // misplaced Groq key in XAI slot
+    if (groq && !groq.startsWith('xai-')) return groq;
+    return undefined;
+  }
+  if (name === 'grok') {
+    if (xai?.startsWith('xai-')) return xai;
+    if (groq?.startsWith('xai-')) return groq; // misplaced xAI key in GROQ slot
+    return undefined;
+  }
+  if (name === 'openai') return openai?.startsWith('sk-') ? openai : undefined;
+  if (name === 'gemini') return process.env.GEMINI_API_KEY?.trim();
+  return undefined;
+}
+
+// Register which providers are configured, once. Uses prefix-aware resolution.
 function syncConfigured(): void {
-  for (const [name, cfg] of Object.entries(OAI_PROVIDERS)) setConfigured(name as ProviderName, !!process.env[cfg!.keyEnv]);
+  setConfigured('gemini', !!resolveKey('gemini'));
+  setConfigured('groq', !!resolveKey('groq'));
+  setConfigured('grok', !!resolveKey('grok'));
+  setConfigured('openai', !!resolveKey('openai'));
   setConfigured('local', !!process.env.LOCAL_LLM_URL);
   setConfigured('claude', !!process.env.ANTHROPIC_API_KEY);
 }
@@ -100,7 +127,7 @@ async function providerOutcome(name: ProviderName, req: AIRequest): Promise<Prov
     }
     const cfg = OAI_PROVIDERS[name];
     if (!cfg) return { status: 'absent' };
-    const key = process.env[cfg.keyEnv];
+    const key = resolveKey(name);
     if (!key) return { status: 'absent' };
     const res = await fetch(cfg.url, {
       method: 'POST', headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${key}` },
