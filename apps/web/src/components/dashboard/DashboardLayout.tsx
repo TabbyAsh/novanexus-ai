@@ -43,6 +43,7 @@ const USER_NAV = [
       { name: 'Screener',      href: '/dashboard/screener',      icon: '◹', badge: '' },
       { name: 'Business OS',   href: '/dashboard/business',      icon: '◈', badge: '' },
       { name: 'Money Tools',   href: '/dashboard/tools',         icon: '◉', badge: '' },
+      { name: 'Forge Control', href: '/dashboard/forge-control', icon: '⚒', badge: 'NEW' },
     ],
   },
   {

@@ -1538,6 +1538,14 @@ app.all('/v1/executor/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
+// The Smith + agent eval loop (builder-agent layer, authed) -> Nova Hub
+app.all('/v1/smith/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/agents/evals*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 // Ignition v2 (Spec v0.2 Layer D, authed) -> Nova Hub
 app.all('/v1/ignition/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);

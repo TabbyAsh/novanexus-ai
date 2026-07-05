@@ -1,0 +1,29 @@
+{
+  "name": "@nova/cmdx-service",
+  "version": "0.1.0",
+  "description": "CmdX — the Forge command-execution broker. The only component allowed to execute anything on behalf of agents.",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "ts-node-dev --respawn src/index.ts",
+    "start": "node dist/index.js",
+    "test": "jest",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@nova/agent-contracts": "*",
+    "@nova/policy": "*",
+    "@nova/shared": "*",
+    "@nova/telemetry": "*",
+    "express": "^4.18.2"
+  },
+  "devDependencies": {
+    "@types/express": "^4.17.21",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^20.10.0",
+    "jest": "^30.2.0",
+    "ts-jest": "^29.4.6",
+    "ts-node-dev": "^2.0.0",
+    "typescript": "^5.3.0"
+  }
+}

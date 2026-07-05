@@ -42,7 +42,13 @@ export interface WorldStage {
 export interface SwarmEventInput {
   id: string;
   sector: 'core' | 'market' | 'bazaar' | 'forge';
+  kind: string;   // card | flip | outcome | agent | event — the mote's real work
   fresh: boolean;
+}
+
+// An encounter surfaced to the DOM — the world explains itself (§7).
+export interface EncounterNotice {
+  reason: string;
 }
 
 export interface NebulaData {
@@ -483,21 +489,46 @@ const TRAIL = 9;
 const BIRTH_DUR = 1.6;
 
 interface Mote {
-  id: string; sector: keyof typeof SECTOR_COLOR; seed: number;
+  id: string; sector: keyof typeof SECTOR_COLOR; kind: string; fresh: boolean; seed: number;
   home: THREE.Vector3; r: number; speed: number; tilt: number;
   bornAt: number;          // world-time of (re)deployment
   returnAt: number | null; // when set, the agent is being drawn home
   bright: number;          // refinement — exchanges brighten the receiver
+  // kinematics — position persists, so noticing reads as real motion
+  px: number; py: number; pz: number;
+  state: 'orbit' | 'seeking' | 'connected';
+  partnerId: string | null;
+  stateUntil: number;      // when a connection releases
+  holdUntil: number;       // the noticed agent waits
+  cooldownUntil: number;   // encounters are occasions, not wallpaper
 }
 
-function Swarm({ stage, events }: { stage: WorldStage; events: SwarmEventInput[] }) {
+// Two motes are related when their REAL underlying events share something —
+// encounters carry meaning or they don't happen (§7: legibility over spectacle).
+function relate(a: Mote, b: Mote): string | null {
+  if (a.kind && a.kind === b.kind) {
+    const words: Record<string, string> = {
+      agent: 'two watchers recognized each other’s work',
+      card: 'two forged decisions found common ground',
+      flip: 'two appraisals compared their markets',
+      outcome: 'two recorded outcomes aligned',
+      event: 'two signals from the spine crossed and compared',
+    };
+    return words[a.kind] || 'two agents doing the same work noticed each other';
+  }
+  if (a.sector === b.sector && a.sector !== 'core') return `two ${a.sector} agents met over shared territory`;
+  if (a.fresh && b.fresh) return 'two newborn agents found each other';
+  return null;
+}
+
+function Swarm({ stage, events, onEncounter }: { stage: WorldStage; events: SwarmEventInput[]; onEncounter?: (n: EncounterNotice) => void }) {
   const pointsRef = useRef<THREE.Points>(null);
   const trailRefs = useRef<(THREE.Line | null)[]>([]);
   const exchRefs = useRef<(THREE.Line | null)[]>([]);
   const motes = useRef<Map<string, Mote>>(new Map());
   const trailHist = useRef<Float32Array[]>(Array.from({ length: MAX_MOTES }, () => new Float32Array(TRAIL * 3)));
-  const exchanges = useRef<{ a: number; b: number; life: number }[]>([]);
-  const lastExchange = useRef(0);
+  const exchanges = useRef<{ a: string; b: string; life: number }[]>([]);
+  const lastScan = useRef(0);
   const lastHeal = useRef(0);
 
   const { geometry, material } = useMemo(() => makeGlowPoints(MAX_MOTES, 13), []);
@@ -514,13 +545,15 @@ function Swarm({ stage, events }: { stage: WorldStage; events: SwarmEventInput[]
           ? new THREE.Vector3(0, 0, 0)
           : new THREE.Vector3(...NEBULA_POS[e.sector]).normalize().multiplyScalar(3.6 + seed * 1.8);
         motes.current.set(e.id, {
-          id: e.id, sector: e.sector, seed, home,
+          id: e.id, sector: e.sector, kind: e.kind, fresh: e.fresh, seed, home,
           r: e.sector === 'core' ? 2.0 + seed * 1.0 : 0.5 + seed * 0.9,
           speed: 0.25 + seed * 0.6,
           tilt: seed * Math.PI,
           bornAt: e.fresh ? stage.t : B.formation + 0.1 + (order / Math.max(1, list.length)) * (B.sigil - B.formation - 0.4) + seed * 0.2,
           returnAt: null,
           bright: 1,
+          px: 0, py: 0, pz: 0,
+          state: 'orbit', partnerId: null, stateUntil: 0, holdUntil: 0, cooldownUntil: 0,
         });
       }
       order++;
@@ -547,14 +580,30 @@ function Swarm({ stage, events }: { stage: WorldStage; events: SwarmEventInput[]
       if (candidate) candidate.returnAt = stage.t;
     }
 
-    // REFINEMENT: nearby agents exchange light.
-    if (stage.beat === 'open' && stage.pulseAlive && stage.t - lastExchange.current > 2.6 && arr.length > 3) {
-      lastExchange.current = stage.t;
-      const a = Math.floor(Math.random() * arr.length);
-      let b = Math.floor(Math.random() * arr.length);
-      if (b === a) b = (b + 1) % arr.length;
-      if (exchanges.current.length < 6) exchanges.current.push({ a, b, life: 1.3 });
-      arr[b].bright = Math.min(1.8, arr[b].bright + 0.35);
+    // ENCOUNTERS: an agent passes another whose work is genuinely RELATED —
+    // it notices: brakes against its momentum, turns back, connects, then
+    // resumes its path. Meaning, or it doesn't happen (§7).
+    if (stage.beat === 'open' && stage.pulseAlive && t - lastScan.current > 0.6) {
+      lastScan.current = t;
+      const busy = arr.filter(m => m.state !== 'orbit').length;
+      if (busy < 2) {
+        outer:
+        for (let i = 0; i < arr.length; i++) {
+          const A = arr[i];
+          if (A.state !== 'orbit' || stage.t < A.cooldownUntil || stage.t - A.bornAt < BIRTH_DUR || A.returnAt !== null) continue;
+          for (let j = i + 1; j < arr.length; j++) {
+            const C = arr[j];
+            if (C.state !== 'orbit' || stage.t < C.cooldownUntil || stage.t - C.bornAt < BIRTH_DUR || C.returnAt !== null) continue;
+            const dx = A.px - C.px, dy = A.py - C.py, dz = A.pz - C.pz;
+            if (dx * dx + dy * dy + dz * dz > 1.44) continue; // must actually pass close
+            const reason = relate(A, C);
+            if (!reason) continue;
+            A.state = 'seeking'; A.partnerId = C.id; (A as any).reason = reason;
+            C.holdUntil = stage.t + 6; // the noticed one slows and waits
+            break outer;
+          }
+        }
+      }
     }
 
     for (let i = 0; i < MAX_MOTES; i++) {
@@ -567,26 +616,53 @@ function Swarm({ stage, events }: { stage: WorldStage; events: SwarmEventInput[]
       const oy = m.home.y + Math.sin(a * 0.9 + m.tilt) * m.r * 0.35 * focus + wob;
       const oz = m.home.z + Math.sin(a) * m.r * focus * 0.8;
 
-      let x = ox, y = oy, z = oz, glow = m.bright;
-      if (age < 0) { x = 0; y = 0; z = 0; glow = 0; }                    // not yet deployed
-      else if (age < BIRTH_DUR) {                                        // DEPLOYMENT: ejected from the core along an arc
+      let glow = m.bright;
+      if (age < 0) {
+        m.px = 0; m.py = 0; m.pz = 0; glow = 0;                          // not yet deployed
+      } else if (age < BIRTH_DUR) {                                      // DEPLOYMENT: ejected from the core along an arc
         const p = ease(age / BIRTH_DUR);
-        x = ox * p; y = oy * p + Math.sin(p * Math.PI) * 0.5; z = oz * p;
+        m.px = ox * p; m.py = oy * p + Math.sin(p * Math.PI) * 0.5; m.pz = oz * p;
         glow = m.bright * (1.6 - 0.6 * p);                               // birth flash
       } else if (m.returnAt !== null) {                                  // drawn home for absorption
         const p = ease(clamp01((stage.t - m.returnAt) / 2.2));
-        x = ox * (1 - p); y = oy * (1 - p); z = oz * (1 - p);
+        m.px = ox * (1 - p); m.py = oy * (1 - p); m.pz = oz * (1 - p);
         glow = m.bright * (1 - p * 0.7);
         if (p >= 1) { m.returnAt = null; m.bornAt = stage.t; m.bright = 1.15; } // REDEPLOYED, refined
+      } else {
+        // kinematic follow — the orbit is a pull, not a rail
+        let tx = ox, ty = oy, tz = oz, k = 0.06;
+        if (m.state === 'seeking') {
+          const P = m.partnerId ? motes.current.get(m.partnerId) : undefined;
+          if (!P) { m.state = 'orbit'; m.partnerId = null; }
+          else {
+            tx = P.px; ty = P.py; tz = P.pz; k = 0.035;                  // braking, doubling back
+            const d2 = (m.px - P.px) ** 2 + (m.py - P.py) ** 2 + (m.pz - P.pz) ** 2;
+            if (d2 < 0.09) {                                             // CONNECTED
+              m.state = 'connected'; m.stateUntil = stage.t + 1.2;
+              m.bright = 1.6; P.bright = Math.min(1.8, P.bright + 0.4);
+              if (exchanges.current.length < 6) exchanges.current.push({ a: m.id, b: P.id, life: 1.4 });
+              if (onEncounter && (m as any).reason) onEncounter({ reason: (m as any).reason });
+            }
+          }
+        } else if (m.state === 'connected') {
+          const P = m.partnerId ? motes.current.get(m.partnerId) : undefined;
+          if (P) { tx = P.px + 0.18; ty = P.py + 0.1; tz = P.pz; k = 0.08; }
+          if (!P || stage.t > m.stateUntil) {                            // release, resume path
+            m.state = 'orbit'; m.partnerId = null; m.cooldownUntil = stage.t + 22;
+            if (P) { P.holdUntil = 0; P.cooldownUntil = stage.t + 22; }
+          }
+        }
+        if (stage.t < m.holdUntil) k *= 0.22;                            // the noticed one waits
+        m.px += (tx - m.px) * k; m.py += (ty - m.py) * k; m.pz += (tz - m.pz) * k;
       }
       m.bright += (1 - m.bright) * 0.005;
-      pos.setXYZ(i, x, y, z);
+      pos.setXYZ(i, m.px, m.py, m.pz);
       setColor(geometry, i, SECTOR_COLOR[m.sector], glow * born);
 
       // trail — a small body of light that shows where it came from
       const h = trailHist.current[i];
       h.copyWithin(3, 0, (TRAIL - 1) * 3);
-      h[0] = x; h[1] = y; h[2] = z;
+      h[0] = m.px; h[1] = m.py; h[2] = m.pz;
       const line = trailRefs.current[i];
       if (line) {
         const lp = line.geometry.getAttribute('position') as THREE.BufferAttribute;
@@ -600,17 +676,20 @@ function Swarm({ stage, events }: { stage: WorldStage; events: SwarmEventInput[]
     geometry.setDrawRange(0, MAX_MOTES);
     material.uniforms.uOpacity.value = born * (stage.pulseAlive ? 1 : 0.45);
 
-    // exchange lines — thought as motion between agents
+    // exchange lines — thought as motion between agents (tracked by id,
+    // so a connection survives the feed reordering beneath it)
     exchanges.current.forEach((ex, xi) => {
       ex.life -= dt;
       const line = exchRefs.current[xi];
       if (!line) return;
-      const alive = ex.life > 0 && arr[ex.a] && arr[ex.b];
+      const A = motes.current.get(ex.a);
+      const C = motes.current.get(ex.b);
+      const alive = ex.life > 0 && A && C;
       (line.material as THREE.LineBasicMaterial).opacity = alive ? Math.min(0.5, ex.life * 0.4) : 0;
       if (alive) {
         const lp = line.geometry.getAttribute('position') as THREE.BufferAttribute;
-        lp.setXYZ(0, pos.getX(ex.a), pos.getY(ex.a), pos.getZ(ex.a));
-        lp.setXYZ(1, pos.getX(ex.b), pos.getY(ex.b), pos.getZ(ex.b));
+        lp.setXYZ(0, A.px, A.py, A.pz);
+        lp.setXYZ(1, C.px, C.py, C.pz);
         lp.needsUpdate = true;
       }
     });
@@ -722,13 +801,14 @@ function UnbornNebulae() {
 
 // ── Composition ───────────────────────────────────────────────────────
 export default function ArrivalScene({
-  stage, events, nebulae, isMobile, onBeat,
+  stage, events, nebulae, isMobile, onBeat, onEncounter,
 }: {
   stage: WorldStage;
   events: SwarmEventInput[];
   nebulae: NebulaData[];
   isMobile: boolean;
   onBeat: (b: Beat) => void;
+  onEncounter?: (n: EncounterNotice) => void;
 }) {
   return (
     <Canvas
@@ -745,7 +825,7 @@ export default function ArrivalScene({
       <Shockwave stage={stage} />
       <NovaCore stage={stage} atomCount={isMobile ? 500 : 1200} />
       <Sigil stage={stage} count={isMobile ? 220 : 320} />
-      <Swarm stage={stage} events={events} />
+      <Swarm stage={stage} events={events} onEncounter={onEncounter} />
       {nebulae.map(n => <Nebula key={n.key} data={n} stage={stage} />)}
       <UnbornNebulae />
     </Canvas>

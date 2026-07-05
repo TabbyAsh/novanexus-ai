@@ -10514,6 +10514,53 @@ app.get('/v1/world/agents', async (req: Request, res: Response) => {
   }
 });
 
+// THE SMITH (agent layer §1, Phases 2+3) — writes code, runs it in an
+// isolated sandbox, reads its own failures, iterates. Output is a PROPOSAL
+// artifact; promotion to the repo is a human commit (never auto-merged).
+app.post('/v1/smith/build', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const problem = String(req.body?.problem || '').trim();
+    if (!problem) { res.status(400).json({ success: false, error: { code: 'EMPTY_PROBLEM', message: 'State the problem to solve.' } }); return; }
+    const { runSmithTask } = await import('./smith');
+    const result = await runSmithTask(problem);
+    if ('error' in result) { res.status(503).json({ success: false, error: { code: 'SMITH_HALT', message: result.error } }); return; }
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Smith build failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'SMITH_FAILED', message: 'Build failed; nothing was merged.' } });
+  }
+});
+
+// AGENT EVALS (Phase 5) — the recursive-improvement loop, objectively gated.
+app.post('/v1/agents/evals/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const agent = String(req.body?.agent || 'coder-agent');
+    const { runBenchmark } = await import('./agent-evals');
+    res.json({ success: true, data: await runBenchmark(agent) });
+  } catch (err) {
+    logger.error('Eval run failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'EVAL_HALT', message: 'Eval unavailable.' } });
+  }
+});
+app.post('/v1/agents/evals/improve', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const agent = String(req.body?.agent || 'coder-agent');
+    const { proposeAndGate } = await import('./agent-evals');
+    res.json({ success: true, data: await proposeAndGate(agent) });
+  } catch (err) {
+    logger.error('Self-improvement pass failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'IMPROVE_HALT', message: 'Improvement pass unavailable.' } });
+  }
+});
+app.get('/v1/agents/evals/leaderboard', async (_req: Request, res: Response) => {
+  try {
+    const rows = await query<any>(`SELECT agent, suite, passed, total, score, created_at FROM eval_runs ORDER BY created_at DESC LIMIT 20`).catch(() => ({ rows: [] }));
+    res.json({ success: true, data: { runs: rows.rows } });
+  } catch {
+    res.status(503).json({ success: false, error: { code: 'EVAL_DARK', message: 'Unavailable.' } });
+  }
+});
+
 // EXECUTOR (Spec v0.2 Layer A) — goal in, evidence-linked deliverable out.
 app.post('/v1/executor/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {

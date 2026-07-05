@@ -68,6 +68,15 @@ export default function WorldClient() {
   const firstPulseIds = useRef<Set<string> | null>(null);
   const visitorId = useRef<string>('');
   const [myAgents, setMyAgents] = useState<MyAgent[]>([]);
+  const [encounter, setEncounter] = useState<string | null>(null);
+  const encounterTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  // The world explains what you just watched happen (§7).
+  const onEncounter = useCallback((n: { reason: string }) => {
+    setEncounter(n.reason);
+    if (encounterTimer.current) clearTimeout(encounterTimer.current);
+    encounterTimer.current = setTimeout(() => setEncounter(null), 7000);
+  }, []);
 
   const fetchMyAgents = useCallback(async () => {
     if (!visitorId.current) return;
@@ -191,6 +200,7 @@ export default function WorldClient() {
     return pulse.pulse.map(e => ({
       id: e.id,
       sector: e.sector,
+      kind: e.kind,
       fresh: firstPulseIds.current ? !firstPulseIds.current.has(e.id) : false,
     }));
   }, [pulse]);
@@ -252,7 +262,7 @@ export default function WorldClient() {
       `}</style>
 
       <div className="absolute inset-0">
-        <ArrivalScene stage={stage.current} events={events} nebulae={nebulae} isMobile={isMobile} onBeat={onBeat} />
+        <ArrivalScene stage={stage.current} events={events} nebulae={nebulae} isMobile={isMobile} onBeat={onBeat} onEncounter={onEncounter} />
       </div>
 
       {/* The detonation, felt in the room */}
@@ -301,6 +311,16 @@ export default function WorldClient() {
       >
         <NexusChat open={open} messages={messages} input={input} setInput={setInput} send={send} thinking={thinking} />
       </div>
+
+      {/* An encounter, explained — the lights have reasons */}
+      {open && encounter && (
+        <div
+          className="absolute left-1/2 -translate-x-1/2 text-[11px] tracking-[0.14em] italic transition-opacity duration-700"
+          style={{ top: '13%', color: '#7fa6c2', textShadow: '0 0 12px rgba(125,216,255,0.3)', pointerEvents: 'none' }}
+        >
+          {encounter}
+        </div>
+      )}
 
       {/* The pulse ledger — the swarm's work, legible. Real events only. */}
       {open && (
