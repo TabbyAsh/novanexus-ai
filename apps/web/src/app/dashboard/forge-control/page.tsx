@@ -36,6 +36,26 @@ export default function ForgeControl() {
   const [improveMsg, setImproveMsg] = useState<string | null>(null);
   const [board, setBoard] = useState<EvalRow[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
+  const [proposals, setProposals] = useState<Array<{ id: string; author: string; claim: string; summary: string }>>([]);
+
+  const loadProposals = useCallback(async () => {
+    try {
+      const r = await fetch(`${API}/v1/agents/proposals`, { headers: token() ? { Authorization: `Bearer ${token()}` } : {} });
+      const d = await r.json();
+      if (d?.success) setProposals(d.data.proposals || []);
+    } catch { /* leave empty */ }
+  }, []);
+
+  const decide = useCallback(async (proposalId: string, decision: 'accept' | 'reject') => {
+    const reason = window.prompt(decision === 'accept' ? 'Why accept? (this trains the agent)' : 'Why reject? (this trains the agent)') || '';
+    try {
+      await fetch(`${API}/v1/agents/proposals/decide`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
+        body: JSON.stringify({ proposalId, decision, reason }),
+      });
+      loadProposals();
+    } catch { /* optimistic */ }
+  }, [loadProposals]);
 
   const loadBoard = useCallback(async () => {
     try {
@@ -51,7 +71,7 @@ export default function ForgeControl() {
       if (d?.success) setHealth(d.data);
     } catch { /* leave null */ }
   }, []);
-  useEffect(() => { loadBoard(); loadHealth(); }, [loadBoard, loadHealth]);
+  useEffect(() => { loadBoard(); loadHealth(); loadProposals(); }, [loadBoard, loadHealth, loadProposals]);
 
   const build = useCallback(async () => {
     if (!problem.trim() || building) return;
@@ -184,6 +204,30 @@ export default function ForgeControl() {
               <pre className="mt-3 max-h-72 overflow-auto text-[11px] bg-black/50 border border-gray-800 rounded-lg p-3 text-gray-300 whitespace-pre-wrap">{result.finalCode}</pre>
             )}
             {result.artifactId && <div className="mt-2 text-[11px] text-gray-600">Proposal recorded on the substrate · {result.artifactId}</div>}
+          </div>
+        )}
+      </section>
+
+      {/* Proposal Review — the approval-as-training loop (Phase 3) */}
+      <section className="rounded-xl border border-amber-900/40 bg-[#111117] p-5 mb-6">
+        <h2 className="text-sm font-semibold text-amber-300 uppercase tracking-wider mb-2">Proposal Review</h2>
+        <p className="text-gray-400 text-xs mb-3">
+          Agents propose; you decide. Every accept/reject — <span className="text-amber-300">with your reason</span> — trains the next generation. Nothing merges to production without you.
+        </p>
+        {proposals.length === 0 ? (
+          <div className="text-sm text-gray-600">No proposals awaiting your decision.</div>
+        ) : (
+          <div className="space-y-2">
+            {proposals.map(p => (
+              <div key={p.id} className="rounded-lg bg-black/30 border border-gray-800 p-3">
+                <div className="text-[11px] text-gray-500 mb-1">{p.author}</div>
+                <div className="text-sm text-gray-200 mb-2">{p.claim}</div>
+                <div className="flex gap-2">
+                  <button onClick={() => decide(p.id, 'accept')} className="px-3 py-1 rounded text-[11px] bg-emerald-600/20 border border-emerald-600/40 text-emerald-300 hover:bg-emerald-600/30">Accept</button>
+                  <button onClick={() => decide(p.id, 'reject')} className="px-3 py-1 rounded text-[11px] bg-red-600/15 border border-red-600/40 text-red-300 hover:bg-red-600/25">Reject</button>
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </section>

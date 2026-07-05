@@ -10598,6 +10598,30 @@ setTimeout(() => {
   import('./failure-memory').then(({ seedQuotaLesson }) => seedQuotaLesson()).catch(() => {});
 }, 90 * 1000);
 
+// PHASE 3 — Approval-as-training: pending proposals + the human's decision.
+app.get('/v1/agents/proposals', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { listPendingProposals } = await import('./proposals');
+    res.json({ success: true, data: { proposals: await listPendingProposals() } });
+  } catch (err) {
+    logger.error('List proposals failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'PROPOSALS_DARK', message: 'Unavailable.' } });
+  }
+});
+app.post('/v1/agents/proposals/decide', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { decideProposal } = await import('./proposals');
+    const decision = String(req.body?.decision || '');
+    if (!['accept', 'reject'].includes(decision)) { res.status(400).json({ success: false, error: { code: 'BAD_DECISION', message: 'decision must be accept|reject.' } }); return; }
+    const r = await decideProposal(String(req.body?.proposalId || ''), decision as any, String(req.body?.reason || ''), req.user?.userId || 'founder');
+    if (!r.ok) { res.status(404).json({ success: false, error: { code: 'PROPOSAL_NOT_FOUND', message: 'No such proposal.' } }); return; }
+    res.json({ success: true, data: r });
+  } catch (err) {
+    logger.error('Decide proposal failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'DECIDE_FAILED', message: 'Could not record decision.' } });
+  }
+});
+
 // AGENT EVALS (Phase 5) — the recursive-improvement loop, objectively gated.
 app.post('/v1/agents/evals/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {

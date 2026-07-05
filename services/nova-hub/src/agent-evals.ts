@@ -90,9 +90,21 @@ export async function proposeAndGate(agent = 'coder-agent'): Promise<{ promoted:
     .map((a: any) => (a.payload?.trajectory || []).map((t: any) => t.error).filter(Boolean).join(' | '))
     .filter(Boolean);
 
+  // PHASE 3: the human's accept/reject reasons are training labels — fold
+  // them into the improvement so the agent learns what the operator values.
+  let humanSignal = '';
+  try {
+    const { decisionsForTraining } = await import('./proposals');
+    const decisions = await decisionsForTraining(10);
+    if (decisions.length) {
+      humanSignal = '\n\nHUMAN DECISIONS ON PAST PROPOSALS (learn what the operator accepts/rejects and why):\n'
+        + decisions.map(d => `- ${d.decision.toUpperCase()}: ${d.reason}`).join('\n');
+    }
+  } catch { /* improvement still runs on failures alone */ }
+
   const draft = await generateChat({
-    system: `You improve the SYSTEM PROMPT of a code-writing agent. Return ONLY the improved prompt text — no commentary. Keep its JSON output contract intact. Make it more likely to produce correct, well-tested Node.js on the FIRST try.`,
-    user: `CURRENT PROMPT:\n${incumbentPrompt}\n\nRECENT REAL FAILURES:\n${failures.join('\n') || '(none recorded yet)'}\n\nReturn the improved prompt.`,
+    system: `You improve the SYSTEM PROMPT of a code-writing agent. Return ONLY the improved prompt text — no commentary. Keep its output contract intact. Make it more likely to produce correct, well-tested Node.js on the FIRST try, and more aligned with what the human operator accepts.`,
+    user: `CURRENT PROMPT:\n${incumbentPrompt}\n\nRECENT REAL FAILURES:\n${failures.join('\n') || '(none recorded yet)'}${humanSignal}\n\nReturn the improved prompt.`,
     maxTokens: 900, temperature: 0.6,
   });
   if (!draft) return { promoted: false, incumbent: incEval.score, candidate: 0, reason: 'No mind available to draft an improvement.' };
