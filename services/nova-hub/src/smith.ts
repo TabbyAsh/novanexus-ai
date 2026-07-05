@@ -67,13 +67,41 @@ function runInSandbox(dir: string): Promise<{ passed: boolean; output: string }>
 
 export const SMITH_SYSTEM = `You are the Smith — Nova's code-writing agent. You solve the problem by writing ONE self-contained Node.js solution and a test that proves it, then you fix your own failures.
 
-Return STRICT JSON, no prose:
-{"solution":"<solution.js — pure Node, no external packages, exports via module.exports>","test":"<solution.test.js — requires ./solution, runs cases, console.logs results, and process.exit(1) on any failure, exit 0 only if ALL pass>"}
+Output EXACTLY two fenced code blocks, in this order, with these exact labels and nothing else between them:
+
+===SOLUTION===
+\`\`\`js
+// solution.js — pure Node, standard library only, exports via module.exports
+\`\`\`
+===TEST===
+\`\`\`js
+// solution.test.js — require('./solution'), assert concrete expected values,
+// console.log progress, call process.exit(1) on ANY failure, exit 0 only if ALL pass
+\`\`\`
 
 Rules:
 - No network, no file writes, no external packages — standard library only.
 - The test must be a real oracle: assert concrete expected values, exit nonzero on mismatch.
-- When given a previous failure, diagnose it precisely and fix the actual cause. Do not just retry.`;
+- When given a previous failure, diagnose it precisely and fix the actual cause. Do not just retry.
+- Do not add prose outside the two labeled blocks.`;
+
+// Extract the two code blocks robustly — LLMs emit multiline code that is not
+// valid JSON, so we parse fenced blocks (with a JSON fallback for older prompts).
+export function parseSmithOutput(raw: string): { solution: string; test: string } | null {
+  // Preferred: ===SOLUTION=== ```...``` ===TEST=== ```...```
+  const solM = raw.match(/===SOLUTION===\s*```(?:js|javascript)?\s*([\s\S]*?)```/i);
+  const tstM = raw.match(/===TEST===\s*```(?:js|javascript)?\s*([\s\S]*?)```/i);
+  if (solM && tstM) return { solution: solM[1].trim(), test: tstM[1].trim() };
+  // Fallback: two bare fenced blocks in order
+  const blocks = [...raw.matchAll(/```(?:js|javascript)?\s*([\s\S]*?)```/gi)].map((m) => m[1].trim());
+  if (blocks.length >= 2) return { solution: blocks[0], test: blocks[1] };
+  // Last resort: strict JSON (legacy)
+  try {
+    const j = JSON.parse(raw.replace(/```json?|```/g, '').trim());
+    if (j.solution && j.test) return { solution: j.solution, test: j.test };
+  } catch { /* give up honestly */ }
+  return null;
+}
 
 // systemOverride lets the eval harness score alternate prompt versions of the
 // Smith against the same benchmark — the mechanism behind gated self-improvement.
@@ -97,9 +125,8 @@ export async function runSmithTask(problem: string, systemOverride?: string): Pr
       const res = await generateChat({ system, user: userMsg.slice(0, 6000), maxTokens: 1500, temperature: 0.3 });
       if (!res) return { error: 'No mind available — the Smith will not fabricate code it cannot reason about.' };
 
-      let parsed: { solution: string; test: string };
-      try { parsed = JSON.parse(res.content.replace(/```json?|```/g, '').trim()); }
-      catch { trajectory.push({ iteration: i, passed: false, error: 'unparseable code proposal' }); continue; }
+      const parsed = parseSmithOutput(res.content);
+      if (!parsed) { trajectory.push({ iteration: i, passed: false, error: 'unparseable code proposal' }); continue; }
 
       lastCode = parsed.solution || '';
       lastTest = parsed.test || '';
