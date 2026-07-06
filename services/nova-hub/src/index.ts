@@ -6512,7 +6512,10 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
   const userId = req.headers['x-user-id'] as string;
   const isAuthenticated = !!userId;
   const clientIp = req.headers['x-forwarded-for'] as string || req.ip || 'unknown';
-  if (!isAuthenticated) {
+  // Comps-supplied calls (Nova Lens extension) bring their own data — the
+  // expensive half is the user's. They don't burn the free daily quota.
+  const bringsOwnComps = Array.isArray(req.body?.manualComps) && req.body.manualComps.length >= 3;
+  if (!isAuthenticated && !bringsOwnComps) {
     const usage = getFlipCardUsage(clientIp);
     if (usage.remaining <= 0) {
       logFlipEvent('rate_limit_hit', clientIp).catch(() => {});
@@ -6789,6 +6792,18 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     const analysisId = generateId().slice(0, 12);
     storeAnalysis(analysisId, input, flipCard, clientIp, userId).catch(() => {});
     logFlipEvent('analyzed', clientIp, userId, { verdict: flipCard.verdict, confidence: flipCard.confidence_score }).catch(() => {});
+
+    // HONESTY GATE (founder-found bug): the category model estimates resale
+    // as a multiple of the asking price — circular. It can NEVER justify a
+    // buy/negotiate number. Without real comps (manual or live), we refuse to
+    // output decision theater: no maxBuyPrice, no NEGOTIATE-to figure.
+    if (estimateBasis === 'CATEGORY_MODEL' && !(flipAccuracy && flipAccuracy.earned)) {
+      decision = 'WATCH';
+      maxBuyPrice = null;
+      unavailableReasons.unshift(
+        'No real comps → no buy/negotiate number. A category model cannot appraise (its estimate scales with the price you type — circular). Add 3+ real sold prices, or use the Nova browser extension to pull them automatically from eBay.'
+      );
+    }
 
     const appraisalPayload = {
       decision,

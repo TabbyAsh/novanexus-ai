@@ -1,0 +1,20 @@
+{
+  "manifest_version": 3,
+  "name": "Nova Lens — instant flip verdict",
+  "version": "0.1.0",
+  "description": "Open any eBay listing. Nova reads it, pulls real sold comps, and shows a verdict card: worth, fees, net profit, time to sell. No typing.",
+  "permissions": [],
+  "host_permissions": [
+    "https://novanexus-ai.com/*",
+    "https://abackend-production.up.railway.app/*"
+  ],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://www.ebay.com/itm/*", "https://ebay.com/itm/*"],
+      "js": ["content.js"],
+      "css": ["card.css"],
+      "run_at": "document_idle"
+    }
+  ]
+}

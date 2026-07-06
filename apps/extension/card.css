@@ -1,0 +1,41 @@
+#nova-lens-card {
+  position: fixed; top: 90px; right: 18px; z-index: 999999;
+  width: 320px; border-radius: 14px; overflow: hidden;
+  background: #0b0e16; color: #dbeefb;
+  border: 1px solid rgba(150, 220, 255, 0.25);
+  box-shadow: 0 8px 40px rgba(0,0,0,0.55), 0 0 24px rgba(125,216,255,0.08);
+  font-family: -apple-system, "Segoe UI", Roboto, sans-serif; font-size: 13px;
+}
+#nova-lens-card .nl-head {
+  display: flex; align-items: center; gap: 8px; padding: 10px 12px;
+  background: #0e1320; border-bottom: 1px solid rgba(255,255,255,0.06);
+  font-weight: 600; font-size: 12px; letter-spacing: 0.04em;
+}
+#nova-lens-card .nl-logo {
+  width: 18px; height: 18px; border-radius: 5px; display: inline-flex;
+  align-items: center; justify-content: center; font-size: 11px; color: #fff;
+  background: linear-gradient(135deg, #10b981, #0891b2);
+}
+#nova-lens-card .nl-basis { margin-left: auto; font-weight: 400; font-size: 10px; color: #7fa6c2; }
+#nova-lens-card .nl-x { background: none; border: none; color: #66788c; font-size: 16px; cursor: pointer; padding: 0 2px; }
+#nova-lens-card .nl-body { padding: 14px 12px; }
+#nova-lens-card .nl-dim { color: #7d99ad; }
+#nova-lens-card .nl-verdict {
+  padding: 10px 12px; font-weight: 800; font-size: 15px; letter-spacing: 0.06em;
+}
+#nova-lens-card .nl-buy   { color: #34d399; background: rgba(16,185,129,0.10); }
+#nova-lens-card .nl-neg   { color: #fbbf24; background: rgba(245,158,11,0.10); }
+#nova-lens-card .nl-watch { color: #93c5fd; background: rgba(59,130,246,0.10); }
+#nova-lens-card .nl-pass  { color: #f87171; background: rgba(239,68,68,0.10); }
+#nova-lens-card .nl-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 10px; padding: 12px; }
+#nova-lens-card .nl-grid div { display: flex; flex-direction: column; }
+#nova-lens-card .nl-grid span { font-size: 10px; color: #66788c; text-transform: uppercase; letter-spacing: 0.08em; }
+#nova-lens-card .nl-grid b { font-size: 13px; color: #e8f4ff; font-weight: 600; }
+#nova-lens-card .nl-actions { display: flex; gap: 8px; padding: 0 12px 12px; }
+#nova-lens-card .nl-btn {
+  flex: 1; text-align: center; padding: 8px 10px; border-radius: 8px; cursor: pointer;
+  background: rgba(125,216,255,0.12); border: 1px solid rgba(125,216,255,0.3);
+  color: #aee6ff; font-size: 12px; font-weight: 600; text-decoration: none;
+}
+#nova-lens-card .nl-btn:hover { background: rgba(125,216,255,0.2); }
+#nova-lens-card .nl-foot { padding: 8px 12px 10px; font-size: 10px; color: #4d6a80; border-top: 1px solid rgba(255,255,255,0.05); }
