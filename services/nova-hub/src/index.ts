@@ -6612,10 +6612,16 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
 
     const estimatedFeesInput = Number(req.body?.estimatedFees);
     const estimatedShippingInput = Number(req.body?.estimatedShipping);
+    // Fees must be computed on the SAME resale the verdict uses. With real
+    // comps, fee-basis = the comps mid (eBay ≈ 13.25% + $0.30) — not the
+    // engine's category-model estimate, which was inflated and silently
+    // crushed max-buy (~$24 of fees on a $64 item).
     const estimatedFees =
       Number.isFinite(estimatedFeesInput) && estimatedFeesInput >= 0
         ? roundTo2(estimatedFeesInput)
-        : roundTo2(Math.max(0, flipCard.est_platform_fees));
+        : manualComps.length >= 3 && resaleMid > 0
+          ? roundTo2(resaleMid * 0.1325 + 0.30)
+          : roundTo2(Math.max(0, flipCard.est_platform_fees));
     const estimatedShipping: number | null =
       shippingMode === 'pickup'
         ? 0
