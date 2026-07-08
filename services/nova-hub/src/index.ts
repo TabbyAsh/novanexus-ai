@@ -6673,14 +6673,14 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
       expectedNetProfitHigh = roundTo2(expectedResaleHigh - buyPrice - estimatedFees - estimatedShipping);
       expectedNetProfitMid = roundTo2((expectedNetProfitLow + expectedNetProfitHigh) / 2);
 
-      const riskBuffer =
-        flipCard.risk_score >= 70 ? 20 :
-        flipCard.risk_score >= 40 ? 12 :
-        6;
-      const minimumDesiredProfit = Math.max(15, roundTo2(buyPrice * 0.12));
-      if (isNumber(fastSalePrice)) {
-        maxBuyPrice = roundTo2(Math.max(0, fastSalePrice - estimatedFees - estimatedShipping - minimumDesiredProfit - riskBuffer));
-      }
+      // Reseller-real max buy: anchor to the MID sale price (what it actually
+      // sells for), subtract real costs, and require ONE sensible margin — not
+      // a stacked profit + risk buffer that crushed the ceiling to noise (the
+      // founder-found bug: a $64 item returned a $9 max-buy). Risk lives in the
+      // confidence score and the verdict, not in an inflated required margin.
+      const saleAnchor = isNumber(resaleMid) && resaleMid > 0 ? resaleMid : (expectedResaleLow as number);
+      const desiredProfit = Math.max(10, roundTo2(saleAnchor * 0.18));
+      maxBuyPrice = roundTo2(Math.max(0, saleAnchor - estimatedFees - estimatedShipping - desiredProfit));
     } else {
       unavailableReasons.push('Net profit and max buy price are unavailable until resale and cost inputs are reliable.');
     }
@@ -6715,15 +6715,17 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     const riskLevel: 'LOW' | 'MEDIUM' | 'HIGH' =
       riskComposite >= 70 ? 'HIGH' : riskComposite >= 40 ? 'MEDIUM' : 'LOW';
 
+    // Reseller-real verdict, judged at the MID sale price (what it actually
+    // sells for), against the corrected ceiling.
     let decision: 'BUY' | 'PASS' | 'WATCH' | 'NEGOTIATE' = 'WATCH';
-    if (!isNumber(expectedNetProfitLow) || !isNumber(expectedNetProfitHigh) || !isNumber(maxBuyPrice)) {
+    if (!isNumber(expectedNetProfitMid) || !isNumber(maxBuyPrice)) {
       decision = 'WATCH';
-    } else if (expectedNetProfitLow >= 25 && confidence >= 0.65 && buyPrice <= maxBuyPrice) {
+    } else if (buyPrice <= maxBuyPrice && confidence >= 0.5) {
+      // At/below the ceiling → the margin you want is there.
       decision = 'BUY';
-    } else if (buyPrice > maxBuyPrice && expectedNetProfitHigh > 0) {
+    } else if (expectedNetProfitMid > 0) {
+      // Still profitable at the realistic sale price, just below target margin.
       decision = 'NEGOTIATE';
-    } else if (expectedNetProfitHigh > 0) {
-      decision = 'WATCH';
     } else {
       decision = 'PASS';
     }
