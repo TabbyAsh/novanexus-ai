@@ -387,7 +387,7 @@ export default function FlipFinderPage() {
   useEffect(() => {
     setSkipped(loadSkipped());
     loadOpportunities();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   async function loadOpportunities() {
     setIsLoading(true);

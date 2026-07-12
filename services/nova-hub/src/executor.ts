@@ -17,24 +17,32 @@
  */
 
 import { createLogger } from '@nova/telemetry';
+import type { NexusAuthorityMode, NexusCapabilityDescriptor, NexusCapabilityStatus, NexusSector } from '@nova/shared';
 import { generateChat } from './ai-router';
 import { writeArtifact } from './substrate';
 
 const logger = createLogger('executor');
 
 const MARKETDATA_URL = process.env.MARKETDATA_URL || 'http://localhost:3020';
-const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const OWNER_EMAIL = process.env.OWNER_EMAIL || 'kibblewyatt@gmail.com';
-const FROM_EMAIL = process.env.ALERT_FROM_EMAIL || 'Nova <nova@novanexus-ai.com>';
 
 const MAX_STEPS = 6; // the sandbox limit — grammar, not vibes
 
 // ── The tool registry (hardcoded grammar) ──────────────────────────────
 interface ToolResult { ok: boolean; summary: string; source: string }
 
-const TOOLS: Record<string, { description: string; run: (args: any) => Promise<ToolResult> }> = {
+interface RegisteredTool {
+  description: string;
+  sector: NexusSector;
+  authority: NexusAuthorityMode;
+  status?: NexusCapabilityStatus;
+  requires: string[];
+  run: (args: any) => Promise<ToolResult>;
+}
+
+const TOOLS: Record<string, RegisteredTool> = {
   market_quote: {
     description: 'Live quote for a stock symbol. args: {symbol}',
+    sector: 'market', authority: 'observe', requires: ['marketdata'],
     run: async (args) => {
       const r = await fetch(`${MARKETDATA_URL}/v1/market/quote/${String(args.symbol || '').toUpperCase()}`, { signal: AbortSignal.timeout(8000) });
       const q = (await r.json() as any)?.data?.quote;
@@ -44,14 +52,22 @@ const TOOLS: Record<string, { description: string; run: (args: any) => Promise<T
   },
   flip_appraise: {
     description: 'Resale appraisal for an item at a price. args: {title, buy_price}',
+    sector: 'commerce', authority: 'recommend', requires: ['commercedata or supplied sold comps'],
     run: async (args) => {
+      const title = String(args.title || '').trim();
+      const buyPrice = Number(args.buy_price);
+      if (!title || !(buyPrice > 0)) {
+        return { ok: false, summary: 'Flip appraisal requires an item title and positive purchase price.', source: 'nexus:required-input' };
+      }
       const { computeFlipCard } = await import('./flip-card');
-      const card = await computeFlipCard({ title: String(args.title || ''), buy_price: Number(args.buy_price) || 0, condition: 'Good', shipping_or_pickup: 'shipping' });
-      return { ok: true, summary: `${args.title} @ $${args.buy_price}: verdict ${card.verdict}, est. resale $${card.est_resale_low}–$${card.est_resale_high}, net mid $${card.est_net_profit_mid}, confidence ${card.confidence_score}% (${(card.comp_sources?.[0]?.count ?? 0) > 0 ? 'live comps' : 'category model'})`, source: 'flip-engine' };
+      const card = await computeFlipCard({ title, buy_price: buyPrice, condition: 'Good', shipping_or_pickup: 'shipping' });
+      const hasLiveComps = (card.comp_sources?.[0]?.count ?? 0) > 0;
+      return { ok: true, summary: `${title} @ $${buyPrice}: verdict ${card.verdict}, est. resale $${card.est_resale_low}–$${card.est_resale_high}, net mid $${card.est_net_profit_mid}, confidence ${card.confidence_score}% (${hasLiveComps ? 'live comps' : 'category model; no live comps'})`, source: hasLiveComps ? 'flip-engine:live-comps' : 'flip-engine:category-model' };
     },
   },
   trend_scan: {
     description: 'Current live demand trends and product opportunities. args: {}',
+    sector: 'commerce', authority: 'observe', requires: ['live trend sources'],
     run: async () => {
       const { getTrendRadar } = await import('./trend-radar');
       const t = await getTrendRadar('US');
@@ -60,46 +76,61 @@ const TOOLS: Record<string, { description: string; run: (args: any) => Promise<T
     },
   },
   substrate_search: {
-    description: 'Search Nova\'s permanent records by kind. args: {kind: decision_card|mission_report|anomaly|hypothesis|outcome|audit}',
+    description: 'Search tenant-scoped permanent records by kind (temporarily unavailable until artifact ownership is enforced).',
+    sector: 'memory', authority: 'observe', requires: ['postgres artifacts'],
+    status: 'degraded',
     run: async (args) => {
-      const { readArtifacts } = await import('./substrate');
-      const rows = await readArtifacts({ kind: args.kind, limit: 5 });
-      return { ok: true, summary: rows.length ? rows.map((r: any) => `[${r.kind}] ${JSON.stringify(r.payload).slice(0, 120)}`).join(' | ') : `No ${args.kind} artifacts yet.`, source: 'substrate' };
+      void args;
+      return { ok: false, summary: 'Memory search is paused until artifact reads are tenant-scoped.', source: 'substrate:scope-gate' };
     },
   },
 };
 
+export function listExecutorCapabilities(): NexusCapabilityDescriptor[] {
+  return Object.entries(TOOLS).map(([id, tool]) => ({
+    id: `executor.${id}`,
+    name: id.split('_').map(part => part[0].toUpperCase() + part.slice(1)).join(' '),
+    sector: tool.sector,
+    description: tool.description,
+    status: tool.status || 'available',
+    authority: tool.authority,
+    entrypoint: '/v1/executor/run',
+    sideEffects: [],
+    requires: tool.requires,
+  }));
+}
+
 // ── Capability gaps (§3) + the proactive loop (§4) ─────────────────────
 async function emitCapabilityGap(needed: string, why: string, exampleTask: string): Promise<void> {
+  // The substrate is not yet tenant-scoped. Persist and email the capability
+  // class, never the user's raw task or planner explanation.
+  void why;
+  void exampleTask;
+  const lower = needed.toLowerCase();
+  const gapClass = [
+    'web-search', 'browser', 'citation-verification', 'email-delivery',
+    'file-generation', 'database-access', 'market-data', 'commerce-data',
+    'social-publishing', 'code-execution', 'human-approval',
+  ].find(value => lower.includes(value.replace('-', ' ')) || lower.includes(value)) || 'unclassified-capability';
   await writeArtifact({
     kind: 'anomaly',
     authorType: 'agent',
     authorId: 'executor',
     payload: {
-      observation: `capability_gap: planner needs "${needed}" — ${why}`,
+      observation: `capability_gap: planner needs "${gapClass}"`,
       expected: 'a registered tool covering this step',
-      needed_capability: needed, example_task: exampleTask, priority: 'normal',
+      needed_capability: gapClass, task_redacted: true, priority: 'normal',
     },
   });
-  if (RESEND_API_KEY) {
-    fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: FROM_EMAIL, to: [OWNER_EMAIL],
-        subject: `Nova: I hit a capability gap — "${needed}"`,
-        text: `Task: ${exampleTask}\n\nI needed a capability I don't have: ${needed}\nWhy: ${why}\n\nIf you approve building it, say the word — it goes through the sandbox and gates first (Spec v0.2 §3).\n\n— Nova`,
-      }),
-      signal: AbortSignal.timeout(10000),
-    }).catch(() => {});
-  }
-  logger.info('Capability gap emitted', { needed });
+  // Notifications are deliberately absent from the request path. A governed
+  // Forge review/digest may later surface the redacted gap with explicit policy.
+  logger.info('Capability gap emitted', { needed: gapClass });
 }
 
 // ── The executor ───────────────────────────────────────────────────────
 export interface Deliverable {
   answer: string;
-  evidence: Array<{ step: string; result: string; source: string }>;
+  evidence: Array<{ capabilityId: string; step: string; result: string; source: string }>;
   assumptions: string[];
   confidence: { value: number; calibrated: false; note: string };
   cost_of_task: { ai_calls: number; tool_calls: number };
@@ -142,9 +173,14 @@ export async function runExecutorTask(goal: string): Promise<Deliverable | { err
     try {
       const r = await tool.run(step.args || {});
       toolCalls++;
-      evidence.push({ step: step.purpose || step.tool, result: r.summary, source: r.source });
+      if (r.ok) {
+        evidence.push({ capabilityId: `executor.${step.tool}`, step: step.purpose || step.tool, result: r.summary, source: r.source });
+      } else {
+        gaps.push(step.tool);
+        evidence.push({ capabilityId: `executor.${step.tool}`, step: step.purpose || step.tool, result: `FAILED: ${r.summary}`, source: r.source });
+      }
     } catch (err) {
-      evidence.push({ step: step.purpose || step.tool, result: `FAILED: ${(err as Error).message.slice(0, 100)} — gap reported, not fabricated.`, source: step.tool });
+      evidence.push({ capabilityId: `executor.${step.tool}`, step: step.purpose || step.tool, result: `FAILED: ${(err as Error).message.slice(0, 100)} — gap reported, not fabricated.`, source: step.tool });
     }
   }
 
@@ -180,7 +216,13 @@ export async function runExecutorTask(goal: string): Promise<Deliverable | { err
     regime: 'EXPLOITATION',
     authorType: 'agent',
     authorId: 'executor',
-    payload: { agent: 'Executor', goal: goal.slice(0, 300), findings: evidence.map(e => e.result).slice(0, 8), anomalies: [], deliverable: { answer: deliverable.answer.slice(0, 400), confidence: deliverable.confidence.value } },
+    payload: {
+      agent: 'Executor',
+      goal_redacted: true,
+      findings: evidence.map(e => `${e.capabilityId} used`).slice(0, 8),
+      anomalies: gaps.map(() => 'capability gap recorded'),
+      deliverable: { evidenceCount: evidence.length, confidence: deliverable.confidence.value },
+    },
   }).catch(() => {});
 
   return deliverable;

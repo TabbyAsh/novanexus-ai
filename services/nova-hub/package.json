@@ -14,6 +14,7 @@
     "@nova/nexus-core": "*",
     "@nova/shared": "*",
     "@nova/telemetry": "*",
+    "@openai/codex-sdk": "^0.144.1",
     "express": "^4.18.2"
   },
   "devDependencies": {

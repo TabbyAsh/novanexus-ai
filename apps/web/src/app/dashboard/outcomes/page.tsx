@@ -87,7 +87,7 @@ export default function OutcomesPage() {
             <div>
               <span className="font-semibold text-gray-300">Your Outcome Ledger is empty.</span>
               <span className="text-gray-500 text-sm ml-2">
-                Complete a flip or trade, then record the result here — Nova learns from every outcome you log.
+                Complete a flip or trade, then record the result here — each outcome becomes evidence for Nova&apos;s calibration.
               </span>
             </div>
           </div>

@@ -1,13 +1,21 @@
-# Nova Enterprises — Full-Stack Company Blueprint
+# Nova / Nexus — Full-Stack Company Blueprint
+
+> Canonical ontology: Nova is the realization of AI potential. Nexus is the
+> company and interaction engine through which humans meet, direct, understand,
+> and teach Nova. This blueprint preserves historical implementation names; the
+> operating model in `docs/NOVA_OPERATING_MODEL.md` governs interpretation.
 
 ## 1) The One-Sentence Definition
 
-Nova Enterprises is an AI-orchestrated "universal life-and-business operating system" that merges:
+Nexus is the interaction company that makes Nova's growing AI potential usable,
+governable, cumulative, and economically sustainable across:
 - Trading & investing
 - E-commerce & fulfillment
 - Social content & distribution
 
-Into a single platform where every action produces data, every data point improves the AI, and every improved decision increases profitability—funding your long-term endgame: semiconductor reliability + advanced AI hardware R&D.
+Through one interaction engine where intent can become capability composition,
+governed action, evidence, outcome, learning, and—when value is truly
+realized—capital for deeper AI and hardware R&D.
 
 ## 2) The Mission, Moat, and Endgame
 
@@ -25,9 +33,9 @@ Use profits + credibility to build:
 - A Failure Analysis / Reliability capability (services, lab tools)
 - Then chip and advanced compute R&D, eventually hardware embodiments (watch/AR assistant, edge bots, etc.)
 
-## 3) The Product: What Nova Actually Is
+## 3) The Current Runtime Shape
 
-Nova is not one app. It's a platform composed of six layers:
+Nova is not one app. The current runtime exposes her through these layers:
 
 ### A) User Layer (What people see)
 **Nova Hub** (web + desktop + mobile later)
@@ -264,20 +272,20 @@ Currently deferred until full approval pipeline is implemented.
 ## 15) Go-to-market
 
 ### Step 1: Build in public
-"I'm building Nova: the AI OS for money, markets, and commerce"
+"I'm building Nexus: the interaction company that turns Nova's AI potential into governed reality"
 Content drives early users
 
 ### Step 2: Offer a simple first product
-Nova Hub Lite: scanner + checklists + logs + reports
+Nexus Lite: one interaction surface into Nova's scanner, checklists, logs, and reports
 
 ### Step 3: Expand into full platform
-Add store module, add content automation, unify under NovaCore
+Add commerce and distribution capabilities; unify access, authority, receipts, and feedback through Nexus
 
 ## 16) The "Aircraft Blueprint" Analogy
 
-- **Fuselage**: Nova Hub (user interface)
-- **Avionics**: NovaCore (routing, decisions, state)
-- **Engines**: bots (Trade/Store/Social)
+- **Fuselage**: Nexus surfaces (human interaction)
+- **Avionics**: Nexus identity, intent, policy, receipts, and capability routing
+- **Engines**: Nova capabilities and agents (Market/Bazaar/Social/Forge)
 - **Fuel**: data + event logs
 - **Flight computer rules**: governance + policies + risk
 - **Maintenance crew**: OpsBot + monitoring

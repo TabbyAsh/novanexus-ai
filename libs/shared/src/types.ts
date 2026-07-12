@@ -71,6 +71,11 @@ export const ScopeSchema = z.enum([
   'forge.read',
   'forge.propose',
   'forge.approve',
+  // Forge command-broker risk-tier scopes (CmdX)
+  'forge.cmd.t0',
+  'forge.cmd.t1',
+  'forge.cmd.t2',
+  'forge.cmd.t3',
   // Ops scopes
   'ops.read',
   'ops.deploy',
@@ -783,4 +788,65 @@ export interface DataSourceStatus {
 export interface BotHealthResponse {
   status: 'ok' | 'degraded';
   data_sources: DataSourceStatus[];
+}
+
+// ============================================
+// NEXUS INTERACTION ENGINE
+// Nexus is the governed relationship between human intent and Nova's
+// extensible capabilities. Every interaction returns an inspectable receipt.
+// ============================================
+
+export type NexusSector = 'decision' | 'market' | 'commerce' | 'business' | 'social' | 'research' | 'forge' | 'world' | 'ops' | 'memory';
+export type NexusAuthorityMode = 'observe' | 'recommend' | 'assist' | 'automate';
+export type NexusCapabilityStatus = 'available' | 'degraded' | 'gated' | 'reserved';
+export type NexusExecutionMode = 'reasoning' | 'direct' | 'composed';
+
+export interface NexusCapabilityDescriptor {
+  id: string;
+  name: string;
+  sector: NexusSector;
+  description: string;
+  status: NexusCapabilityStatus;
+  authority: NexusAuthorityMode;
+  entrypoint: string | null;
+  sideEffects: string[];
+  requires: string[];
+}
+
+export interface NexusEvidence {
+  capabilityId: string;
+  summary: string;
+  source: string;
+}
+
+export interface NexusInteractionEnvelope {
+  interactionId: string;
+  conversationId: string;
+  createdAt: Timestamp;
+  intent: {
+    primary: string;
+    route: { label: string; href: string; description: string } | null;
+  };
+  execution: {
+    mode: NexusExecutionMode;
+    capabilities: string[];
+    evidence: NexusEvidence[];
+    gaps: string[];
+    cost: { aiCalls: number; toolCalls: number };
+  };
+  authority: {
+    mode: NexusAuthorityMode;
+    externalSideEffectsPerformed: boolean;
+    humanApprovalRequiredForSideEffects: boolean;
+  };
+  nova: {
+    reply: string;
+    provider: string;
+  };
+  memory: {
+    persisted: boolean;
+    artifactId: string | null;
+    outcomeClosable: boolean;
+  };
+  action: unknown | null;
 }

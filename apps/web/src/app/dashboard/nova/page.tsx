@@ -1,20 +1,17 @@
 'use client';
 
 /**
- * NovaCore — the central AI command center. The TRUNK.
+ * Nexus — the interaction engine between humans and Nova.
  *
- * Per the founder's canonical vision: "NovaCore: a local-first AI command
- * center for personal research, market analysis, project planning, and learning."
- *
- * You talk to Nova. Nova helps you think, and routes you to the right branch
- * (flip, market, business, income, savings, decisions). This is what makes
- * the whole system feel like ONE AI operating system instead of scattered tools.
+ * Human intent enters here. Nova's reasoning and capabilities return through
+ * an inspectable receipt: what ran, what evidence it used, what is missing,
+ * what authority it had, what was remembered, and whether the outcome can close.
  */
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
-import { Send, Sparkles, ArrowRight, Plus, MessageSquare } from 'lucide-react';
+import { Send, Sparkles, ArrowRight, Plus, Database, ShieldCheck, Boxes, AlertTriangle } from 'lucide-react';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
 const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') || '' : '';
@@ -24,27 +21,109 @@ interface Message {
   content: string;
   branch?: { intent: string; label: string; href: string; description: string } | null;
   action?: any | null;
+  interaction?: NexusInteraction | null;
+}
+
+interface NexusInteraction {
+  interactionId: string;
+  conversationId: string;
+  intent: {
+    primary: string;
+    route: { label: string; href: string; description: string } | null;
+  };
+  execution: {
+    mode: 'reasoning' | 'direct' | 'composed';
+    capabilities: string[];
+    evidence: Array<{ capabilityId: string; summary: string; source: string }>;
+    gaps: string[];
+    cost: { aiCalls: number; toolCalls: number };
+  };
+  authority: {
+    mode: 'observe' | 'recommend' | 'assist' | 'automate';
+    externalSideEffectsPerformed: boolean;
+    humanApprovalRequiredForSideEffects: boolean;
+  };
+  nova: { reply: string; provider: string };
+  memory: { persisted: boolean; artifactId: string | null; outcomeClosable: boolean };
+  action: any | null;
+}
+
+interface CapabilitySummary {
+  total: number;
+  available: number;
+  gated: number;
+  developing: number;
 }
 
 const SUGGESTIONS = [
   'I have a skill but I\'m not making money from it',
-  'Help me find items to flip this weekend',
+  'Compare current demand trends with flip opportunities and build me a plan',
   'I run a small business and I\'m disorganized',
   'What stocks are showing momentum today?',
   'I want to track my gig income',
   'Help me save money on my monthly expenses',
 ];
 
-export default function NovaCorePage() {
+export default function NexusPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [outcomes, setOutcomes] = useState<Record<string, 'saving' | 'worked' | 'partial' | 'failed' | 'error'>>({});
+  const [capabilitySummary, setCapabilitySummary] = useState<CapabilitySummary | null>(null);
+  const [interactionCount, setInteractionCount] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const requestEpoch = useRef(0);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: 'smooth' });
   }, [messages, loading]);
+
+  useEffect(() => {
+    fetch(`${API}/v1/nexus/capabilities`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then(r => r.json())
+      .then(d => {
+        const capabilities = Array.isArray(d?.data?.capabilities) ? d.data.capabilities : [];
+        if (!capabilities.length) return;
+        setCapabilitySummary({
+          total: capabilities.length,
+          available: capabilities.filter((c: any) => c.status === 'available').length,
+          gated: capabilities.filter((c: any) => c.status === 'gated').length,
+          developing: capabilities.filter((c: any) => c.status === 'degraded' || c.status === 'reserved').length,
+        });
+      })
+      .catch(() => undefined);
+    fetch(`${API}/v1/nexus/interactions?limit=100`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then(r => r.json())
+      .then(d => setInteractionCount(Array.isArray(d?.data?.interactions) ? d.data.interactions.length : null))
+      .catch(() => undefined);
+
+    // Restore the latest owned conversation after reload. The server enforces
+    // ownership; no shared/global memory is sampled into this surface.
+    fetch(`${API}/v1/nexus/conversations`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+      .then(r => r.json())
+      .then(async d => {
+        const latest = Array.isArray(d?.data?.conversations) ? d.data.conversations[0] : null;
+        if (!latest?.id || requestEpoch.current !== 0) return;
+        const response = await fetch(`${API}/v1/nexus/conversations/${latest.id}`, {
+          headers: { Authorization: `Bearer ${getToken()}` },
+        });
+        const body = await response.json();
+        if (requestEpoch.current !== 0 || !body?.success || !Array.isArray(body?.data?.messages)) return;
+        setConversationId(latest.id);
+        setMessages(body.data.messages.map((item: any) => ({
+          role: item.role === 'user' ? 'user' : 'nova',
+          content: String(item.content || ''),
+        })));
+      })
+      .catch(() => undefined);
+  }, []);
 
   const send = async (text: string) => {
     if (!text.trim() || loading) return;
@@ -52,31 +131,61 @@ export default function NovaCorePage() {
     setMessages(m => [...m, userMsg]);
     setInput('');
     setLoading(true);
+    const epoch = ++requestEpoch.current;
 
     try {
-      const r = await fetch(`${API}/v1/nova/chat`, {
+      const r = await fetch(`${API}/v1/nexus/interact`, {
         method: 'POST',
         headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({ message: text, conversationId }),
       });
       const d = await r.json();
+      if (epoch !== requestEpoch.current) return;
       if (d.success) {
-        setConversationId(d.data.conversationId);
-        setMessages(m => [...m, { role: 'nova', content: d.data.reply, branch: d.data.branch, action: d.data.action }]);
+        const interaction = d.data as NexusInteraction;
+        setConversationId(interaction.conversationId);
+        setMessages(m => [...m, {
+          role: 'nova',
+          content: interaction.nova.reply,
+          branch: interaction.intent.route ? { intent: interaction.intent.primary, ...interaction.intent.route } : null,
+          action: interaction.action,
+          interaction,
+        }]);
+        if (interaction.memory.persisted) setInteractionCount(count => (count ?? 0) + 1);
       } else {
-        setMessages(m => [...m, { role: 'nova', content: 'I had trouble responding just now. Try asking again.' }]);
+        setMessages(m => [...m, { role: 'nova', content: d?.error?.message || 'Nexus could not complete this interaction. Try again.' }]);
       }
     } catch {
+      if (epoch !== requestEpoch.current) return;
       setMessages(m => [...m, { role: 'nova', content: 'Connection issue. Please try again.' }]);
     } finally {
-      setLoading(false);
+      if (epoch === requestEpoch.current) setLoading(false);
+    }
+  };
+
+  const markOutcome = async (interactionId: string, result: 'worked' | 'partial' | 'failed') => {
+    if (outcomes[interactionId] && outcomes[interactionId] !== 'error') return;
+    setOutcomes(current => ({ ...current, [interactionId]: 'saving' }));
+    try {
+      const response = await fetch(`${API}/v1/nexus/interactions/${interactionId}/outcome`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}`, 'Content-Type': 'application/json' },
+        body: JSON.stringify({ result }),
+      });
+      const body = await response.json();
+      if (!response.ok || !body.success) throw new Error(body?.error?.code || 'OUTCOME_FAILED');
+      setOutcomes(current => ({ ...current, [interactionId]: result }));
+    } catch {
+      setOutcomes(current => ({ ...current, [interactionId]: 'error' }));
     }
   };
 
   const newChat = () => {
+    requestEpoch.current += 1;
     setMessages([]);
     setConversationId(null);
     setInput('');
+    setLoading(false);
   };
 
   return (
@@ -88,15 +197,27 @@ export default function NovaCorePage() {
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-white">N</div>
             <div>
-              <h1 className="text-lg font-bold text-white leading-none">Nova</h1>
-              <p className="text-xs text-gray-600 mt-0.5">Your AI command center</p>
+              <h1 className="text-lg font-bold text-white leading-none">Nexus</h1>
+              <p className="text-xs text-gray-600 mt-0.5">The interaction engine between you and Nova</p>
             </div>
           </div>
+          <div className="flex items-center gap-3">
+            {capabilitySummary && (
+              <div className="hidden sm:flex items-center gap-2 text-[10px] text-gray-500">
+                <span className="text-emerald-400">{capabilitySummary.available} available</span>
+                <span>·</span>
+                <span>{capabilitySummary.gated} gated</span>
+                <span>·</span>
+                <span>{capabilitySummary.developing} developing</span>
+                {interactionCount !== null && <><span>·</span><span>{interactionCount} receipts</span></>}
+              </div>
+            )}
           {messages.length > 0 && (
             <button onClick={newChat} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-gray-800 hover:border-gray-600 text-xs text-gray-400 hover:text-white transition">
               <Plus className="w-3.5 h-3.5" /> New chat
             </button>
           )}
+          </div>
         </div>
 
         {/* Messages / empty state */}
@@ -104,10 +225,11 @@ export default function NovaCorePage() {
           {messages.length === 0 ? (
             <div className="max-w-2xl mx-auto text-center pt-8">
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-2xl text-white mx-auto mb-5">N</div>
-              <h2 className="text-2xl font-bold text-white mb-2">What can I help you with?</h2>
+              <h2 className="text-2xl font-bold text-white mb-2">What do you want to realize?</h2>
               <p className="text-gray-500 mb-8 leading-relaxed">
-                I'm Nova. Tell me what you're working on, thinking about, or stuck on.
-                I'll help you figure out the next move — and I can take you to the right tool when you need it.
+                You enter through Nexus. Express an intention, a problem, or an ambition.
+                Nexus will bring Nova's available capabilities together, show what actually ran,
+                and tell you plainly what is still missing.
               </p>
               <div className="grid sm:grid-cols-2 gap-2.5 text-left">
                 {SUGGESTIONS.map(s => (
@@ -190,6 +312,96 @@ export default function NovaCorePage() {
                         <ArrowRight className="w-4 h-4 text-emerald-400 group-hover:translate-x-0.5 transition-transform shrink-0" />
                       </Link>
                     )}
+
+                    {/* Nexus interaction receipt — execution truth, not decorative metadata. */}
+                    {m.interaction && (
+                      <div className="mt-2 rounded-xl border border-violet-500/20 bg-violet-500/[0.04] p-3 space-y-3">
+                        <div className="flex flex-wrap items-center gap-2 text-[10px] uppercase tracking-wider">
+                          <span className="flex items-center gap-1 text-violet-300">
+                            <Boxes className="w-3 h-3" /> {m.interaction.execution.mode}
+                          </span>
+                          <span className="text-gray-700">·</span>
+                          <span className="flex items-center gap-1 text-cyan-300">
+                            <ShieldCheck className="w-3 h-3" /> {m.interaction.authority.mode}
+                          </span>
+                          <span className="text-gray-700">·</span>
+                          <span className={m.interaction.authority.externalSideEffectsPerformed ? 'text-amber-300' : 'text-gray-500'}>
+                            {m.interaction.authority.externalSideEffectsPerformed ? 'external effects performed' : 'no external effects'}
+                          </span>
+                        </div>
+
+                        {m.interaction.execution.capabilities.length > 0 ? (
+                          <div>
+                            <div className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Capabilities used</div>
+                            <div className="flex flex-wrap gap-1.5">
+                              {m.interaction.execution.capabilities.map(capability => (
+                                <span key={capability} className="rounded-md border border-violet-500/20 bg-violet-500/10 px-2 py-1 text-[10px] text-violet-200">
+                                  {capability}
+                                </span>
+                              ))}
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="text-[11px] text-gray-500">Reasoning only — no tool execution was claimed.</div>
+                        )}
+
+                        {m.interaction.execution.evidence.length > 0 && (
+                          <div>
+                            <div className="text-[10px] text-gray-600 uppercase tracking-wider mb-1.5">Evidence</div>
+                            <div className="space-y-1.5">
+                              {m.interaction.execution.evidence.slice(0, 4).map((evidence, evidenceIndex) => (
+                                <div key={`${evidence.capabilityId}-${evidenceIndex}`} className="rounded-lg bg-black/20 px-2.5 py-2 text-[11px] text-gray-400">
+                                  <div className="text-gray-300">{evidence.summary}</div>
+                                  <div className="mt-0.5 text-[10px] text-gray-600">Source: {evidence.source}</div>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+
+                        {m.interaction.execution.gaps.length > 0 && (
+                          <div className="rounded-lg border border-amber-500/20 bg-amber-500/5 px-2.5 py-2">
+                            <div className="flex items-center gap-1.5 text-[10px] uppercase tracking-wider text-amber-300 mb-1">
+                              <AlertTriangle className="w-3 h-3" /> Capability gaps
+                            </div>
+                            {m.interaction.execution.gaps.map((gap, gapIndex) => (
+                              <div key={gapIndex} className="text-[11px] text-amber-100/70">{gap}</div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-2.5">
+                          <div className={`flex items-center gap-1.5 text-[10px] ${m.interaction.memory.persisted ? 'text-emerald-400' : 'text-amber-400'}`}>
+                            <Database className="w-3 h-3" />
+                            {m.interaction.memory.persisted ? 'Privacy-safe receipt preserved' : 'Receipt memory unavailable'}
+                          </div>
+                          {m.interaction.memory.outcomeClosable && (
+                            <div className="flex items-center gap-1.5">
+                              {outcomes[m.interaction.interactionId] && outcomes[m.interaction.interactionId] !== 'saving' && outcomes[m.interaction.interactionId] !== 'error' ? (
+                                <span className="text-[10px] text-emerald-400">Outcome recorded: {outcomes[m.interaction.interactionId]}</span>
+                              ) : (
+                                <>
+                                  <span className="text-[10px] text-gray-600 mr-1">Did it work?</span>
+                                  {(['worked', 'partial', 'failed'] as const).map(result => (
+                                    <button
+                                      key={result}
+                                      onClick={() => markOutcome(m.interaction!.interactionId, result)}
+                                      disabled={outcomes[m.interaction!.interactionId] === 'saving'}
+                                      className="rounded-md border border-gray-800 px-2 py-1 text-[10px] text-gray-500 hover:border-emerald-500/30 hover:text-emerald-300 disabled:opacity-40 transition"
+                                    >
+                                      {result}
+                                    </button>
+                                  ))}
+                                  {outcomes[m.interaction.interactionId] === 'error' && (
+                                    <span className="text-[10px] text-red-400">Save failed—retry</span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    )}
                   </div>
                 </div>
               ))}
@@ -217,7 +429,7 @@ export default function NovaCorePage() {
                 value={input}
                 onChange={e => setInput(e.target.value)}
                 onKeyDown={e => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(input); } }}
-                placeholder="Ask Nova anything, or describe what you're working on…"
+                placeholder="Tell Nexus what you want to realize…"
                 rows={1}
                 className="flex-1 bg-gray-900 border border-gray-800 rounded-xl px-4 py-3 text-sm text-white placeholder-gray-600 outline-none focus:border-emerald-500/50 resize-none max-h-32"
                 style={{ minHeight: '46px' }}
@@ -228,7 +440,7 @@ export default function NovaCorePage() {
               </button>
             </div>
             <p className="text-xs text-gray-700 text-center mt-2">
-              Nova helps you think and routes you to the right tool. Not financial advice.
+              Nexus shows capabilities, evidence, authority, memory, and gaps. External actions require approval.
             </p>
           </div>
         </div>

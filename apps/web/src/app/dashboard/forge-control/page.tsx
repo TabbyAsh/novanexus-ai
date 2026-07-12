@@ -34,6 +34,7 @@ export default function ForgeControl() {
   const [error, setError] = useState<string | null>(null);
   const [improving, setImproving] = useState(false);
   const [improveMsg, setImproveMsg] = useState<string | null>(null);
+  const [pendingPromotion, setPendingPromotion] = useState<{ approvalId: string; semver: string } | null>(null);
   const [board, setBoard] = useState<EvalRow[]>([]);
   const [health, setHealth] = useState<Health | null>(null);
   const [proposals, setProposals] = useState<Array<{ id: string; author: string; claim: string; summary: string }>>([]);
@@ -48,11 +49,13 @@ export default function ForgeControl() {
 
   const decide = useCallback(async (proposalId: string, decision: 'accept' | 'reject') => {
     const reason = window.prompt(decision === 'accept' ? 'Why accept? (this trains the agent)' : 'Why reject? (this trains the agent)') || '';
+    if (!reason.trim()) return;
     try {
-      await fetch(`${API}/v1/agents/proposals/decide`, {
+      const response = await fetch(`${API}/v1/agents/proposals/decide`, {
         method: 'POST', headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
         body: JSON.stringify({ proposalId, decision, reason }),
       });
+      if (!response.ok) return;
       loadProposals();
     } catch { /* optimistic */ }
   }, [loadProposals]);
@@ -91,7 +94,7 @@ export default function ForgeControl() {
 
   const improve = useCallback(async () => {
     if (improving) return;
-    setImproving(true); setImproveMsg(null);
+    setImproving(true); setImproveMsg(null); setPendingPromotion(null);
     try {
       const r = await fetch(`${API}/v1/agents/evals/improve`, {
         method: 'POST',
@@ -100,10 +103,34 @@ export default function ForgeControl() {
       });
       const d = await r.json();
       setImproveMsg(d?.success ? d.data.reason : (d?.error?.message || 'Pass failed.'));
+      if (d?.success && d.data?.approvalId && d.data?.candidateSemver) {
+        setPendingPromotion({ approvalId: d.data.approvalId, semver: d.data.candidateSemver });
+      }
       loadBoard();
     } catch { setImproveMsg('Could not run the improvement pass.'); }
     finally { setImproving(false); }
   }, [improving, loadBoard]);
+
+  const decidePromotion = useCallback(async (decision: 'approve' | 'reject') => {
+    if (!pendingPromotion) return;
+    const reason = window.prompt(`${decision === 'approve' ? 'Why activate' : 'Why reject'} prompt ${pendingPromotion.semver}? This becomes the governance record.`) || '';
+    if (!reason.trim()) return;
+    try {
+      const r = await fetch(`${API}/v1/agents/evals/promote`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
+        body: JSON.stringify({ approvalId: pendingPromotion.approvalId, decision, reason }),
+      });
+      const d = await r.json();
+      if (!r.ok || !d?.success) throw new Error(d?.error?.code || 'PROMOTION_FAILED');
+      setImproveMsg(decision === 'approve'
+        ? `Human-approved: ${d.data.agent} ${d.data.semver} is now active.`
+        : `Human-rejected: ${d.data.agent} ${d.data.semver} was retired.`);
+      setPendingPromotion(null);
+    } catch {
+      setImproveMsg('The promotion decision was not persisted. Nothing changed.');
+    }
+  }, [pendingPromotion]);
 
   return (
     <div className="min-h-screen bg-[#0a0a0f] text-white px-6 py-8 max-w-5xl mx-auto">
@@ -236,8 +263,9 @@ export default function ForgeControl() {
       <section className="rounded-xl border border-violet-900/40 bg-[#111117] p-5 mb-6">
         <h2 className="text-sm font-semibold text-violet-300 uppercase tracking-wider mb-2">Recursive self-improvement</h2>
         <p className="text-gray-400 text-xs mb-3">
-          Nova drafts an improved version of the Smith&apos;s own prompt, scores it against a fixed benchmark suite,
-          and promotes it <span className="text-violet-300">only if it beats the incumbent by ≥15%</span>. The test oracle decides — not the agent.
+          Nova drafts an improved version of the Smith&apos;s prompt and scores it against a fixed benchmark suite.
+          A ≥15% gain may nominate a candidate; <span className="text-violet-300">only a human promotion approval activates it</span>.
+          The benchmark supplies evidence. The operator supplies authority.
         </p>
         <button
           onClick={improve} disabled={improving}
@@ -246,6 +274,15 @@ export default function ForgeControl() {
           {improving ? 'Scoring incumbent vs candidate…' : 'Run one improvement pass'}
         </button>
         {improveMsg && <div className="mt-3 text-sm text-violet-200">{improveMsg}</div>}
+        {pendingPromotion && (
+          <div className="mt-3 rounded-lg border border-violet-500/25 bg-violet-500/5 p-3">
+            <div className="text-xs text-gray-300 mb-2">Candidate {pendingPromotion.semver} passed the benchmark and is inactive pending your decision.</div>
+            <div className="flex gap-2">
+              <button onClick={() => decidePromotion('approve')} className="px-3 py-1.5 rounded-md bg-emerald-600 hover:bg-emerald-500 text-xs font-semibold">Approve activation</button>
+              <button onClick={() => decidePromotion('reject')} className="px-3 py-1.5 rounded-md border border-gray-700 hover:border-red-500/40 text-xs text-gray-400 hover:text-red-300">Reject candidate</button>
+            </div>
+          </div>
+        )}
       </section>
 
       {/* Eval leaderboard */}

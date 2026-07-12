@@ -560,7 +560,6 @@ function Swarm({ stage, events, onEncounter }: { stage: WorldStage; events: Swar
     }
     const keep = new Set(list.map(e => e.id));
     for (const id of Array.from(motes.current.keys())) if (!keep.has(id)) motes.current.delete(id);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [events]);
 
   useFrame(({ clock }, dt) => {
@@ -741,7 +740,6 @@ function Nebula({ data, stage }: { data: NebulaData; stage: WorldStage }) {
       setColor(g.geometry, i, c, 0.4 + Math.random() * 0.8);
     }
     return g;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [weatherColor]);
 
   useFrame(({ clock }) => {

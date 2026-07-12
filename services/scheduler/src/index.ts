@@ -1,6 +1,6 @@
 import express, { Request, Response } from 'express';
 import { createLogger } from '@nova/telemetry';
-import { HTTP_STATUS, query } from '@nova/shared';
+import { HTTP_STATUS, query, queryOne } from '@nova/shared';
 import cron from 'node-cron';
 import { execFile } from 'child_process';
 import { promisify } from 'util';
@@ -23,6 +23,20 @@ const NODE_BIN = process.execPath; // Use the same Node.js binary
 const DISCORD_WEBHOOK_URL = process.env.DISCORD_WEBHOOK_URL || '';
 const ENABLE_BRIEF_SCHEDULE = process.env.ENABLE_BRIEF_SCHEDULE !== 'false';
 const ENABLE_HEALTH_MONITOR = process.env.ENABLE_HEALTH_MONITOR !== 'false';
+
+async function automationAllowed(): Promise<boolean> {
+  try {
+    const row = await queryOne<{ value_json: string | { enabled?: boolean } }>(
+      `SELECT value_json FROM system_state WHERE key = 'kill_switch'`,
+    );
+    if (!row) return false;
+    const state = typeof row.value_json === 'string' ? JSON.parse(row.value_json) : row.value_json;
+    return state?.enabled !== true;
+  } catch (err) {
+    logger.error('Scheduler authority unavailable; failing closed', err as Error);
+    return false;
+  }
+}
 
 // Service endpoints to monitor
 const MONITORED_SERVICES = [
@@ -166,6 +180,7 @@ async function logSchedulerRun(jobName: string, status: string, durationMs: numb
 // ============================================================================
 
 async function jobDailyBrief(): Promise<void> {
+  if (!(await automationAllowed())) return;
   const startTime = Date.now();
   logger.info('=== DAILY BRIEF JOB STARTED ===');
 
@@ -207,6 +222,7 @@ async function jobDailyBrief(): Promise<void> {
 // ============================================================================
 
 async function jobOutcomeTracking(): Promise<void> {
+  if (!(await automationAllowed())) return;
   const startTime = Date.now();
   logger.info('=== OUTCOME TRACKING JOB STARTED ===');
 
@@ -587,6 +603,7 @@ interface FlipAlertItem {
 }
 
 async function jobDailyFlipAlerts(): Promise<void> {
+  if (!(await automationAllowed())) return;
   const startTime = Date.now();
   logger.info('=== DAILY FLIP ALERTS JOB STARTED ===');
 
@@ -742,6 +759,7 @@ interface StockAlertItem {
 }
 
 async function jobDailyStockAlerts(): Promise<void> {
+  if (!(await automationAllowed())) return;
   const startTime = Date.now();
   logger.info('=== DAILY STOCK ALERTS JOB STARTED ===');
 
@@ -905,17 +923,21 @@ async function jobDailyStockAlerts(): Promise<void> {
 // ============================================================================
 
 async function jobWeeklyDigest(): Promise<void> {
+  if (!(await automationAllowed())) return;
   const startTime = Date.now();
   logger.info('=== WEEKLY DIGEST JOB STARTED ===');
 
   try {
-    // 1. Pull top outcome events from the week (platform-wide, anonymized)
-    const weekOutcomes = await query<{ domain: string; event_type: string; value: string; description: string }>(
-      `SELECT domain, event_type, value, description
+    // 1. Pull aggregate realized financial outcomes only. Never place one
+    // user's free-text description into another user's email.
+    const weekOutcomes = await query<{ domain: string; event_type: string; total_value: string; event_count: string }>(
+      `SELECT domain, event_type, SUM(value) AS total_value, COUNT(*) AS event_count
        FROM outcome_events
        WHERE created_at > NOW() - INTERVAL '7 days'
-         AND event_type IN ('PROFIT', 'FLIP_PROFIT', 'OPPORTUNITY_FOUND')
-       ORDER BY value::numeric DESC
+          AND event_type IN ('PROFIT', 'FLIP_PROFIT')
+          AND value > 0
+       GROUP BY domain, event_type
+       ORDER BY total_value DESC
        LIMIT 5`
     ).catch(() => ({ rows: [] }));
 
@@ -943,10 +965,12 @@ async function jobWeeklyDigest(): Promise<void> {
     }
 
     const outcomeRows = weekOutcomes.rows.map((o) => {
-      const val = parseFloat(o.value || '0');
+      const val = parseFloat(o.total_value || '0');
+      const count = parseInt(o.event_count || '0', 10);
+      const domain = String(o.domain || 'other').replace(/[^a-z0-9 _-]/gi, '').slice(0, 30);
       return `<li style="padding:6px 0;color:#9ca3af;font-size:14px">
         <span style="color:#10b981;font-weight:600">+$${val.toFixed(0)}</span>
-        ${o.description ? ` — ${o.description.slice(0, 80)}` : ` from ${o.domain}`}
+        — ${count} verified ${count === 1 ? 'outcome' : 'outcomes'} in ${domain}
       </li>`;
     }).join('');
 
@@ -972,9 +996,9 @@ async function jobWeeklyDigest(): Promise<void> {
       </p>
 
       ${outcomeRows ? `<div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin-bottom:20px">
-        <div style="font-size:12px;color:#10b981;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;margin-bottom:12px">💰 Tracked Wins This Week</div>
+        <div style="font-size:12px;color:#10b981;text-transform:uppercase;letter-spacing:0.05em;font-weight:600;margin-bottom:12px">💰 Aggregated Realized Outcomes</div>
         <ul style="list-style:none;margin:0;padding:0">${outcomeRows}</ul>
-        <div style="font-size:11px;color:#374151;margin-top:12px">Anonymized — based on outcomes logged by Nova users</div>
+        <div style="font-size:11px;color:#374151;margin-top:12px">Aggregated counts only. No user descriptions or opportunity estimates.</div>
       </div>` : ''}
 
       ${signalRows ? `<div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin-bottom:20px">
@@ -1009,7 +1033,7 @@ async function jobWeeklyDigest(): Promise<void> {
           body: JSON.stringify({
             from: 'Nova Weekly <weekly@novanexus-ai.com>',
             to: [sub.email],
-            subject: `Nova Weekly: ${signals.length > 0 ? `${signals[0].symbol} setup + ` : ''}${weekOutcomes.rows.length > 0 ? 'wins from this week' : 'intelligence digest'}`,
+            subject: `Nova Weekly: ${signals.length > 0 ? `${signals[0].symbol} setup + ` : ''}${weekOutcomes.rows.length > 0 ? 'verified outcomes' : 'intelligence digest'}`,
             html,
           }),
         });
@@ -1041,6 +1065,7 @@ async function jobWeeklyDigest(): Promise<void> {
 // ============================================================================
 
 async function jobBusinessFollowUps(): Promise<void> {
+  if (!(await automationAllowed())) return;
   const startTime = Date.now();
   logger.info('=== BUSINESS FOLLOW-UP REMINDERS STARTED ===');
 

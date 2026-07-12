@@ -65,18 +65,14 @@ export async function computeCandle(): Promise<CandleState> {
   };
 }
 
-// State-conditioned retrieval: prior decisions matched to the current
-// regime — the Library answering "what worked when the world looked like this."
+// State-conditioned retrieval is intentionally dark until artifacts carry an
+// enforced owner/org scope and resolved outcome linkage. Returning global
+// contexts here previously risked placing one person's situation in another
+// person's prompt and did not actually prove "what worked."
 export async function retrieveForState(regime: 'EXPLOITATION' | 'EXPLORATION', limit = 2): Promise<string[]> {
-  const r = await query<{ payload: any }>(
-    `SELECT payload FROM artifacts
-     WHERE kind = 'decision_card' AND regime = $1
-     ORDER BY created_at DESC LIMIT $2`,
-    [regime, limit]
-  ).catch(() => ({ rows: [] as any[] }));
-  return r.rows
-    .map(row => String(row.payload?.context || '').slice(0, 160))
-    .filter(s => s.length > 10);
+  void regime;
+  void limit;
+  return [];
 }
 
 export function candleToPromptLine(c: CandleState): string {

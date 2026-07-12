@@ -8,16 +8,16 @@
  *   3. Nova proposes an improved prompt, informed by REAL past failures on
  *      the substrate.
  *   4. The candidate is scored on the SAME suite.
- *   5. PROMOTION RULE: the candidate replaces the incumbent ONLY if it beats
- *      it by a margin on the benchmark. Otherwise it is archived with its
- *      score. No vibes, no self-congratulation — the test oracle decides.
+ *   5. CANDIDACY RULE: a candidate may request human promotion ONLY if it beats
+ *      the incumbent by a margin. The benchmark can nominate; only a human
+ *      with forge.approve authority can activate it.
  *
  * The agent improves its own instructions over time, but every step is
  * measured against reality and every version is on the immutable record.
  * Prompts are DATA (prompt_versions, migration 030); the gate is code.
  */
 
-import { query, queryOne } from '@nova/shared';
+import { query, queryOne, transaction } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
 import { generateChat } from './ai-router';
 import { runSmithTask, SMITH_SYSTEM } from './smith';
@@ -68,7 +68,15 @@ export async function runBenchmark(agent: string, systemOverride?: string, label
 }
 
 // ── The gated self-improvement pass ────────────────────────────────────
-export async function proposeAndGate(agent = 'coder-agent'): Promise<{ promoted: boolean; incumbent: number; candidate: number; reason: string }> {
+export async function proposeAndGate(agent = 'coder-agent'): Promise<{
+  promoted: boolean;
+  passedGate?: boolean;
+  approvalId?: string | null;
+  candidateSemver?: string | null;
+  incumbent: number;
+  candidate: number;
+  reason: string;
+}> {
   if (!BENCHMARKS[agent]) return { promoted: false, incumbent: 0, candidate: 0, reason: `No benchmark suite for ${agent}.` };
 
   // Current active prompt (or the code default if none promoted yet)
@@ -116,40 +124,124 @@ export async function proposeAndGate(agent = 'coder-agent'): Promise<{ promoted:
 
   // Record the candidate as a version regardless — the record is permanent
   const persona = await queryOne<{ id: string }>(`SELECT id FROM agent_personas WHERE slug = $1`, [agent]).catch(() => null);
+  let approvalId: string | null = null;
+  let candidateSemver: string | null = null;
   if (persona) {
     const nextV = await queryOne<{ n: string }>(
       `SELECT COALESCE(MAX(CAST(split_part(semver,'.',2) AS INT)),0)+1 n FROM prompt_versions WHERE persona_id = $1`, [persona.id]
     ).catch(() => ({ n: '1' }));
     const semver = `0.${nextV?.n || '1'}.0`;
-    if (beats) {
-      // demote incumbent, promote candidate — atomic-ish
-      await query(`UPDATE prompt_versions SET status = 'retired' WHERE persona_id = $1 AND status = 'active'`, [persona.id]).catch(() => {});
-    }
+    candidateSemver = semver;
     await query(
       `INSERT INTO prompt_versions (persona_id, semver, prompt_text, changelog, author_type, status)
        VALUES ($1,$2,$3,$4,'agent',$5) ON CONFLICT (persona_id, semver) DO NOTHING`,
-      [persona.id, semver, candidatePrompt, `self-improvement pass; benchmark ${candEval.score.toFixed(2)} vs incumbent ${incEval.score.toFixed(2)}`, beats ? 'active' : 'retired']
+      [persona.id, semver, candidatePrompt, `self-improvement pass; benchmark ${candEval.score.toFixed(2)} vs incumbent ${incEval.score.toFixed(2)}`, beats ? 'candidate' : 'retired']
     ).catch(() => {});
+    if (beats) {
+      const approval = await queryOne<{ id: string }>(
+        `INSERT INTO forge_approvals
+           (kind, requested_by_persona, summary, payload_json, status)
+         VALUES ('PROMOTION', 'agent-evals', $1, $2, 'PENDING') RETURNING id`,
+        [
+          `Promote ${agent} prompt ${semver}`,
+          JSON.stringify({ agent, semver, incumbentScore: incEval.score, candidateScore: candEval.score }),
+        ],
+      ).catch(() => null);
+      approvalId = approval?.id || null;
+    }
   }
 
   await writeArtifact({
     kind: 'hypothesis', regime: 'EXPLOITATION', authorType: 'agent', authorId: 'agent-evals',
     payload: {
-      claim: `Self-improvement pass for ${agent}: ${beats ? 'PROMOTED' : 'rejected'}`,
+      claim: `Self-improvement pass for ${agent}: ${beats ? 'CANDIDATE AWAITING HUMAN PROMOTION' : 'rejected'}`,
       explains: 'recursive-improvement-loop',
       incumbent_score: incEval.score, candidate_score: candEval.score,
-      promotion_margin: PROMOTION_MARGIN, promoted: beats,
+      promotion_margin: PROMOTION_MARGIN, passed_gate: beats, promoted: false,
+      candidate_semver: candidateSemver, approval_id: approvalId,
       incumbent_detail: incEval.details, candidate_detail: candEval.details,
     },
   }).catch(() => {});
 
-  logger.info('Self-improvement pass', { agent, incumbent: incEval.score, candidate: candEval.score, promoted: beats });
+  logger.info('Self-improvement pass', { agent, incumbent: incEval.score, candidate: candEval.score, passedGate: beats, approvalId });
   return {
-    promoted: beats,
+    promoted: false,
+    passedGate: beats,
+    approvalId,
+    candidateSemver,
     incumbent: incEval.score,
     candidate: candEval.score,
     reason: beats
-      ? `Promoted: candidate ${candEval.score.toFixed(2)} beat incumbent ${incEval.score.toFixed(2)} by ≥${PROMOTION_MARGIN}.`
+      ? `Candidate passed: ${candEval.score.toFixed(2)} beat incumbent ${incEval.score.toFixed(2)} by ≥${PROMOTION_MARGIN}. Human forge.approve authorization is required for activation.`
       : `Rejected: candidate ${candEval.score.toFixed(2)} did not beat incumbent ${incEval.score.toFixed(2)} by the required margin. The oracle decides, not the agent.`,
   };
+}
+
+export async function decidePromptPromotion(input: {
+  approvalId: string;
+  approve: boolean;
+  decidedBy: string;
+  reason: string;
+}): Promise<{ ok: boolean; conflict?: boolean; agent?: string; semver?: string; status?: 'APPROVED' | 'REJECTED' }> {
+  return transaction(async (client) => {
+    const approvalResult = await client.query<{
+      id: string;
+      status: string;
+      payload_json: any;
+    }>(
+      `SELECT id, status, payload_json FROM forge_approvals
+       WHERE id = $1 AND kind = 'PROMOTION' FOR UPDATE`,
+      [input.approvalId],
+    );
+    const approval = approvalResult.rows[0];
+    if (!approval) return { ok: false };
+    if (approval.status !== 'PENDING') return { ok: false, conflict: true };
+
+    const payload = typeof approval.payload_json === 'string'
+      ? JSON.parse(approval.payload_json)
+      : approval.payload_json || {};
+    const agent = String(payload.agent || '');
+    const semver = String(payload.semver || '');
+    if (!agent || !semver) return { ok: false };
+
+    if (input.approve) {
+      const personaResult = await client.query<{ id: string }>(
+        `SELECT id FROM agent_personas WHERE slug = $1`, [agent],
+      );
+      const persona = personaResult.rows[0];
+      if (!persona) return { ok: false };
+      const candidateResult = await client.query<{ id: string }>(
+        `SELECT id FROM prompt_versions
+         WHERE persona_id = $1 AND semver = $2 AND status = 'candidate' FOR UPDATE`,
+        [persona.id, semver],
+      );
+      if (!candidateResult.rows[0]) return { ok: false };
+      await client.query(
+        `UPDATE prompt_versions SET status = 'retired'
+         WHERE persona_id = $1 AND status = 'active'`,
+        [persona.id],
+      );
+      await client.query(
+        `UPDATE prompt_versions SET status = 'active', promoted_at = NOW()
+         WHERE id = $1`,
+        [candidateResult.rows[0].id],
+      );
+    } else {
+      await client.query(
+        `UPDATE prompt_versions pv SET status = 'retired'
+         FROM agent_personas p
+         WHERE pv.persona_id = p.id AND p.slug = $1 AND pv.semver = $2 AND pv.status = 'candidate'`,
+        [agent, semver],
+      );
+    }
+
+    const status = input.approve ? 'APPROVED' : 'REJECTED';
+    await client.query(
+      `UPDATE forge_approvals
+       SET status = $2, decided_by = $3, decision_reason = $4, decided_at = NOW()
+       WHERE id = $1`,
+      [input.approvalId, status, input.decidedBy, input.reason.slice(0, 2_000)],
+    );
+    return { ok: true, agent, semver, status };
+  });
 }

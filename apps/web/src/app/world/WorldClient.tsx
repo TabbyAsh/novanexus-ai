@@ -28,7 +28,11 @@ interface Pulse {
   generatedAt: string;
 }
 
-interface Msg { role: 'nova' | 'visitor'; text: string }
+interface Msg {
+  role: 'nova' | 'visitor';
+  text: string;
+  confirmation?: { message: string; label: string };
+}
 
 const SEEN_KEY = 'nova_world_seen';
 const VISITOR_KEY = 'nova_visitor_id';
@@ -101,7 +105,6 @@ export default function WorldClient() {
     returning.current = evaluateReturning();
     visitorId.current = getVisitorId();
     fetchMyAgents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── The pulse — poll real activity every 20s ────────────────────────
@@ -164,26 +167,37 @@ export default function WorldClient() {
   const hasten = useCallback(() => { stage.current.skip = true; }, []);
 
   // ── Hail — speaking to Nova ──────────────────────────────────────────
-  const send = useCallback(async () => {
-    const text = input.trim();
+  const send = useCallback(async (confirmedMessage?: string) => {
+    const confirmed = Boolean(confirmedMessage);
+    const text = confirmedMessage || input.trim();
     if (!text || thinking) return;
-    setInput('');
-    setMessages(m => [...m, { role: 'visitor', text }]);
+    if (confirmed) {
+      setMessages(items => items.map(item => item.confirmation?.message === text ? { ...item, confirmation: undefined } : item));
+    } else {
+      setInput('');
+      setMessages(m => [...m, { role: 'visitor', text }]);
+    }
     setThinking(true);
     stage.current.mode = 'thinking';
     try {
       const r = await fetch('/api/proxy/v1/world/hail', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, returning: returning.current, visitorId: visitorId.current }),
+        body: JSON.stringify({ message: text, returning: returning.current, visitorId: visitorId.current, confirm: confirmed }),
       });
       const d = await r.json();
       const reply = d?.data?.reply || d?.error?.message || 'Unavailable. The light is not there yet.';
-      if (d?.data?.provider === 'forge') fetchMyAgents();
+      if (d?.data?.provider === 'forge' && d?.data?.authority?.externalSideEffectsPerformed) fetchMyAgents();
       // She stills when the move is found — the answer arrives with weight.
       stage.current.mode = 'found';
       setTimeout(() => {
-        setMessages(m => [...m, { role: 'nova', text: reply }]);
+        setMessages(m => [...m, {
+          role: 'nova',
+          text: reply,
+          confirmation: d?.data?.confirmationRequired
+            ? { message: text, label: d?.data?.proposedAction?.type === 'ATTACH_EMAIL' ? 'confirm notification change' : 'confirm persistent watcher' }
+            : undefined,
+        }]);
         setThinking(false);
         setTimeout(() => { stage.current.mode = 'idle'; }, 2600);
       }, 650);
@@ -192,7 +206,7 @@ export default function WorldClient() {
       setThinking(false);
       setMessages(m => [...m, { role: 'nova', text: 'Unavailable. The light is not there yet.' }]);
     }
-  }, [input, thinking]);
+  }, [input, thinking, fetchMyAgents]);
 
   // ── Swarm inputs — every mote is a real event ────────────────────────
   const events: SwarmEventInput[] = useMemo(() => {
@@ -376,7 +390,7 @@ function NexusChat({
   messages: Msg[];
   input: string;
   setInput: (v: string) => void;
-  send: () => void;
+  send: (confirmedMessage?: string) => void;
   thinking: boolean;
 }) {
   const logRef = useRef<HTMLDivElement>(null);
@@ -395,6 +409,18 @@ function NexusChat({
             >
               {m.text}
             </span>
+            {m.confirmation && (
+              <div className="mt-2">
+                <button
+                  onClick={() => send(m.confirmation!.message)}
+                  disabled={thinking}
+                  className="rounded-full border px-3 py-1.5 text-[10px] tracking-[0.18em] uppercase disabled:opacity-30"
+                  style={{ borderColor: 'rgba(125,216,255,0.35)', color: '#9be8ff', background: 'rgba(4,10,20,0.7)' }}
+                >
+                  {m.confirmation.label}
+                </button>
+              </div>
+            )}
           </div>
         ))}
         {thinking && (
@@ -422,7 +448,7 @@ function NexusChat({
           style={{ color: '#dbeefb', caretColor: '#7dd8ff' }}
         />
         <button
-          onClick={send}
+          onClick={() => send()}
           disabled={thinking || !input.trim()}
           className="text-[11px] tracking-[0.25em] uppercase disabled:opacity-30"
           style={{ color: '#7dd8ff' }}

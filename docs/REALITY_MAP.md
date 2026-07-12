@@ -1,5 +1,9 @@
 # NovaNexus AI - Reality Map
 
+> **Historical February 2026 snapshot.** Do not use this file as current
+> deployment truth. See [`../SYSTEM_STATUS.md`](../SYSTEM_STATUS.md) and
+> [`NOVA_OPERATING_MODEL.md`](NOVA_OPERATING_MODEL.md).
+
 > Generated: February 2026  
 > Purpose: Document what exists, how it connects, what works, and what's broken.
 

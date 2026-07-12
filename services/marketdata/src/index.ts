@@ -546,7 +546,7 @@ function areAllProvidersExhausted(): boolean {
 
 async function fetchWithRetry(
   url: string,
-  options: RequestInit = {},
+  options: Parameters<typeof fetch>[1] = {},
   retries = 3,
   backoff = 1000
 ): Promise<globalThis.Response> {

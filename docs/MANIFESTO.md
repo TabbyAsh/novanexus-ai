@@ -1,4 +1,4 @@
-# Nova Enterprises — Income Generator Manifesto
+# Nova / Nexus — Realization and Economic Engine Manifesto
 
 > **Status**: Master strategic document
 > **Authority**: This document defines the full vision. Execution priority is governed by SYSTEM_STATUS.md and TRADER_INTELLIGENCE_DIVISION.md.
@@ -8,9 +8,12 @@
 
 ## Prime Directive
 
-Nova Enterprises is a **stacked economic machine**.
+Nova is the **realization of AI potential**. Nexus is the **interaction company**
+that brings that potential into governed contact with human purpose and reality.
+The economic machine sustains and expands the realization; it is essential, but
+it is not the whole of Nova.
 
-**attention → data → decisions → actions → results → proof → trust → subscriptions → capital → expansion**
+**purpose → interaction → capability → action → result → evidence → trust → income → R&D → expanded capability**
 
 Every division must satisfy four conditions:
 1. It must create real value.

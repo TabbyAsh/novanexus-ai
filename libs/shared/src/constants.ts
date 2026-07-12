@@ -16,6 +16,10 @@ export const SERVICE_PORTS = {
   RESEARCHBOT: 3013,
   OPSBOT: 3014,
   FORGEBOT: 3015,
+  FORGE_RUNNER: 3016,
+  CMDX: 3017,
+  REPOGRAPH: 3018,
+  FORGE_EVALS: 3019,
   MARKETDATA: 3020,
   CONTENTDATA: 3021,
   COMMERCEDATA: 3022,
@@ -91,6 +95,14 @@ export const EVENT_TYPES = {
   PATCH_APPROVED: 'forge.patch.approved',
   PATCH_DEPLOYED: 'forge.patch.deployed',
   PATCH_ROLLED_BACK: 'forge.patch.rolledback',
+
+  // Forge command-broker (CmdX) events
+  FORGE_CMD_REQUESTED: 'forge.cmd.requested',
+  FORGE_CMD_DECIDED: 'forge.cmd.decided',
+  FORGE_CMD_EXECUTED: 'forge.cmd.executed',
+  FORGE_TASK_CREATED: 'forge.task.created',
+  FORGE_APPROVAL_REQUESTED: 'forge.approval.requested',
+  FORGE_APPROVAL_RESOLVED: 'forge.approval.resolved',
 
   // Bot events
   BOT_TASK_RECEIVED: 'bot.task.received',
@@ -180,6 +192,7 @@ export const DB_DEFAULTS = {
 export const HTTP_STATUS = {
   OK: 200,
   CREATED: 201,
+  ACCEPTED: 202,
   NO_CONTENT: 204,
   BAD_REQUEST: 400,
   UNAUTHORIZED: 401,

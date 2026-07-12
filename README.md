@@ -1,10 +1,20 @@
-# Nova Enterprises
+# Nova / Nexus
 
-![CI](https://github.com/nova-enterprises/nova-enterprises/actions/workflows/ci.yml/badge.svg)
+![CI](https://github.com/TabbyAsh/novanexus-ai/actions/workflows/ci.yml/badge.svg)
 
-**The AI-Orchestrated Universal Life-and-Business Operating System**
+**The interaction company for the realization of AI potential**
 
-Nova is a platform that merges trading, e-commerce, and content distribution into a single system where every action produces data, every data point improves the AI, and every improved decision increases profitability.
+**Nova** is the cumulative realization of useful AI potential: intelligence,
+tools, agents, income engines, research, memory, and their composition into new
+capabilities. **Nexus** is the company and interaction engine through which
+humans express intent, grant authority, access Nova, understand results, and
+return outcomes. Market, Bazaar, Social, Forge, World, and future sectors are
+manifestations of Nova through Nexus.
+
+Start with the [Nova operating model](docs/NOVA_OPERATING_MODEL.md) for the
+canonical ontology, the [Nexus Interaction Engine](docs/NEXUS_INTERACTION_ENGINE.md)
+for the executable human-to-Nova contract, and [system status](SYSTEM_STATUS.md)
+for the verified runtime boundary.
 
 ## 🚀 Quick Start
 
@@ -17,7 +27,7 @@ Nova is a platform that merges trading, e-commerce, and content distribution int
 
 ```bash
 # Clone and install dependencies
-git clone <repo-url>
+git clone https://github.com/TabbyAsh/novanexus-ai.git
 cd nova-enterprises
 npm install
 
@@ -104,14 +114,14 @@ nova/
 
 ### Specialized Bots
 
-| Bot | Purpose | Port |
-|-----|---------|------|
-| TradeBot | Market scanning, backtesting, paper trading | 3010 |
-| StoreBot | Product sourcing, pricing, order management | 3011 |
-| SocialBot | Content planning, scheduling, analytics | 3012 |
-| ResearchBot | Knowledge base, learning, proposals | 3013 |
-| OpsBot | System health, deployments | 3014 |
-| ForgeBot | Code improvement (gated) | 3015 |
+| Bot | Purpose | Port | Runtime status |
+|-----|---------|------|----------------|
+| TradeBot | Market scanning, backtesting, paper trading | 3010 | Production contract |
+| StoreBot | Product sourcing, pricing, order management | 3011 | Production contract |
+| SocialBot | Content planning, scheduling, analytics | 3012 | Production contract |
+| ResearchBot | Knowledge base, learning, proposals | 3013 | Reserved; not implemented |
+| OpsBot | System health and operational visibility | 3014 | Production contract |
+| ForgeBot | Code improvement (gated) | 3015 | Control-plane work; not in Railway runtime |
 
 ### Core Services
 
@@ -176,4 +186,4 @@ Use profits and platform credibility to build:
 
 ---
 
-**Nova Enterprises** - Where time becomes leverage.
+**Nexus** — where human purpose and Nova's potential become reality.
