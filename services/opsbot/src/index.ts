@@ -44,6 +44,7 @@ const SERVICES: ServiceDef[] = [
   { name: 'marketdata',   url: process.env.MARKETDATA_URL    || 'http://localhost:3020', healthPath: '/health',  critical: false },
   { name: 'commercedata', url: process.env.COMMERCEDATA_URL  || 'http://localhost:3022', healthPath: '/health',  critical: false },
   { name: 'nova-hub',     url: process.env.NOVA_HUB_URL      || 'http://localhost:3030', healthPath: '/health',  critical: true  },
+  { name: 'scheduler',    url: process.env.SCHEDULER_URL     || 'http://localhost:3040', healthPath: '/health',  critical: false },
 ];
 
 // ============================================================================
@@ -291,6 +292,7 @@ app.get('/v1/ops/founder', async (_req: Request, res: Response) => {
 
 app.listen(PORT, () => {
   logger.info(`OpsBot running on port ${PORT}`);
+  if (typeof process.send === 'function') process.send('ready');
 });
 
 export default app;

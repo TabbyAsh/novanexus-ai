@@ -21,14 +21,14 @@ import { useAuthStore } from '@/lib/store';
 // USER NAV — what regular users see (clean, guided, no admin)
 // ─────────────────────────────────────────────────────────────────────
 
-// THREE SECTORS + Nova. Each sector is one door to a unified value loop —
+// Nexus + Nova's sectors. Each sector is one door to a unified value loop —
 // no more twelve redundant tools. (Rebuild Phase 0.)
 const USER_NAV = [
   {
-    section: 'NOVA',
+    section: 'NEXUS',
     color: 'text-emerald-400',
     items: [
-      { name: 'Talk to Nova',  href: '/dashboard/nova',   icon: '◆', badge: '' },
+      { name: 'Nexus',         href: '/dashboard/nova',   icon: '◆', badge: '' },
       { name: 'Home',          href: '/dashboard',        icon: '◈', badge: '' },
     ],
   },
@@ -51,8 +51,8 @@ const USER_NAV = [
   },
 ];
 
-// THE WORLD — the founder's private cockpit. Nova runs the company from here;
-// the operator watches and approves. Only visible to OWNER/ADMIN.
+// THE WORLD — a spatial Nexus surface. The operator supplies purpose and
+// authority; Nova's capabilities remain visible and accountable.
 const ADMIN_NAV = [
   { name: 'Enter the World',    href: '/world',                   icon: '✦' },
   { name: 'Command Center',     href: '/dashboard/cockpit',       icon: '◉' },
@@ -60,7 +60,7 @@ const ADMIN_NAV = [
   { name: 'Operations',         href: '/dashboard/business',      icon: '◈' },
   { name: 'Safety & Kill Switch', href: '/dashboard/safety',      icon: '🛡️' },
   { name: 'Analytics',          href: '/dashboard/analytics',     icon: '📉' },
-  { name: 'Daily Brief',        href: '/dashboard/nexus',         icon: '📰' },
+  { name: 'Market Decision Center', href: '/dashboard/nexus',     icon: '📰' },
   { name: 'Social Content',     href: '/dashboard/social',        icon: '📣' },
   { name: 'API Keys',           href: '/dashboard/api-keys',      icon: '🔑' },
   { name: 'Team',               href: '/dashboard/team',          icon: '👥' },
@@ -145,7 +145,7 @@ function Sidebar({ collapsed, onToggle, isMobile }: {
                   <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-xs font-bold text-white shrink-0">
                     N
                   </div>
-                  <span className="font-bold text-white text-sm tracking-tight">Nova</span>
+                  <span className="font-bold text-white text-sm tracking-tight">Nexus</span>
                 </Link>
               </motion.div>
             )}

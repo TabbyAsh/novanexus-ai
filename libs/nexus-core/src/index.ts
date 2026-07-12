@@ -1,11 +1,11 @@
 /**
- * NOVA NEXUS CORE
- * ===============
- * Temporal-Grade Intelligence Platform
- * A Cognitive Operating System for Value
+ * NEXUS CORE (LEGACY COMPATIBILITY PACKAGE)
+ * =========================================
+ * Governance, decision trust, and interaction-support primitives.
  * 
- * This is not a trading bot. This is not an automation script.
- * This is a constitutional AI system with:
+ * Nexus is the company/interaction boundary to Nova; it is not Nova's complete
+ * intelligence or potential. This historical package currently concentrates
+ * market decision components alongside reusable interaction laws:
  * - Governed autonomy (4-tier progression)
  * - Persistent world model (MindSpace)
  * - Immutable decision records (Ledger)
@@ -261,7 +261,7 @@ export {
   type CommerceSignal,
 } from './commerce';
 
-// Nova Platform - Unified platform layer
+// Legacy NovaPlatform name - workflow/interaction state adapter
 export {
   NovaPlatform,
   WorkflowType,
@@ -308,7 +308,7 @@ export {
 } from './vlh';
 
 // ============================================================================
-// NEXUS - The unified system
+// Legacy trade intelligence composition exposed through Nexus
 // ============================================================================
 
 import { ConstitutionEnforcer, AutonomyTier, DegradationLevel } from './constitution';
@@ -336,7 +336,10 @@ import { CommerceIntelligence } from './commerce';
 import { NovaPlatform } from './platform';
 
 /**
- * The Nova Nexus System - Complete Intelligence Empire
+ * Historical NovaNexus market/decision kernel.
+ *
+ * This class is retained for API compatibility. It is one governed capability
+ * cluster behind Nexus, not the definition or totality of Nova.
  * 
  * 5 SYSTEM AXIOMS:
  * 1. Everything Must Ground - concepts resolve to data, logic, artifact, action, output, or value
@@ -345,10 +348,10 @@ import { NovaPlatform } from './platform';
  * 4. Memory Is Sacred - nothing overwritten, everything replayable
  * 5. Governance Is Above Capability - no capability outranks constraint
  * 
- * 3 CORE SECTORS:
+ * CURRENT CAPABILITY CLUSTERS:
  * - Investment & Capital Intelligence
  * - Marketplace & Commerce Intelligence
- * - Nova Nexus Platform
+ * - Workflow, governance, trust, and explanation primitives
  */
 export class NovaNexus {
   // Core Components (Foundation Layer)
@@ -368,7 +371,7 @@ export class NovaNexus {
   public readonly capital: CapitalAllocator;
   public readonly watchlist: WatchlistIntelligence;
 
-  // Intelligence Empire Components
+  // Governance and cross-capability components
   public readonly governance: MetaGovernance;     // Layer 0: Meta-Governance
   public readonly lattice: StateLattice;          // Layer 3: State & Lattice
   public readonly regime: RegimeEngine;           // Layer 4: Intelligence Engines
@@ -376,7 +379,7 @@ export class NovaNexus {
   public readonly trust: TrustLedger;             // Layer 7: Trust Ledger
   public readonly inaction: InactionEngine;       // Inaction as first-class output
   public readonly commerce: CommerceIntelligence; // Sector 2: Commerce
-  public readonly platform: NovaPlatform;         // Sector 3: Platform
+  public readonly platform: NovaPlatform;         // Legacy workflow/interaction adapter
 
   private initialized: boolean = false;
 
@@ -398,7 +401,7 @@ export class NovaNexus {
     this.capital = new CapitalAllocator(initialCapital);
     this.watchlist = new WatchlistIntelligence();
 
-    // Initialize Intelligence Empire components
+    // Initialize governance and cross-capability components
     this.governance = new MetaGovernance();
     this.lattice = new StateLattice();
     this.regime = new RegimeEngine();

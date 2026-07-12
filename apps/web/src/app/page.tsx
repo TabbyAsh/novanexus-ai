@@ -4,8 +4,13 @@ import { motion, AnimatePresence } from 'framer-motion';
 import Link from 'next/link';
 import { useState, useEffect } from 'react';
 import { ArrowRight, Sparkles, ChevronRight } from 'lucide-react';
+import { getVisitorId, isVisitorIdDurable } from '@/lib/visitor';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const optionalAuth = (): Record<string, string> => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 // ═════════════════════════════════════════════════════════════════════
 // NAVBAR
@@ -23,7 +28,7 @@ function Navbar() {
           <div className="w-8 h-8 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center">
             <span className="text-white font-bold text-sm">N</span>
           </div>
-          <span className="text-white font-bold text-lg tracking-tight">Nova</span>
+          <span className="text-white font-bold text-lg tracking-tight">Nexus</span>
         </Link>
         <div className="hidden md:flex items-center gap-8 text-sm">
           <Link href="/start"                  className="text-gray-400 hover:text-white transition">Get My Card</Link>
@@ -60,6 +65,8 @@ function HeroSection() {
   const [situation, setSituation] = useState('');
   const [loading, setLoading] = useState(false);
   const [card, setCard] = useState<string | null>(null);
+  const [cardId, setCardId] = useState<string | null>(null);
+  const [trackingDurable, setTrackingDurable] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [topTrend, setTopTrend] = useState<string | null>(null);
 
@@ -80,6 +87,7 @@ function HeroSection() {
     if (!situation.trim() && selected.length === 0) return;
     setLoading(true);
     setCard(null);
+    setCardId(null);
     setError(null);
     try {
       const context = [
@@ -87,13 +95,18 @@ function HeroSection() {
         situation.trim() ? situation.trim() : '',
       ].filter(Boolean).join(' ');
 
+      const visitorId = getVisitorId();
+      setTrackingDurable(isVisitorIdDurable());
       const res = await fetch(`${API}/v1/cards/intake`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context }),
+        headers: { 'Content-Type': 'application/json', ...optionalAuth() },
+        body: JSON.stringify({ context, visitorId }),
       });
       const d = await res.json();
-      if (d.success) { setCard(d.data?.content || null); }
+      if (d.success) {
+        setCard(d.data?.content || null);
+        setCardId(d.data?.cardId || null);
+      }
       else { setError('Could not generate your card. Try describing your situation in a bit more detail.'); }
     } catch { setError('Network error. Please try again.'); }
     finally { setLoading(false); }
@@ -210,9 +223,15 @@ function HeroSection() {
                   </div>
                   <div className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{card}</div>
                   <div className="mt-4 flex items-center justify-between">
-                    <p className="text-xs text-gray-600">Sign up to save this and generate unlimited cards</p>
-                    <Link href="/register" className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
-                      Save & Unlock More <ArrowRight className="w-3 h-3" />
+                    <p className="text-xs text-gray-600">
+                      {cardId && trackingDurable
+                        ? 'Saved to this browser\'s track record.'
+                        : cardId
+                          ? 'Saved for this page session; browser storage is blocked.'
+                          : 'Tracking is unavailable right now; keep a copy of this card.'}
+                    </p>
+                    <Link href={cardId ? '/start#track-record' : '/start'} className="text-xs font-semibold text-emerald-400 hover:text-emerald-300 transition flex items-center gap-1">
+                      {cardId ? 'Track what happens' : 'Try on Start'} <ArrowRight className="w-3 h-3" />
                     </Link>
                   </div>
                 </motion.div>
@@ -221,7 +240,7 @@ function HeroSection() {
           </div>
 
           <p className="text-xs text-gray-700 mt-4">
-            No account needed to try. Sign up to save cards and access the full library.
+            No account needed. When tracking is available, this browser keeps the card so you can report what happened.
           </p>
         </motion.div>
       </div>
@@ -557,9 +576,9 @@ function Footer() {
           <div className="md:col-span-1">
             <div className="flex items-center gap-2 mb-3">
               <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-xs font-bold">N</div>
-              <span className="text-white font-semibold text-sm">Nova Enterprises</span>
+              <span className="text-white font-semibold text-sm">Nexus</span>
             </div>
-            <p className="text-xs text-gray-600 leading-relaxed">Whatever you have, whatever you&apos;re dealing with — there&apos;s a next move.</p>
+            <p className="text-xs text-gray-600 leading-relaxed">The interaction company through which human potential meets Nova.</p>
           </div>
           <div>
             <h4 className="text-xs font-semibold text-gray-400 uppercase tracking-widest mb-3">Get Started</h4>
@@ -600,7 +619,7 @@ function Footer() {
           </div>
         </div>
         <div className="pt-6 border-t border-white/5">
-          <p className="text-gray-700 text-xs">© 2026 Nova Enterprises.</p>
+          <p className="text-gray-700 text-xs">Nexus is the operating identity. © 2026 Nova Enterprises; see Terms for the contracting name.</p>
           <p className="mt-2 text-gray-700 text-xs leading-relaxed max-w-2xl">
             Stock screener and trading tools are for informational purposes only and do not constitute financial or investment advice.
             Resale estimates are based on market data and may not reflect actual sale prices. All decisions are yours.

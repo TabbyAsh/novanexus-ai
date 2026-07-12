@@ -1,4 +1,4 @@
-# Nova Enterprises — Founder Brief
+# Nexus / Nova — Founder Brief
 
 > **Status**: Living document. Updated with each sprint.
 > **Purpose**: Truthful summary of what is built, what is live, and what is next.
@@ -6,9 +6,14 @@
 
 ---
 
-## What Nova Is
+## Current Spearpoint
 
-Nova Enterprises builds AI-powered trader intelligence tools. The current product is the **Nova Daily Brief** — a pre-market watchlist of structured stock setups with entry, stop, target, confidence tier, and regime context, delivered to subscribers daily.
+Nova is the realization of AI potential; Nexus is the company and interaction
+engine through which humans direct and experience her. The current commercial
+spearpoint is trader intelligence, led by the **Nova Daily Brief** — a
+pre-market watchlist of structured stock setups with entry, stop, target,
+confidence tier, and regime context, delivered to subscribers daily. This is a
+revenue and learning wedge, not the definition of Nova.
 
 ## What Is Actually Live
 

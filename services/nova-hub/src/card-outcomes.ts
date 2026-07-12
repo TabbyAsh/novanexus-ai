@@ -8,9 +8,14 @@
 
 import { query, queryOne } from '@nova/shared';
 import { createLogger } from '@nova/telemetry';
+import { createHash } from 'node:crypto';
 import { writeArtifact } from './substrate';
 
 const logger = createLogger('card-outcomes');
+
+function artifactOwnerRef(id: string): string {
+  return `intake-owner:${createHash('sha256').update(id).digest('hex')}`;
+}
 
 // Classify a card into a coarse domain for track-record grouping.
 export function domainOf(context: string, haves: string[] = []): string {
@@ -46,32 +51,106 @@ export async function markOutcome(
   cardId: string,
   outcome: 'worked' | 'partial' | 'failed',
   note: string,
-  value: number | null
-): Promise<{ ok: boolean; domain?: string }> {
-  const card = await queryOne<{ domain: string; regime: string; user_id: string | null }>(
-    `SELECT domain, regime, user_id FROM intake_cards WHERE id = $1`, [cardId]
-  ).catch(() => null);
+  value: number | null,
+  scope: { userId?: string | null; visitorId?: string | null } = {},
+): Promise<{ ok: boolean; forbidden?: boolean; conflict?: boolean; domain?: string }> {
+  const card = await queryOne<{
+    domain: string;
+    regime: string;
+    user_id: string | null;
+    visitor_id: string | null;
+    context: string;
+    haves: string[];
+    wants: string[];
+    provider: string;
+    content: string;
+    outcome: 'worked' | 'partial' | 'failed' | null;
+  }>(
+    `SELECT domain, regime, user_id, visitor_id, context, haves, wants, provider, content, outcome
+     FROM intake_cards WHERE id = $1`, [cardId]
+  );
   if (!card) return { ok: false };
 
-  await query(
-    `UPDATE intake_cards SET outcome = $2, outcome_note = $3, outcome_value = $4, outcome_at = NOW() WHERE id = $1`,
-    [cardId, outcome, note.slice(0, 2000), value]
-  ).catch(() => {});
+  // A browser's visitor id is continuity, not authentication, but it prevents
+  // one visitor from rewriting another visitor's learning record. Authenticated
+  // cards are bound to the user identity forwarded by the Gateway. Cards made
+  // before ownership was persisted retain the UUID capability fallback.
+  if (card.user_id && card.user_id !== scope.userId) return { ok: false, forbidden: true };
+  if (!card.user_id && card.visitor_id && card.visitor_id !== scope.visitorId) {
+    return { ok: false, forbidden: true };
+  }
+  if (card.outcome) return { ok: false, conflict: true, domain: card.domain };
 
-  // The outcome is a permanent, immutable record referencing the decision
-  // (substrate §4: the score is disposable, the record is permanent).
-  await writeArtifact({
-    kind: 'outcome', authorType: 'human', authorId: card.user_id || 'visitor',
-    refs: [], // intake_cards id lives in payload; substrate refs are artifact-ids
-    payload: { kind: 'decision_card_outcome', cardId, domain: card.domain, regime: card.regime, outcome, note: note.slice(0, 400), value },
-  }).catch(() => {});
+  // This write is the loop-closing fact. Do not report success if it did not
+  // reach durable storage; secondary artifacts may degrade, the outcome may not.
+  const updated = await query(
+    `UPDATE intake_cards SET outcome = $2, outcome_note = $3, outcome_value = $4, outcome_at = NOW()
+     WHERE id = $1 AND outcome IS NULL RETURNING id`,
+    [cardId, outcome, note.slice(0, 2000), value]
+  );
+  if (!updated.rowCount) return { ok: false, conflict: true, domain: card.domain };
+
+  // The outcome is a permanent, immutable artifact referencing the original
+  // decision. Legacy cards pre-dating cardId linkage get a decision artifact
+  // created here before the outcome is appended.
+  try {
+    let decisionArtifact = await queryOne<{ id: string }>(
+      `SELECT id FROM artifacts
+       WHERE kind = 'decision_card' AND payload->>'cardId' = $1
+       ORDER BY created_at DESC LIMIT 1`,
+      [cardId]
+    );
+    if (!decisionArtifact?.id) {
+      const decisionId = await writeArtifact({
+        kind: 'decision_card',
+        regime: card.regime as 'EXPLOITATION' | 'EXPLORATION' | null,
+        authorType: 'nova',
+        authorId: `intake:${card.provider || 'unknown'}`,
+        payload: {
+          cardId,
+          content: `intake_card:${cardId}`,
+          contentRedacted: true,
+          ownerScope: card.user_id ? 'authenticated' : 'visitor',
+          provider: card.provider,
+        },
+      });
+      decisionArtifact = decisionId ? { id: decisionId } : null;
+    }
+    if (decisionArtifact?.id) {
+      await writeArtifact({
+        kind: 'outcome',
+        authorType: 'human',
+        authorId: artifactOwnerRef(card.user_id || card.visitor_id || 'visitor'),
+        refs: [decisionArtifact.id],
+        payload: {
+          result: outcome,
+          kind: 'decision_card_outcome',
+          cardId,
+          domain: card.domain,
+          regime: card.regime,
+          detailsRedacted: true,
+          detailsStoredIn: 'intake_cards',
+        },
+      });
+    }
+  } catch (err) {
+    logger.warn('Outcome artifact append failed', { cardId, error: (err as Error).message });
+  }
 
   // Also write to the outcome ledger so platform value + calibration see it.
-  if (value && value > 0) {
+  if (card.user_id && value && value > 0) {
     await query(
-      `INSERT INTO outcome_events (user_id, event_type, source_type, value)
-       VALUES ($1, $2, 'decision_card', $3)`,
-      [card.user_id || null, outcome === 'worked' ? 'PROFIT' : 'OPPORTUNITY_FOUND', value]
+      `INSERT INTO outcome_events
+         (user_id, domain, event_type, source_type, value, description, metadata)
+       VALUES ($1, $2, $3, 'decision_card', $4, $5, $6)`,
+      [
+        card.user_id,
+        card.domain,
+        outcome === 'worked' ? 'OPPORTUNITY_FOUND' : 'ATTEMPT_FAILED',
+        value,
+        note.slice(0, 400) || `Decision card marked ${outcome}`,
+        JSON.stringify({ cardId, outcome, realization: 'user_reported' }),
+      ]
     ).catch(() => {});
   }
   logger.info('Card outcome marked', { cardId, outcome, domain: card.domain });
@@ -90,7 +169,7 @@ export async function calibration(scope?: { userId?: string; visitorId?: string 
 
   const rows = await query<{ domain: string; outcome: string }>(
     `SELECT domain, outcome FROM intake_cards WHERE ${where.join(' AND ')}`, params
-  ).catch(() => ({ rows: [] as any[] }));
+  );
 
   const all = rows.rows;
   const worked = all.filter(r => r.outcome === 'worked').length;
@@ -116,6 +195,6 @@ export async function listCards(scope: { userId?: string; visitorId?: string }, 
   const r = await query<any>(
     `SELECT id, domain, regime, outcome, outcome_at, LEFT(content, 200) AS preview, created_at
      FROM intake_cards WHERE ${where.join(' AND ')} ORDER BY created_at DESC LIMIT ${limit}`, params
-  ).catch(() => ({ rows: [] }));
+  );
   return r.rows;
 }

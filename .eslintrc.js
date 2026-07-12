@@ -18,14 +18,20 @@ module.exports = {
     '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
     'no-console': 'off',
   },
-  ignorePatterns: ['node_modules/', 'dist/', '.next/'],
+  // Several legacy tsconfigs still emit JavaScript beside TypeScript sources.
+  // Lint the authored TypeScript once; do not lint its generated twin.
+  ignorePatterns: ['node_modules/', 'dist/', '.next/', '**/src/**/*.js'],
   overrides: [
     {
       files: ['*.ts', '*.tsx'],
       rules: {},
     },
     {
-      files: ['apps/web/**/*.{ts,tsx}'],
+      files: ['**/__tests__/**/*.{ts,tsx}', '**/*.{test,spec}.{ts,tsx}'],
+      env: { jest: true, node: true },
+    },
+    {
+      files: ['apps/web/**/*.{ts,tsx}', 'apps/admin/**/*.{ts,tsx}'],
       env: { browser: true, es2022: true },
       plugins: ['@next/next'],
       rules: {

@@ -2,7 +2,7 @@
 
 /**
  * COMMAND CENTER — the founder's cockpit. You at the head of the table;
- * Nova running the company below. Real operational truth: her mind's
+ * Nexus operating the company while Nova's capabilities work below. Real operational truth: the system's
  * sovereignty, the live pulse, platform standing, and the doors into every
  * control surface. (Rebuild Phase 0 — the private World, made legible.)
  */
@@ -30,7 +30,7 @@ export default function CommandCenter() {
   const CONTROLS = [
     { name: 'Agent Workforce', href: '/dashboard/forge-control', icon: '⚒', desc: 'Builder-agents, evals, proposals' },
     { name: 'Operations', href: '/dashboard/business', icon: '◈', desc: 'Leads → quotes → jobs → paid' },
-    { name: 'The World', href: '/world', icon: '✦', desc: 'The living interaction engine' },
+    { name: 'The World', href: '/world', icon: '✦', desc: 'A living Nexus interaction surface' },
     { name: 'Safety & Kill Switch', href: '/dashboard/safety', icon: '🛡️', desc: 'Freeze all agents instantly' },
     { name: 'Analytics', href: '/dashboard/analytics', icon: '📉', desc: 'Platform metrics' },
     { name: 'Outcomes', href: '/dashboard/outcomes', icon: '◉', desc: 'What actually happened' },
@@ -40,7 +40,7 @@ export default function CommandCenter() {
     <DashboardLayout>
     <div className="min-h-screen bg-[#0a0a0f] text-white px-6 py-8 max-w-6xl mx-auto">
       <div className="text-[11px] tracking-[0.3em] uppercase mb-2 text-amber-400">The World · Command Center</div>
-      <h1 className="text-2xl font-bold mb-1">You run Nova. Nova runs the company.</h1>
+      <h1 className="text-2xl font-bold mb-1">You direct Nexus. Nexus brings Nova into reality.</h1>
       <p className="text-gray-400 text-sm mb-8">Every control surface, and the honest state of her mind.</p>
 
       <div className="grid md:grid-cols-3 gap-4 mb-8">

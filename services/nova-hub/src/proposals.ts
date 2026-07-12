@@ -13,9 +13,15 @@
  */
 
 import { createLogger } from '@nova/telemetry';
-import { writeArtifact, readArtifacts } from './substrate';
+import { transaction } from '@nova/shared';
+import { createHash } from 'node:crypto';
+import { readArtifacts } from './substrate';
 
 const logger = createLogger('proposals');
+
+function humanAuthorRef(id: string): string {
+  return `forge-human:${createHash('sha256').update(id).digest('hex')}`;
+}
 
 const PROPOSAL_AUTHORS = ['the-smith', 'forge-v2', 'executor'];
 function isProposalArtifact(a: any): boolean {
@@ -54,29 +60,45 @@ export async function decideProposal(
   decision: 'accept' | 'reject',
   reason: string,
   by: string
-): Promise<{ ok: boolean }> {
-  // Verify the proposal exists (read by ref would miss it; read recent set).
-  const recent = await readArtifacts({ kind: 'hypothesis', limit: 60 }).catch(() => []);
-  const proposal = recent.find((a: any) => a.id === proposalId);
-  if (!proposal) return { ok: false };
+): Promise<{ ok: boolean; conflict?: boolean }> {
+  const result = await transaction(async client => {
+    // Lock the proposal itself so concurrent human decisions serialize. The
+    // second transaction observes the first decision after the lock releases.
+    const proposalResult = await client.query(
+      `SELECT id, author_id, payload FROM artifacts
+       WHERE id = $1 AND kind = 'hypothesis'
+       FOR UPDATE`,
+      [proposalId],
+    );
+    const proposal = proposalResult.rows[0];
+    if (!proposal || !isProposalArtifact(proposal)) return { status: 'not_found' as const };
 
-  const id = await writeArtifact({
-    kind: decision === 'accept' ? 'outcome' : 'correction',
-    authorType: 'human',
-    authorId: by || 'founder',
-    refs: [proposalId],
-    payload: {
+    const prior = await client.query<{ id: string }>(
+      `SELECT id FROM artifacts
+       WHERE kind IN ('outcome', 'correction') AND $1 = ANY(refs)
+       LIMIT 1`,
+      [proposalId],
+    );
+    if (prior.rows[0]?.id) return { status: 'conflict' as const };
+
+    const payload = {
       kind: 'proposal_decision',
+      result: decision,
       decision,
-      // reason is the training label — the human teaching the agent WHY.
       reason: (reason || (decision === 'accept' ? 'accepted' : 'rejected')).slice(0, 800),
       proposalAuthor: proposal.author_id,
-      // accepted proposals are tagged into the corpus for future fine-tuning.
       corpus: decision === 'accept',
-    },
-  }).catch(() => null);
+    };
+    const inserted = await client.query<{ id: string }>(
+      `INSERT INTO artifacts (kind, regime, author_type, author_id, mission_id, refs, payload)
+       VALUES ($1, NULL, 'human', $2, NULL, $3, $4) RETURNING id`,
+      [decision === 'accept' ? 'outcome' : 'correction', humanAuthorRef(by || 'founder'), [proposalId], JSON.stringify(payload)],
+    );
+    return inserted.rows[0]?.id ? { status: 'created' as const } : { status: 'failed' as const };
+  }).catch(() => ({ status: 'failed' as const }));
 
-  if (!id) return { ok: false };
+  if (result.status === 'conflict') return { ok: false, conflict: true };
+  if (result.status !== 'created') return { ok: false };
   logger.info('Proposal decided', { proposalId, decision, by });
   return { ok: true };
 }

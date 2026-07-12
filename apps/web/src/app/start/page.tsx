@@ -7,12 +7,17 @@
  * Three questions → personalized Decision Card → specific first move.
  */
 
-import { useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ArrowRight, Sparkles, ChevronLeft } from 'lucide-react';
+import { getVisitorId, isVisitorIdDurable } from '@/lib/visitor';
 
 const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const optionalAuth = (): Record<string, string> => {
+  const token = typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') : null;
+  return token ? { Authorization: `Bearer ${token}` } : {};
+};
 
 const HAVE_OPTIONS = [
   { id: 'skill',      label: 'A skill or craft I\'ve developed',     emoji: '🛠️', example: 'welding, graphic design, cooking, coding, repair' },
@@ -35,6 +40,21 @@ const WANT_OPTIONS = [
   { id: 'unknown',    label: 'I\'m not sure yet',             emoji: '🧭' },
 ];
 
+interface MineCard {
+  id: string;
+  domain: string;
+  regime: string | null;
+  outcome: 'worked' | 'partial' | 'failed' | null;
+  outcome_at: string | null;
+  preview: string;
+  created_at: string;
+}
+
+interface CardCalibration {
+  overall: { resolved: number; worked: number; workedRate: number | null };
+  byDomain: Array<{ domain: string; resolved: number; worked: number; workedRate: number }>;
+}
+
 export default function StartPage() {
   const [step, setStep] = useState(0); // 0=have, 1=want, 2=situation, 3=result
   const [haves, setHaves] = useState<string[]>([]);
@@ -47,24 +67,74 @@ export default function StartPage() {
   const [error, setError] = useState<string | null>(null);
   const [cardId, setCardId] = useState<string | null>(null);
   const [outcomeMarked, setOutcomeMarked] = useState<string | null>(null);
+  const [mine, setMine] = useState<MineCard[]>([]);
+  const [calibration, setCalibration] = useState<CardCalibration | null>(null);
+  const [historyLoading, setHistoryLoading] = useState(true);
+  const [historyError, setHistoryError] = useState<string | null>(null);
+  const [trackingDurable, setTrackingDurable] = useState(true);
+  const [outcomePending, setOutcomePending] = useState<string | null>(null);
+  const [outcomeError, setOutcomeError] = useState<string | null>(null);
+  const [notes, setNotes] = useState<Record<string, string>>({});
+  const [values, setValues] = useState<Record<string, string>>({});
 
-  // Anonymous continuity so a card's outcome can close the loop later.
-  function visitorId(): string {
-    if (typeof window === 'undefined') return '';
-    let v = localStorage.getItem('nova_visitor_id');
-    if (!v) { v = 'v_' + Math.random().toString(16).slice(2) + Date.now().toString(16); localStorage.setItem('nova_visitor_id', v); }
-    return v;
-  }
-
-  const markOutcome = async (outcome: 'worked' | 'partial' | 'failed') => {
-    if (!cardId) return;
-    setOutcomeMarked(outcome);
+  const loadHistory = useCallback(async () => {
+    const visitorId = getVisitorId();
+    if (!visitorId) return;
+    setTrackingDurable(isVisitorIdDurable());
+    setHistoryLoading(true);
+    setHistoryError(null);
     try {
-      await fetch(`${API}/v1/cards/outcome`, {
-        method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ cardId, outcome }),
+      const [cardsRes, calibrationRes] = await Promise.all([
+        fetch(`${API}/v1/cards/mine?visitor=${encodeURIComponent(visitorId)}`, { headers: optionalAuth() }),
+        fetch(`${API}/v1/cards/calibration?visitor=${encodeURIComponent(visitorId)}`, { headers: optionalAuth() }),
+      ]);
+      const [cardsJson, calibrationJson] = await Promise.all([cardsRes.json(), calibrationRes.json()]);
+      if (!cardsRes.ok || !cardsJson?.success || !calibrationRes.ok || !calibrationJson?.success) {
+        throw new Error('Track record is unavailable right now.');
+      }
+      setMine(cardsJson.data?.cards || []);
+      setCalibration(calibrationJson.data || null);
+    } catch {
+      setHistoryError('Track record is unavailable right now. Your intake still works; check back before reporting an outcome.');
+    } finally {
+      setHistoryLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { loadHistory(); }, [loadHistory]);
+
+  const markOutcome = async (
+    outcome: 'worked' | 'partial' | 'failed',
+    targetCardId: string | null = cardId,
+    note = '',
+    valueText = '',
+  ) => {
+    if (!targetCardId) return;
+    setOutcomePending(targetCardId);
+    setOutcomeError(null);
+    const parsedValue = valueText.trim() === '' ? null : Number(valueText);
+    try {
+      const response = await fetch(`${API}/v1/cards/outcome`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', ...optionalAuth() },
+        body: JSON.stringify({
+          cardId: targetCardId,
+          visitorId: getVisitorId(),
+          outcome,
+          note,
+          value: Number.isFinite(parsedValue) ? parsedValue : null,
+        }),
       });
-    } catch { /* the mark is optimistic; the record is what matters */ }
+      const result = await response.json().catch(() => null);
+      if (!response.ok || !result?.success) throw new Error(result?.error?.message || 'Outcome was not recorded.');
+      if (targetCardId === cardId) setOutcomeMarked(outcome);
+      setNotes(prev => ({ ...prev, [targetCardId]: '' }));
+      setValues(prev => ({ ...prev, [targetCardId]: '' }));
+      await loadHistory();
+    } catch (err) {
+      setOutcomeError(err instanceof Error ? err.message : 'Outcome was not recorded. Please try again.');
+    } finally {
+      setOutcomePending(null);
+    }
   };
 
   const toggleHave = (id: string) =>
@@ -89,8 +159,8 @@ export default function StartPage() {
     try {
       const res = await fetch(`${API}/v1/cards/intake`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ context, haves: haveLabels, wants: wantLabels, visitorId: visitorId() }),
+        headers: { 'Content-Type': 'application/json', ...optionalAuth() },
+        body: JSON.stringify({ context, haves: haveLabels, wants: wantLabels, visitorId: getVisitorId() }),
       });
       const d = await res.json();
       if (d.success) {
@@ -98,6 +168,8 @@ export default function StartPage() {
         setRegime(d.data?.regime ? { regime: d.data.regime, rationale: d.data.regimeRationale || '' } : null);
         setProvider(d.data?.provider || '');
         setCardId(d.data?.cardId || null);
+        setOutcomeMarked(null);
+        await loadHistory();
       }
       else { setError('Nova couldn\'t generate your card. Try adding more detail about your specific situation.'); }
     } catch { setError('Network error. Please try again.'); }
@@ -106,7 +178,7 @@ export default function StartPage() {
 
   const reset = () => {
     setStep(0); setHaves([]); setWants([]); setSituation('');
-    setCard(null); setError(null); setRegime(null);
+    setCard(null); setError(null); setRegime(null); setCardId(null); setOutcomeMarked(null);
   };
 
   return (
@@ -281,8 +353,8 @@ export default function StartPage() {
                       <div className="mb-4 px-3 py-2 rounded-lg text-xs leading-relaxed"
                         style={{ background: 'rgba(245,158,11,0.08)', border: '1px solid rgba(245,158,11,0.3)', color: '#fcd34d' }}>
                         <strong className="uppercase tracking-wider">Structured template</strong> — Nova&apos;s deep mind is at
-                        capacity right now, so this card comes from her rule-based engine. It&apos;s a solid framework, but it
-                        hasn&apos;t read your specifics. Come back in a few hours for a personalized read.
+                        capacity right now, so this card comes from her rule-based engine. It used the situation you supplied,
+                        but no live language model interpreted it; verify the details before you act.
                       </div>
                     )}
                     {regime && (
@@ -303,11 +375,11 @@ export default function StartPage() {
                       {!outcomeMarked ? (
                         <>
                           <div className="text-xs font-semibold text-cyan-300 mb-2">When you know how this played out, tell Nova.</div>
-                          <div className="text-[11px] text-gray-500 mb-3">She learns from every real outcome — that&apos;s what makes the next card sharper. Come back and mark it.</div>
+                          <div className="text-[11px] text-gray-500 mb-3">Every real outcome builds Nova&apos;s honest track record. Come back and mark what happened.</div>
                           <div className="flex gap-2">
-                            <button onClick={() => markOutcome('worked')} className="flex-1 py-2 rounded-lg bg-emerald-600/20 border border-emerald-600/40 text-emerald-300 text-xs font-medium hover:bg-emerald-600/30 transition">It worked</button>
-                            <button onClick={() => markOutcome('partial')} className="flex-1 py-2 rounded-lg bg-amber-600/20 border border-amber-600/40 text-amber-300 text-xs font-medium hover:bg-amber-600/30 transition">Partly</button>
-                            <button onClick={() => markOutcome('failed')} className="flex-1 py-2 rounded-lg bg-red-600/15 border border-red-600/40 text-red-300 text-xs font-medium hover:bg-red-600/25 transition">It didn&apos;t</button>
+                            <button disabled={outcomePending === cardId} onClick={() => markOutcome('worked')} className="flex-1 py-2 rounded-lg bg-emerald-600/20 border border-emerald-600/40 text-emerald-300 text-xs font-medium hover:bg-emerald-600/30 disabled:opacity-50 transition">It worked</button>
+                            <button disabled={outcomePending === cardId} onClick={() => markOutcome('partial')} className="flex-1 py-2 rounded-lg bg-amber-600/20 border border-amber-600/40 text-amber-300 text-xs font-medium hover:bg-amber-600/30 disabled:opacity-50 transition">Partly</button>
+                            <button disabled={outcomePending === cardId} onClick={() => markOutcome('failed')} className="flex-1 py-2 rounded-lg bg-red-600/15 border border-red-600/40 text-red-300 text-xs font-medium hover:bg-red-600/25 disabled:opacity-50 transition">It didn&apos;t</button>
                           </div>
                         </>
                       ) : (
@@ -316,11 +388,17 @@ export default function StartPage() {
                     </div>
                   )}
 
+                  {!cardId && (
+                    <div className="rounded-xl border border-amber-800/40 bg-amber-950/10 p-4 text-xs text-amber-300">
+                      Your card was generated, but Nova could not persist it. Keep a copy and try again later if you want the outcome tracked.
+                    </div>
+                  )}
+
                   {/* Actions */}
                   <div className="grid grid-cols-2 gap-3">
-                    <Link href="/register"
+                    <Link href={cardId ? '#track-record' : '/register'}
                       className="flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-sm font-semibold text-white transition">
-                      Save This Card <ArrowRight className="w-4 h-4" />
+                      {cardId ? 'View Track Record' : 'Create Account'} <ArrowRight className="w-4 h-4" />
                     </Link>
                     <button onClick={reset}
                       className="py-3 rounded-xl border border-gray-800 text-sm text-gray-400 hover:text-white hover:border-gray-600 transition">
@@ -344,6 +422,89 @@ export default function StartPage() {
             </motion.div>
           )}
         </AnimatePresence>
+
+        {outcomeError && (
+          <div className="mt-5 rounded-lg border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs text-red-300">{outcomeError}</div>
+        )}
+
+        <section id="track-record" className="mt-14 pt-10 border-t border-gray-800/60 scroll-mt-6">
+          <div className="flex items-start justify-between gap-4 mb-5">
+            <div>
+              <div className="text-xs text-cyan-400 uppercase tracking-widest mb-1">The learning loop</div>
+              <h2 className="text-xl font-bold text-white">Your cards remember what happened.</h2>
+              <p className="text-sm text-gray-500 mt-1">Return after you act. Outcomes—not engagement—are the evidence Nova needs to become sharper.</p>
+            </div>
+            {calibration && (
+              <div className="rounded-xl border border-gray-800 bg-gray-900/50 px-4 py-3 text-right shrink-0">
+                <div className="text-2xl font-bold text-white">{calibration.overall.resolved}</div>
+                <div className="text-[10px] uppercase tracking-wider text-gray-600">resolved</div>
+                <div className="text-[11px] text-cyan-400 mt-1">
+                  {calibration.overall.workedRate === null
+                    ? 'track record starts with truth'
+                    : `${Math.round(calibration.overall.workedRate * 100)}% worked`}
+                </div>
+              </div>
+            )}
+          </div>
+
+          {!trackingDurable && (
+            <div className="mb-4 rounded-xl border border-amber-800/40 bg-amber-950/10 p-4 text-xs text-amber-300">
+              Browser storage is blocked, so this track record lasts only for the current page session.
+            </div>
+          )}
+
+          {historyError ? (
+            <div className="rounded-xl border border-amber-800/40 bg-amber-950/10 p-5 text-sm text-amber-300">{historyError}</div>
+          ) : historyLoading ? (
+            <div className="rounded-xl border border-gray-800 bg-gray-900/30 p-5 text-sm text-gray-600">Loading your cards…</div>
+          ) : mine.length === 0 ? (
+            <div className="rounded-xl border border-gray-800 bg-gray-900/30 p-5 text-sm text-gray-500">Your first card will appear here. Act on it, return, and tell Nova what reality said.</div>
+          ) : (
+            <div className="space-y-3">
+              {mine.map(item => (
+                <article key={item.id} className="rounded-xl border border-gray-800 bg-gray-900/35 p-4">
+                  <div className="flex items-center justify-between gap-3 mb-2">
+                    <div className="flex items-center gap-2 text-[10px] uppercase tracking-wider">
+                      <span className="text-cyan-400">{item.domain || 'general'}</span>
+                      {item.regime && <span className="text-gray-600">{item.regime}</span>}
+                    </div>
+                    <time className="text-[10px] text-gray-700">{new Date(item.created_at).toLocaleDateString()}</time>
+                  </div>
+                  <p className="text-sm text-gray-300 leading-relaxed">{item.preview}</p>
+
+                  {item.outcome ? (
+                    <div className={`mt-3 text-xs font-medium ${item.outcome === 'worked' ? 'text-emerald-400' : item.outcome === 'partial' ? 'text-amber-400' : 'text-red-400'}`}>
+                      Reality logged: {item.outcome === 'worked' ? 'worked' : item.outcome === 'partial' ? 'partly worked' : 'did not work'}
+                    </div>
+                  ) : (
+                    <div className="mt-4 space-y-2">
+                      <div className="grid sm:grid-cols-[1fr_130px] gap-2">
+                        <input
+                          value={notes[item.id] || ''}
+                          onChange={e => setNotes(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="What happened? (optional)"
+                          className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-white placeholder-gray-700 outline-none focus:border-cyan-700"
+                        />
+                        <input
+                          value={values[item.id] || ''}
+                          onChange={e => setValues(prev => ({ ...prev, [item.id]: e.target.value }))}
+                          placeholder="$ value (optional)"
+                          inputMode="decimal"
+                          className="rounded-lg border border-gray-800 bg-gray-950 px-3 py-2 text-xs text-white placeholder-gray-700 outline-none focus:border-cyan-700"
+                        />
+                      </div>
+                      <div className="flex gap-2">
+                        <button disabled={outcomePending === item.id} onClick={() => markOutcome('worked', item.id, notes[item.id], values[item.id])} className="flex-1 py-2 rounded-lg border border-emerald-700/50 text-emerald-400 text-xs hover:bg-emerald-500/10 disabled:opacity-50">Worked</button>
+                        <button disabled={outcomePending === item.id} onClick={() => markOutcome('partial', item.id, notes[item.id], values[item.id])} className="flex-1 py-2 rounded-lg border border-amber-700/50 text-amber-400 text-xs hover:bg-amber-500/10 disabled:opacity-50">Partly</button>
+                        <button disabled={outcomePending === item.id} onClick={() => markOutcome('failed', item.id, notes[item.id], values[item.id])} className="flex-1 py-2 rounded-lg border border-red-800/50 text-red-400 text-xs hover:bg-red-500/10 disabled:opacity-50">Failed</button>
+                      </div>
+                    </div>
+                  )}
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
       </main>
     </div>
   );

@@ -1,8 +1,15 @@
-# Nova Enterprises Vision
+# Nova / Nexus Vision
 
-## The Governed Automation OS ("Company-in-a-Box")
+## The Interaction Company for the Realization of AI Potential
 
-Nova Enterprises is a platform for building, operating, and iterating on **governed automation workflows**. It transforms manual, repetitive business tasks into measurable, auditable, improvable processes.
+Nova is the cumulative realization of useful AI potential: tools, agents,
+income engines, research, memory, and their composition into capabilities that
+did not exist before. Nexus is the company and interaction engine that lets
+humans direct, understand, govern, and teach that potential.
+
+Governed automation workflows are a core mechanism of Nexus—not the limit of
+Nova. They transform intention and repetitive work into measurable, auditable,
+improvable execution.
 
 ## Core Philosophy
 

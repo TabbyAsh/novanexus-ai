@@ -36,6 +36,27 @@ jest.mock('@nova/telemetry', () => ({
   }),
 }));
 
+const mockForgeAgent = jest.fn(async ({ symbol }: { symbol: string }) => ({
+  reply: `Watcher created for ${symbol}`,
+  agent: { id: 'watcher-1', name: `${symbol} Watcher`, symbol },
+}));
+const mockAttachEmail = jest.fn(async (_visitorId: string, _email: string) => 1);
+
+jest.mock('../world', () => ({
+  hailAllowed: jest.fn(() => true),
+  hail: jest.fn(async () => ({ reply: 'World reply', provider: 'test', available: true })),
+}));
+
+jest.mock('../forge', () => ({
+  parseForgeIntent: jest.fn((message: string) => {
+    const match = message.match(/watch\s+([A-Z]{1,5})/i);
+    return match ? { symbol: match[1].toUpperCase() } : null;
+  }),
+  forgeAgent: (args: { symbol: string }) => mockForgeAgent(args),
+  attachEmail: (visitorId: string, email: string) => mockAttachEmail(visitorId, email),
+  runForgeTick: jest.fn(async () => undefined),
+}));
+
 jest.mock('@nova/shared', () => {
   const eventTypes = new Proxy({}, { get: (_target, prop) => String(prop) });
   return {
@@ -319,6 +340,48 @@ beforeEach(() => {
 });
 
 describe('nexus lifecycle API handlers', () => {
+  it('registers the canonical Nexus interaction, capability, memory, and outcome routes', () => {
+    expect(routeHandlers['POST /v1/nexus/interact']).toBeDefined();
+    expect(routeHandlers['GET /v1/nexus/capabilities']).toBeDefined();
+    expect(routeHandlers['GET /v1/nexus/potential']).toBeDefined();
+    expect(routeHandlers['GET /v1/nexus/interactions']).toBeDefined();
+    expect(routeHandlers['POST /v1/nexus/interactions/:id/outcome']).toBeDefined();
+    expect(routeHandlers['GET /v1/nexus/conversations']).toBeDefined();
+    expect(routeHandlers['GET /v1/nexus/conversations/:id']).toBeDefined();
+  });
+
+  it('requires explicit confirmation before World creates a persistent watcher', async () => {
+    const hailHandler = routeHandlers['POST /v1/world/hail'];
+    expect(hailHandler).toBeDefined();
+
+    const preview = makeReqRes({ body: { message: 'watch TSLA', visitorId: 'visitor-1' } });
+    await hailHandler(preview.req, preview.res);
+    expect(preview.res.payload.success).toBe(true);
+    expect(preview.res.payload.data.confirmationRequired).toBe(true);
+    expect(preview.res.payload.data.authority.externalSideEffectsPerformed).toBe(false);
+    expect(mockForgeAgent).not.toHaveBeenCalled();
+
+    const confirmed = makeReqRes({ body: { message: 'watch TSLA', visitorId: 'visitor-1', confirm: true } });
+    await hailHandler(confirmed.req, confirmed.res);
+    expect(confirmed.res.payload.data.confirmationRequired).toBe(false);
+    expect(confirmed.res.payload.data.authority.externalSideEffectsPerformed).toBe(true);
+    expect(mockForgeAgent).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not store an unverified email address from a public World hail', async () => {
+    const hailHandler = routeHandlers['POST /v1/world/hail'];
+    const attempt = makeReqRes({
+      body: { message: 'notify me at person@example.com', visitorId: 'visitor-1' },
+    });
+
+    await hailHandler(attempt.req, attempt.res);
+
+    expect(attempt.res.statusCode).toBe(501);
+    expect(attempt.res.payload.error.code).toBe('WORLD_EMAIL_VERIFICATION_REQUIRED');
+    expect(attempt.res.payload.data.authority.externalSideEffectsPerformed).toBe(false);
+    expect(mockAttachEmail).not.toHaveBeenCalled();
+  });
+
   it('runs full Observe-Decide-Execute-Log lifecycle as an end-to-end endpoint flow', async () => {
     const observeHandler = routeHandlers['POST /v1/nexus/observe'];
     const getCardHandler = routeHandlers['GET /v1/nexus/decision-cards/:id'];

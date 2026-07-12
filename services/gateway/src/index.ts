@@ -23,6 +23,7 @@ import type {
   RiskLevel,
   NovaCardRow,
 } from '@nova/shared';
+import { requiredScopesForRoute } from './route-authority';
 
 const app = express();
 const logger = createLogger('gateway-service');
@@ -37,7 +38,6 @@ const SERVICE_URLS = {
   tradebot: process.env.TRADEBOT_URL || 'http://localhost:3010',
   storebot: process.env.STOREBOT_URL || 'http://localhost:3011',
   socialbot: process.env.SOCIALBOT_URL || 'http://localhost:3012',
-  researchbot: process.env.RESEARCHBOT_URL || 'http://localhost:3013',
   opsbot: process.env.OPSBOT_URL || 'http://localhost:3014',
   marketdata: process.env.MARKETDATA_URL || 'http://localhost:3020',
   commercedata: process.env.COMMERCEDATA_URL || 'http://localhost:3022',
@@ -45,23 +45,25 @@ const SERVICE_URLS = {
   scheduler: process.env.SCHEDULER_URL || 'http://localhost:3040',
 };
 
-// Route to required scopes mapping
-const ROUTE_SCOPES: Record<string, Scope[]> = {
-  '/v1/trade': ['trade.read'],
-  '/v1/trade/scan': ['trade.read'],
-  '/v1/trade/backtest': ['trade.backtest'],
-  '/v1/trade/paper': ['trade.paper.execute'],
-  '/v1/trade/live': ['trade.live.execute'],
-  '/v1/store': ['store.read'],
-  '/v1/store/products': ['store.read', 'store.write'],
-  '/v1/store/orders': ['store.orders'],
-  '/v1/social': ['social.read'],
-  '/v1/social/post': ['social.post'],
-  '/v1/social/schedule': ['social.schedule'],
-  '/v1/research': ['research.read'],
-  '/v1/research/propose': ['research.propose'],
-  '/v1/kill-switch': ['admin.killswitch'],
-};
+const PLATFORM_CONTROL_ROUTES = [
+  '/v1/kill-switch',
+  '/v1/admin',
+  '/v1/ops',
+  '/v1/agents/proposals',
+  '/v1/agents/evals/run',
+  '/v1/agents/evals/improve',
+  '/v1/agents/evals/promote',
+  '/v1/agents/codex',
+  '/v1/smith',
+  '/v1/ignition',
+];
+const PLATFORM_OWNER_EMAILS = new Set(
+  [process.env.PLATFORM_OWNER_EMAILS, process.env.OWNER_EMAIL]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(','))
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
@@ -275,13 +277,10 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 // Authentication middleware
 app.use(async (req: Request, res: Response, next: NextFunction) => {
-  // Check if route is public
-  if (PUBLIC_ROUTES.some((r) => req.path === r || req.path.startsWith(r))) {
-    return next();
-  }
-
+  const isPublic = PUBLIC_ROUTES.some((r) => req.path === r || req.path.startsWith(r));
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
+    if (isPublic) return next();
     return res.status(HTTP_STATUS.UNAUTHORIZED).json({
       success: false,
       error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Missing or invalid authorization header' },
@@ -307,6 +306,67 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
   req.auth = payload;
   next();
+});
+
+// Enforce the declarative route-scope map. Longest-prefix matching prevents a
+// broad read scope (for example /v1/trade) from shadowing a narrower execution
+// scope (/v1/trade/live). Public routes retain their explicit public contract.
+app.use((req: Request, res: Response, next: NextFunction) => {
+  if (PUBLIC_ROUTES.some((route) => req.path === route || req.path.startsWith(route))) {
+    return next();
+  }
+  const required = requiredScopesForRoute(req.method, req.path);
+  if (required.length === 0) return next();
+  const granted = req.auth?.scopes || [];
+  if (!required.some((scope) => granted.includes(scope))) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: {
+        code: ERROR_CODES.INSUFFICIENT_PERMISSIONS,
+        message: `Requires one of: ${required.join(', ')}`,
+      },
+    });
+  }
+  next();
+});
+
+// Organization ownership is tenant-local. Platform Forge, Ops, global
+// proposals, prompt promotion, and the kill switch require a separately
+// configured platform-owner identity. This also invalidates over-scoped legacy
+// access tokens at the edge.
+app.use(async (req: Request, res: Response, next: NextFunction) => {
+  const isPlatformControl = PLATFORM_CONTROL_ROUTES.some(route =>
+    req.path === route || req.path.startsWith(`${route}/`)
+  );
+  if (!isPlatformControl) return next();
+  if (!req.auth) {
+    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Platform authorization requires authentication.' },
+    });
+  }
+  if (PLATFORM_OWNER_EMAILS.size === 0) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'PLATFORM_OWNER_NOT_CONFIGURED', message: 'Platform control is paused until an explicit owner identity is configured.' },
+    });
+  }
+  try {
+    const owner = await queryOne<{ email: string }>('SELECT email FROM users WHERE id = $1', [req.auth.userId]);
+    if (!owner?.email || !PLATFORM_OWNER_EMAILS.has(owner.email.toLowerCase())) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({
+        success: false,
+        error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Organization ownership does not grant platform control.' },
+      });
+    }
+    next();
+  } catch (error) {
+    logger.error('Platform owner verification failed', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'PLATFORM_AUTHORITY_UNAVAILABLE', message: 'Platform authority could not be verified.' },
+    });
+  }
 });
 
 // Paywall middleware - Check entitlements for premium features
@@ -375,7 +435,11 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 // Kill switch check middleware (for automation routes)
 app.use(async (req: Request, res: Response, next: NextFunction) => {
   // Skip for non-automation routes
-  const automationRoutes = ['/v1/trade', '/v1/store', '/v1/social', '/v1/research'];
+  const automationRoutes = [
+    '/v1/trade', '/v1/store', '/v1/social', '/v1/research',
+    '/v1/agents', '/v1/smith', '/v1/ignition', '/v1/proposals',
+    '/v1/world/hail', '/v1/nexus/decision-cards',
+  ];
   const isAutomationRoute = automationRoutes.some((r) => req.path.startsWith(r));
 
   if (!isAutomationRoute || req.method === 'GET') {
@@ -383,12 +447,14 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
   }
 
   try {
-    const result = await queryOne<{ value_json: string }>(
+    const result = await queryOne<{ value_json: string | { enabled?: boolean; reason?: string; enabledAt?: string } }>(
       "SELECT value_json FROM system_state WHERE key = 'kill_switch'"
     );
 
     if (result) {
-      const state = JSON.parse(result.value_json);
+      const state = typeof result.value_json === 'string'
+        ? JSON.parse(result.value_json)
+        : result.value_json;
       if (state.enabled) {
         return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
           success: false,
@@ -402,6 +468,13 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     }
   } catch (error) {
     logger.error('Failed to check kill switch', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: ERROR_CODES.AUTOMATION_DISABLED,
+        message: 'Automation authority could not be verified. State-changing actions are paused.',
+      },
+    });
   }
 
   next();
@@ -484,11 +557,19 @@ app.get('/metrics', (_req: Request, res: Response) => {
 const IS_RAILWAY = !!(process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_SERVICE_NAME);
 const DEPLOY_ENV = process.env.RAILWAY_ENVIRONMENT || process.env.NODE_ENV || 'development';
 
-// Git SHA detection:
-// - GIT_SHA: Injected by deploy-prod.js from local HEAD (preferred)
-// - RAILWAY_GIT_COMMIT_SHA: Set by Railway for GitHub-triggered deploys
-// - Must be a valid 7-40 char hex string to qualify as gitSha
-const GIT_SHA_RAW = process.env.GIT_SHA || process.env.RAILWAY_GIT_COMMIT_SHA || '';
+// Git SHA detection. Platform-owned metadata wins on a platform deployment;
+// otherwise a stale manually injected GIT_SHA can make a new release identify
+// itself as an old commit indefinitely.
+const GIT_SHA_CANDIDATES: Array<{ value: string; source: string }> = IS_RAILWAY
+  ? [
+      { value: process.env.RAILWAY_GIT_COMMIT_SHA || '', source: 'railway' },
+      { value: process.env.GIT_SHA || '', source: 'explicit' },
+    ]
+  : [
+      { value: process.env.GIT_SHA || '', source: 'explicit' },
+      { value: process.env.RAILWAY_GIT_COMMIT_SHA || '', source: 'railway' },
+      { value: process.env.VERCEL_GIT_COMMIT_SHA || '', source: 'vercel' },
+    ];
 const DEPLOY_TIMESTAMP = process.env.RAILWAY_DEPLOYMENT_TIMESTAMP || new Date().toISOString();
 
 // Validate that a string is a valid git SHA (7-40 hex chars)
@@ -500,11 +581,13 @@ function isValidGitSha(sha: string): boolean {
 interface BuildInfo {
   buildId: string;   // Short identifier for build (sha prefix or cli-timestamp)
   gitSha: string;    // Full git SHA if available, empty string otherwise
+  gitShaSource: string;
   deployId: string;  // Deployment identifier (timestamp-based for CLI deploys)
 }
 
 function getBuildIdentifier(): BuildInfo {
-  const validSha = isValidGitSha(GIT_SHA_RAW) ? GIT_SHA_RAW : '';
+  const resolvedSha = GIT_SHA_CANDIDATES.find((candidate) => isValidGitSha(candidate.value));
+  const validSha = resolvedSha?.value || '';
   const ts = new Date(DEPLOY_TIMESTAMP).toISOString().replace(/[-:T]/g, '').substring(0, 14);
   
   if (validSha) {
@@ -512,6 +595,7 @@ function getBuildIdentifier(): BuildInfo {
     return {
       buildId: validSha.substring(0, 7),
       gitSha: validSha,
+      gitShaSource: resolvedSha?.source || 'none',
       deployId: `deploy-${ts}`,
     };
   }
@@ -521,6 +605,7 @@ function getBuildIdentifier(): BuildInfo {
     return {
       buildId: `cli-${ts}`,
       gitSha: '',  // Empty - no valid SHA available
+      gitShaSource: 'none',
       deployId: `cli-deploy-${DEPLOY_TIMESTAMP}`,
     };
   }
@@ -529,6 +614,7 @@ function getBuildIdentifier(): BuildInfo {
   return {
     buildId: 'local',
     gitSha: '',
+    gitShaSource: 'none',
     deployId: 'local-dev',
   };
 }
@@ -541,6 +627,7 @@ app.get('/version', (_req: Request, res: Response) => {
     version: '1.0.0',
     buildId: BUILD_INFO.buildId,
     gitSha: BUILD_INFO.gitSha,
+    gitShaSource: BUILD_INFO.gitShaSource,
     deployId: BUILD_INFO.deployId,
     // Legacy field for backwards compatibility (deprecated)
     build: BUILD_INFO.buildId,
@@ -561,12 +648,21 @@ app.get('/version', (_req: Request, res: Response) => {
 // Proxy helper
 // ============================================
 
+function sanitizedClientIp(req: Request): string {
+  const forwarded = typeof req.headers['x-forwarded-for'] === 'string'
+    ? req.headers['x-forwarded-for'].split(',')[0].trim()
+    : '';
+  const candidate = forwarded || req.ip || req.socket.remoteAddress || 'unknown';
+  return /^[0-9a-f:.]{3,45}$/i.test(candidate) ? candidate : 'unknown';
+}
+
 async function proxyRequestRewrite(targetUrl: string, targetPath: string, req: Request, res: Response): Promise<void> {
   try {
     const url = `${targetUrl}${targetPath}`;
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-Request-ID': req.headers['x-request-id'] as string,
+      'X-Forwarded-For': sanitizedClientIp(req),
     };
 
     if (req.headers.authorization) {
@@ -617,6 +713,7 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
       'X-Request-ID': req.headers['x-request-id'] as string,
+      'X-Forwarded-For': sanitizedClientIp(req),
     };
 
     // Forward auth header
@@ -985,18 +1082,34 @@ app.all('/v1/content/*', (req: Request, res: Response) => {
   );
 });
 
-// Research routes -> ResearchBot
-app.all('/v1/research/*', requireScopes(['research.read']), (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.researchbot, req, res);
+// ResearchBot is a reserved capability, not a running production service yet.
+// Expose that truth explicitly instead of proxying to an empty port and turning
+// an architectural gap into an opaque 502/503.
+app.get('/v1/research/status', requireScopes(['research.read']), (_req: Request, res: Response) => {
+  res.json({
+    success: true,
+    data: {
+      capability: 'researchbot',
+      state: 'designed_not_implemented',
+      available: false,
+      authority: 'none',
+    },
+  });
 });
 
-app.all('/v1/kb*', requireScopes(['research.read']), (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.researchbot, req, res);
-});
+const researchUnavailable = (_req: Request, res: Response) => {
+  res.status(501).json({
+    success: false,
+    error: {
+      code: 'RESEARCHBOT_NOT_IMPLEMENTED',
+      message: 'ResearchBot is designed but is not a running Nova capability yet.',
+    },
+  });
+};
 
-app.all('/v1/proposals*', requireScopes(['research.read']), (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.researchbot, req, res);
-});
+app.all(['/v1/research', '/v1/research/*'], requireScopes(['research.read']), researchUnavailable);
+app.all('/v1/kb*', requireScopes(['research.read']), researchUnavailable);
+app.all('/v1/proposals*', requireScopes(['research.read']), researchUnavailable);
 
 // Ops routes -> OpsBot
 app.all('/v1/ops/*', requireScopes(['ops.read']), (req: Request, res: Response) => {
@@ -1098,8 +1211,14 @@ app.all('/v1/bootstrap/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
-// Situation intake — public (no auth needed for first 3 free cards)
-app.all('/v1/cards/intake*', (req: Request, res: Response) => {
+// Public Decision Card loop. Generation without a return path is a faucet;
+// these four routes are one product contract: decide -> act -> report -> learn.
+app.all([
+  '/v1/cards/intake*',
+  '/v1/cards/outcome*',
+  '/v1/cards/calibration*',
+  '/v1/cards/mine*',
+], (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
@@ -1154,9 +1273,26 @@ app.post('/billing/webhook', (req: Request, res: Response) => {
 });
 
 // ============================================
-// Nova Nexus AI Routes -> TradeBot
+// Nexus Interaction Engine routes -> Nova Hub
 // ============================================
-// Decision Infrastructure lifecycle routes -> Nova Hub
+app.all('/v1/nexus/interact', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/nexus/capabilities', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/nexus/interactions*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+app.all('/v1/nexus/conversations*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Existing decision lifecycle routes remain compatible while their trade-only
+// naming is migrated behind the canonical interaction boundary.
 app.all('/v1/nexus/observe', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
@@ -1164,6 +1300,9 @@ app.all('/v1/nexus/observe', (req: Request, res: Response) => {
 app.all('/v1/nexus/decision-cards*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
+
+// Legacy trade intelligence routes -> TradeBot. These paths are preserved for
+// compatibility; they are not the definition of the Nexus company.
 
 app.all('/v1/nexus/status', (req: Request, res: Response) => {
   proxyRequestRewrite(SERVICE_URLS.tradebot, '/api/nexus/status', req, res);

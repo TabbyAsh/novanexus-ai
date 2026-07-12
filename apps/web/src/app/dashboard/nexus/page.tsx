@@ -34,7 +34,7 @@ function formatIntegrityScore(score: number | undefined | null) {
   return `${pct}%`;
 }
 
-export default function NexusDashboardPage() {
+export default function MarketDecisionCenterPage() {
   const [status, setStatus] = useState<NexusStatusPayload | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -74,7 +74,7 @@ export default function NexusDashboardPage() {
         setStatusError(null);
       } else {
         setStatus(null);
-        setStatusError(statusRes.error?.message ?? 'Failed to load Nexus status');
+        setStatusError(statusRes.error?.message ?? 'Failed to load market intelligence status');
       }
 
       if (ledgerRes.success) {
@@ -82,7 +82,7 @@ export default function NexusDashboardPage() {
         setLedgerError(null);
       } else {
         setLedger(null);
-        setLedgerError(ledgerRes.error?.message ?? 'Failed to load Nexus ledger');
+        setLedgerError(ledgerRes.error?.message ?? 'Failed to load market decision ledger');
       }
     } catch (err) {
       const message = (err as Error).message;
@@ -203,7 +203,7 @@ export default function NexusDashboardPage() {
       });
 
       if (!res.success) {
-        setError(res.error?.message ?? 'Nexus analysis failed');
+        setError(res.error?.message ?? 'Market analysis failed');
         return;
       }
 
@@ -226,7 +226,7 @@ export default function NexusDashboardPage() {
     try {
       const res = await api.initializeNexus();
       if (!res.success) {
-        setError(res.error?.message ?? 'Failed to initialize Nexus');
+        setError(res.error?.message ?? 'Failed to initialize market intelligence');
         return;
       }
       await load({ silent: true });
@@ -247,10 +247,10 @@ export default function NexusDashboardPage() {
               <span className="inline-flex items-center justify-center w-10 h-10 rounded-xl bg-cyan-500/20 border border-cyan-500/30">
                 <Brain className="w-5 h-5 text-cyan-300" />
               </span>
-              Nexus Decision Center
+              Market Decision Center
             </h1>
             <p className="text-gray-400 mt-1">
-              Decision primacy. Governance supremacy. Memory is sacred.
+              Legacy trade intelligence, risk, and decision memory through Nexus.
             </p>
           </div>
 

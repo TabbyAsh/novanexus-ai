@@ -839,7 +839,7 @@ export default function ScreenerPage() {
     loadCardWallet();
     // Auto-run the screener on first load so the user sees real signals
     runScan();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handler for adding signal to watchlist
   const handleAddToWatchlist = useCallback(async (symbol: string) => {
@@ -1550,7 +1550,7 @@ export default function ScreenerPage() {
             <div>
               <p className="text-yellow-400 font-bold text-lg mb-2">Not Financial Advice</p>
               <p className="text-gray-400 text-sm leading-relaxed">
-                AI signals are for educational and informational purposes only. NovaNexus AI is not a registered investment advisor. 
+                AI signals are for educational and informational purposes only. The provider of this software is not a registered investment adviser.
                 Always do your own research, consult with a qualified financial advisor, and never invest more than you can afford to lose. 
                 Past performance does not guarantee future results. Trading involves substantial risk of loss.
               </p>

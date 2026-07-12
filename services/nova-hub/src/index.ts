@@ -42,6 +42,7 @@ import {
   type DecisionEngineCalibrationProfile,
 } from './decision-infrastructure';
 import { ingestFlipOpportunityInput } from './nexus-ingestion';
+import { automationAllowed } from './automation-authority';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -67,6 +68,13 @@ const SERVER_ALPACA_API_KEY = process.env.ALPACA_API_KEY || '';
 const SERVER_ALPACA_SECRET_KEY = process.env.ALPACA_SECRET_KEY || '';
 const SERVER_ALPACA_ENDPOINT = process.env.ALPACA_ENDPOINT || 'https://paper-api.alpaca.markets/v2';
 const SERVER_ALPACA_CONFIGURED = !!(SERVER_ALPACA_API_KEY && SERVER_ALPACA_SECRET_KEY);
+const PLATFORM_OWNER_EMAILS = new Set(
+  [process.env.PLATFORM_OWNER_EMAILS, process.env.OWNER_EMAIL]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(','))
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 // Direct data pipeline constants (bypass marketdata microservice for screener)
 const ALPACA_DATA_BASE = 'https://data.alpaca.markets';
@@ -121,6 +129,32 @@ async function authMiddleware(req: AuthenticatedRequest, res: Response, next: Ne
 
   next();
 }
+
+async function platformOwnerMiddleware(req: AuthenticatedRequest, res: Response, next: NextFunction) {
+  if (!req.user) return res.status(HTTP_STATUS.UNAUTHORIZED).json({ success: false, error: { code: 'PLATFORM_AUTH_REQUIRED' } });
+  if (PLATFORM_OWNER_EMAILS.size === 0) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: { code: 'PLATFORM_OWNER_NOT_CONFIGURED' } });
+  }
+  try {
+    const owner = await queryOne<{ email: string }>('SELECT email FROM users WHERE id = $1', [req.user.userId]);
+    if (!owner?.email || !PLATFORM_OWNER_EMAILS.has(owner.email.toLowerCase())) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({ success: false, error: { code: 'PLATFORM_CONTROL_FORBIDDEN' } });
+    }
+    next();
+  } catch {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: { code: 'PLATFORM_AUTHORITY_UNAVAILABLE' } });
+  }
+}
+
+async function runAutonomous(label: string, task: () => Promise<unknown>): Promise<void> {
+  if (!(await automationAllowed())) {
+    logger.info(`${label} skipped: kill switch enabled or unreadable`);
+    return;
+  }
+  await task();
+}
+
+app.use('/v1/admin', authMiddleware, platformOwnerMiddleware);
 
 // ============================================
 // Plan & Quota Helpers
@@ -9817,14 +9851,15 @@ async function executeAgent(
   // Record usage + outcome
   await recordUsage(userId, 'AGENT_RUN', 1, { agentSlug: agentDef.slug, runId });
   if (totalOutcomeValue > 0 && lastOutcomeType) {
-    await recordOutcome(userId, agentDef.sector, lastOutcomeType, totalOutcomeValue, {
-      sourceType: 'agent_run', sourceId: runId, description: `${agentDef.name} completed`,
+    const realizedFinancial = ['PROFIT', 'FLIP_PROFIT', 'LOSS'].includes(lastOutcomeType);
+    await recordOutcome(userId, agentDef.sector, lastOutcomeType, realizedFinancial ? totalOutcomeValue : 0, {
+      sourceType: 'agent_run', sourceId: runId,
+      description: realizedFinancial ? `${agentDef.name} recorded a realized financial outcome` : `${agentDef.name} found an estimated opportunity`,
+      metadata: realizedFinancial
+        ? { realization: 'reported_realized' }
+        : { realization: 'estimated', reportedMetric: totalOutcomeValue },
     });
   }
-  // Estimate time saved: each agent run saves ~15 min of manual work
-  await recordOutcome(userId, agentDef.sector, 'TIME_SAVED', 15, {
-    sourceType: 'agent_run', sourceId: runId, description: `${agentDef.name} automated workflow`,
-  });
 
   return { runId, status: runStatus, steps: stepResults, resultSummary: lastOutput };
 }
@@ -9994,9 +10029,12 @@ app.get('/v1/outcomes/summary', authMiddleware, async (req: AuthenticatedRequest
   // All-time summary
   const allTime = await queryOne<{ total_value: string; total_events: string; profit: string; loss: string; time_saved: string }>(
     `SELECT
-       COALESCE(SUM(value), 0) as total_value,
+       COALESCE(SUM(CASE
+         WHEN event_type IN ('PROFIT', 'FLIP_PROFIT') THEN value
+         WHEN event_type = 'LOSS' THEN -ABS(value)
+         ELSE 0 END), 0) as total_value,
        COUNT(*) as total_events,
-       COALESCE(SUM(CASE WHEN event_type IN ('PROFIT', 'FLIP_PROFIT', 'OPPORTUNITY_FOUND') THEN value ELSE 0 END), 0) as profit,
+       COALESCE(SUM(CASE WHEN event_type IN ('PROFIT', 'FLIP_PROFIT') THEN value ELSE 0 END), 0) as profit,
        COALESCE(SUM(CASE WHEN event_type = 'LOSS' THEN ABS(value) ELSE 0 END), 0) as loss,
        COALESCE(SUM(CASE WHEN event_type = 'TIME_SAVED' THEN value ELSE 0 END), 0) as time_saved
      FROM outcome_events WHERE user_id = $1`, [userId]
@@ -10005,7 +10043,10 @@ app.get('/v1/outcomes/summary', authMiddleware, async (req: AuthenticatedRequest
   // This week
   const thisWeek = await queryOne<{ total_value: string; total_events: string; time_saved: string }>(
     `SELECT
-       COALESCE(SUM(value), 0) as total_value,
+       COALESCE(SUM(CASE
+         WHEN event_type IN ('PROFIT', 'FLIP_PROFIT') THEN value
+         WHEN event_type = 'LOSS' THEN -ABS(value)
+         ELSE 0 END), 0) as total_value,
        COUNT(*) as total_events,
        COALESCE(SUM(CASE WHEN event_type = 'TIME_SAVED' THEN value ELSE 0 END), 0) as time_saved
      FROM outcome_events WHERE user_id = $1 AND created_at > NOW() - INTERVAL '7 days'`, [userId]
@@ -10019,7 +10060,10 @@ app.get('/v1/outcomes/summary', authMiddleware, async (req: AuthenticatedRequest
 
   // Per-sector breakdown
   const sectors = await query<{ domain: string; total_value: string; event_count: string }>(
-    `SELECT domain, COALESCE(SUM(value), 0) as total_value, COUNT(*) as event_count
+    `SELECT domain, COALESCE(SUM(CASE
+       WHEN event_type IN ('PROFIT', 'FLIP_PROFIT') THEN value
+       WHEN event_type = 'LOSS' THEN -ABS(value)
+       ELSE 0 END), 0) as total_value, COUNT(*) as event_count
      FROM outcome_events WHERE user_id = $1 AND created_at > NOW() - INTERVAL '30 days'
      GROUP BY domain`, [userId]
   );
@@ -10137,6 +10181,7 @@ function cronMatches(cronExpr: string, date: Date): boolean {
 
 async function runScheduledAgents(): Promise<void> {
   try {
+    if (!(await automationAllowed())) return;
     const now = new Date();
     const schedules = await query<{
       id: string; user_id: string; agent_definition_id: string;
@@ -10166,6 +10211,7 @@ async function runScheduledAgents(): Promise<void> {
 
       logger.info(`Scheduled agent run: ${agentDef.name} for user ${sched.user_id}`);
       try {
+        if (!(await automationAllowed())) break;
         await executeAgent(sched.user_id, orgId, agentDef, params);
       } catch (err) {
         logger.warn(`Scheduled agent failed: ${agentDef.name}`, { error: (err as Error).message });
@@ -10587,7 +10633,7 @@ app.get('/v1/world/agents', async (req: Request, res: Response) => {
 // THE SMITH (agent layer §1, Phases 2+3) — writes code, runs it in an
 // isolated sandbox, reads its own failures, iterates. Output is a PROPOSAL
 // artifact; promotion to the repo is a human commit (never auto-merged).
-app.post('/v1/smith/build', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/smith/build', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const problem = String(req.body?.problem || '').trim();
     if (!problem) { res.status(400).json({ success: false, error: { code: 'EMPTY_PROBLEM', message: 'State the problem to solve.' } }); return; }
@@ -10618,11 +10664,14 @@ app.get('/v1/agents/providers', async (_req: Request, res: Response) => {
 
 // Seed the founding sovereignty lesson once, shortly after boot.
 setTimeout(() => {
-  import('./failure-memory').then(({ seedQuotaLesson }) => seedQuotaLesson()).catch(() => {});
+  runAutonomous('Sovereignty lesson seed', async () => {
+    const { seedQuotaLesson } = await import('./failure-memory');
+    await seedQuotaLesson();
+  }).catch(() => {});
 }, 90 * 1000);
 
 // PHASE 3 — Approval-as-training: pending proposals + the human's decision.
-app.get('/v1/agents/proposals', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+app.get('/v1/agents/proposals', authMiddleware, platformOwnerMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const { listPendingProposals } = await import('./proposals');
     res.json({ success: true, data: { proposals: await listPendingProposals() } });
@@ -10631,12 +10680,15 @@ app.get('/v1/agents/proposals', authMiddleware, async (_req: AuthenticatedReques
     res.status(503).json({ success: false, error: { code: 'PROPOSALS_DARK', message: 'Unavailable.' } });
   }
 });
-app.post('/v1/agents/proposals/decide', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/agents/proposals/decide', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const { decideProposal } = await import('./proposals');
     const decision = String(req.body?.decision || '');
     if (!['accept', 'reject'].includes(decision)) { res.status(400).json({ success: false, error: { code: 'BAD_DECISION', message: 'decision must be accept|reject.' } }); return; }
-    const r = await decideProposal(String(req.body?.proposalId || ''), decision as any, String(req.body?.reason || ''), req.user?.userId || 'founder');
+    const reason = String(req.body?.reason || '').trim();
+    if (!reason) { res.status(400).json({ success: false, error: { code: 'DECISION_REASON_REQUIRED', message: 'A human reason is required; it becomes the training label.' } }); return; }
+    const r = await decideProposal(String(req.body?.proposalId || ''), decision as any, reason, req.user?.userId || 'founder');
+    if (r.conflict) { res.status(409).json({ success: false, error: { code: 'PROPOSAL_ALREADY_DECIDED', message: 'This proposal already has an immutable decision.' } }); return; }
     if (!r.ok) { res.status(404).json({ success: false, error: { code: 'PROPOSAL_NOT_FOUND', message: 'No such proposal.' } }); return; }
     res.json({ success: true, data: r });
   } catch (err) {
@@ -10646,7 +10698,7 @@ app.post('/v1/agents/proposals/decide', authMiddleware, async (req: Authenticate
 });
 
 // AGENT EVALS (Phase 5) — the recursive-improvement loop, objectively gated.
-app.post('/v1/agents/evals/run', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/agents/evals/run', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const agent = String(req.body?.agent || 'coder-agent');
     const { runBenchmark } = await import('./agent-evals');
@@ -10656,7 +10708,7 @@ app.post('/v1/agents/evals/run', authMiddleware, async (req: AuthenticatedReques
     res.status(503).json({ success: false, error: { code: 'EVAL_HALT', message: 'Eval unavailable.' } });
   }
 });
-app.post('/v1/agents/evals/improve', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/agents/evals/improve', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const agent = String(req.body?.agent || 'coder-agent');
     const { proposeAndGate } = await import('./agent-evals');
@@ -10664,6 +10716,51 @@ app.post('/v1/agents/evals/improve', authMiddleware, async (req: AuthenticatedRe
   } catch (err) {
     logger.error('Self-improvement pass failed', err as Error);
     res.status(503).json({ success: false, error: { code: 'IMPROVE_HALT', message: 'Improvement pass unavailable.' } });
+  }
+});
+app.post('/v1/agents/evals/promote', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const approvalId = String(req.body?.approvalId || '');
+    const decision = String(req.body?.decision || '');
+    const reason = String(req.body?.reason || '').trim();
+    if (!approvalId || !['approve', 'reject'].includes(decision) || !reason) {
+      return res.status(400).json({
+        success: false,
+        error: { code: 'INVALID_PROMOTION_DECISION', message: 'approvalId, approve|reject, and a human reason are required.' },
+      });
+    }
+    const { decidePromptPromotion } = await import('./agent-evals');
+    const result = await decidePromptPromotion({
+      approvalId,
+      approve: decision === 'approve',
+      decidedBy: req.user!.userId,
+      reason,
+    });
+    if (result.conflict) return res.status(409).json({ success: false, error: { code: 'PROMOTION_ALREADY_DECIDED' } });
+    if (!result.ok) return res.status(404).json({ success: false, error: { code: 'PROMOTION_NOT_FOUND' } });
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Prompt promotion decision failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'PROMOTION_DECISION_FAILED' } });
+  }
+});
+
+app.post('/v1/agents/codex/run', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const objective = String(req.body?.objective || '').trim();
+    const mode = req.body?.mode === 'propose' ? 'propose' : 'analyze';
+    if (!objective) {
+      return res.status(400).json({ success: false, error: { code: 'CODEX_OBJECTIVE_REQUIRED' } });
+    }
+    const { runCodexSpecialist } = await import('./codex-specialist');
+    const result = await runCodexSpecialist({ objective, mode });
+    if (!result.available) {
+      return res.status(503).json({ success: false, error: { code: 'CODEX_SPECIALIST_RESERVED', message: result.gap }, data: result });
+    }
+    res.json({ success: true, data: result });
+  } catch (err) {
+    logger.error('Codex specialist failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'CODEX_SPECIALIST_FAILED', message: 'The coding specialist did not complete.' } });
   }
 });
 app.get('/v1/agents/evals/leaderboard', async (_req: Request, res: Response) => {
@@ -10702,7 +10799,7 @@ app.get('/v1/world/calibration/:agentId', async (req: Request, res: Response) =>
 
 // IGNITION v2 (Spec v0.2 Layer D) — goal in, reviewable sector blueprint out.
 // Nothing external is provisioned without founder approval.
-app.post('/v1/ignition/blueprint', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+app.post('/v1/ignition/blueprint', authMiddleware, platformOwnerMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
     const goal = String(req.body?.goal || '').trim();
     if (!goal) { res.status(400).json({ success: false, error: { code: 'EMPTY_GOAL', message: 'State the sector goal.' } }); return; }
@@ -10718,59 +10815,67 @@ app.post('/v1/ignition/blueprint', authMiddleware, async (req: AuthenticatedRequ
 
 // FORGE v2 (Layer C): capability gaps → reviewable proposals, hourly.
 setInterval(() => {
-  import('./ignition').then(({ processCapabilityGaps }) => processCapabilityGaps()).catch(err =>
-    logger.warn('Forge v2 pass failed', { error: (err as Error).message })
-  );
+  runAutonomous('Forge v2 pass', async () => {
+    const { processCapabilityGaps } = await import('./ignition');
+    await processCapabilityGaps();
+  }).catch(err => logger.warn('Forge v2 pass failed', { error: (err as Error).message }));
 }, 60 * 60 * 1000);
 
 // TUNER (P5): evidence-based patch proposals, daily. Staged, never applied.
 setInterval(() => {
-  import('./tuner').then(({ runTunerPass }) => runTunerPass()).catch(err =>
-    logger.warn('Tuner pass failed', { error: (err as Error).message })
-  );
+  runAutonomous('Tuner pass', async () => {
+    const { runTunerPass } = await import('./tuner');
+    await runTunerPass();
+  }).catch(err => logger.warn('Tuner pass failed', { error: (err as Error).message }));
 }, 24 * 60 * 60 * 1000);
 
 // Reality grades the open predictions every 10 minutes (Spec v0.2 §2).
 setInterval(() => {
-  import('./calibration').then(({ resolveDuePredictions }) => resolveDuePredictions()).catch(err =>
-    logger.warn('Prediction resolution failed', { error: (err as Error).message })
-  );
+  runAutonomous('Prediction resolution', async () => {
+    const { resolveDuePredictions } = await import('./calibration');
+    await resolveDuePredictions();
+  }).catch(err => logger.warn('Prediction resolution failed', { error: (err as Error).message }));
 }, 10 * 60 * 1000);
 
 // The Forge tick — agents scan real data on a real cadence.
 setInterval(() => {
-  import('./forge').then(({ runForgeTick }) => runForgeTick()).catch(err =>
-    logger.warn('Forge tick failed', { error: (err as Error).message })
-  );
+  runAutonomous('Forge tick', async () => {
+    const { runForgeTick } = await import('./forge');
+    await runForgeTick();
+  }).catch(err => logger.warn('Forge tick failed', { error: (err as Error).message }));
 }, 5 * 60 * 1000);
 
 // THE MIRROR (Manifesto §6) — the second-order agent audits Nova herself
 // every 6 hours; first pass 3 minutes after boot, once migrations settle.
 setTimeout(() => {
-  import('./auditor').then(async ({ ensureAuditorExists, runAudit }) => {
+  runAutonomous('Auditor bootstrap', async () => {
+    const { ensureAuditorExists, runAudit } = await import('./auditor');
     await ensureAuditorExists();
     await runAudit();
   }).catch(err => logger.warn('Auditor bootstrap failed', { error: (err as Error).message }));
 }, 3 * 60 * 1000);
 setInterval(() => {
-  import('./auditor').then(({ runAudit }) => runAudit()).catch(err =>
-    logger.warn('Audit run failed', { error: (err as Error).message })
-  );
+  runAutonomous('Audit run', async () => {
+    const { runAudit } = await import('./auditor');
+    await runAudit();
+  }).catch(err => logger.warn('Audit run failed', { error: (err as Error).message }));
 }, 6 * 60 * 60 * 1000);
 
 // THE EXPLORATION BUDGET (Manifesto §2, build-order #6) — the protected
 // slice. Its cadence is a code constant, not a knob: exploitation pressure
 // cannot eat it, and it cannot balloon. First walk 4 minutes after boot.
 setTimeout(() => {
-  import('./explorer').then(async ({ ensureExplorerExists, runExploration }) => {
+  runAutonomous('Explorer bootstrap', async () => {
+    const { ensureExplorerExists, runExploration } = await import('./explorer');
     await ensureExplorerExists();
     await runExploration();
   }).catch(err => logger.warn('Explorer bootstrap failed', { error: (err as Error).message }));
 }, 4 * 60 * 1000);
 setInterval(() => {
-  import('./explorer').then(({ runExploration }) => runExploration()).catch(err =>
-    logger.warn('Exploration run failed', { error: (err as Error).message })
-  );
+  runAutonomous('Exploration run', async () => {
+    const { runExploration } = await import('./explorer');
+    await runExploration();
+  }).catch(err => logger.warn('Exploration run failed', { error: (err as Error).message }));
 }, 6 * 60 * 60 * 1000);
 
 app.post('/v1/world/hail', async (req: Request, res: Response) => {
@@ -10790,29 +10895,43 @@ app.post('/v1/world/hail', async (req: Request, res: Response) => {
       return;
     }
     const returning = Boolean(req.body?.returning);
+    const confirmed = req.body?.confirm === true;
     const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.slice(0, 64) : null;
 
     // THE FORGE — some hails are commands, not questions.
     if (visitorId) {
-      const { parseForgeIntent, forgeAgent, attachEmail } = await import('./forge');
+      const { parseForgeIntent, forgeAgent } = await import('./forge');
       const emailMatch = message.match(/\bnotify me at\s+([^\s@]+@[^\s@]+\.[^\s@]+)/i);
       if (emailMatch) {
-        const updated = await attachEmail(visitorId, emailMatch[1].toLowerCase());
-        res.json({ success: true, data: {
-          reply: updated > 0
-            ? `Done. When an agent of yours flares, I contact you first at ${emailMatch[1].toLowerCase()}.`
-            : `You have no active agents yet. Tell me to watch a symbol — "watch TSLA" — and I will forge one.`,
-          provider: 'forge', available: true,
-        }});
+        res.status(501).json({
+          success: false,
+          error: {
+            code: 'WORLD_EMAIL_VERIFICATION_REQUIRED',
+            message: 'Email alerts are reserved until recipient verification and double opt-in exist. No address was stored.',
+          },
+          data: { authority: { mode: 'assist', externalSideEffectsPerformed: false } },
+        });
         return;
       }
       const intent = parseForgeIntent(message);
       if (intent) {
+        if (!confirmed) {
+          res.json({ success: true, data: {
+            reply: `I can create a persistent 15-minute watcher for ${intent.symbol}. This will keep running after this conversation. Confirm to forge it.`,
+            provider: 'forge', available: true,
+            confirmationRequired: true,
+            authority: { mode: 'assist', externalSideEffectsPerformed: false },
+            proposedAction: { type: 'CREATE_WATCHER', symbol: intent.symbol },
+          }});
+          return;
+        }
         const forged = await forgeAgent({ visitorId, symbol: intent.symbol });
         res.json({ success: true, data: {
           reply: 'error' in forged ? forged.error : forged.reply,
           provider: 'forge', available: true,
           agent: 'error' in forged ? null : { id: forged.agent.id, name: forged.agent.name, symbol: forged.agent.symbol },
+          confirmationRequired: false,
+          authority: { mode: 'assist', externalSideEffectsPerformed: !('error' in forged) },
         }});
         return;
       }
@@ -10839,7 +10958,10 @@ app.get('/v1/admin/users', authMiddleware, async (_req: AuthenticatedRequest, re
       outcome_value: string | null;
     }>(
       `SELECT u.id, u.email, u.status, u.created_at,
-              COALESCE(SUM(oe.value), 0) as outcome_value
+              COALESCE(SUM(CASE
+                WHEN oe.event_type IN ('PROFIT', 'FLIP_PROFIT') THEN oe.value
+                WHEN oe.event_type = 'LOSS' THEN -ABS(oe.value)
+                ELSE 0 END), 0) as outcome_value
        FROM users u
        LEFT JOIN outcome_events oe ON oe.user_id = u.id
        GROUP BY u.id, u.email, u.status, u.created_at
@@ -12564,21 +12686,143 @@ Keep it short, specific, real. No generic advice.`,
 });
 
 // ============================================================================
-// NOVACORE — the central AI command center (the TRUNK)
-// Everything else is a branch NovaCore routes to and coordinates.
+// NEXUS INTERACTION ENGINE — the human/company boundary to Nova's potential.
+// Nova supplies intelligence and composable capabilities. Nexus captures human
+// intent, states authority, exposes evidence and gaps, and persists the receipt.
 // ============================================================================
+
+app.post('/v1/nexus/interact', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { message, conversationId } = req.body || {};
+  if (typeof message !== 'string' || message.trim().length < 1) {
+    return res.status(400).json({ success: false, error: { code: 'EMPTY_MESSAGE', message: 'Tell Nexus what you want to realize.' } });
+  }
+  try {
+    const { nexusInteract } = await import('./nexus-interaction');
+    const result = await nexusInteract(userId, conversationId || null, message.trim());
+    res.json({ success: true, data: result });
+  } catch (err) {
+    const messageText = err instanceof Error ? err.message : '';
+    if (messageText === 'Conversation not found.') {
+      return res.status(404).json({ success: false, error: { code: 'CONVERSATION_NOT_FOUND', message: messageText } });
+    }
+    logger.error('Nexus interaction failed', err as Error);
+    res.status(500).json({ success: false, error: { code: 'INTERACTION_FAILED', message: 'Nexus could not complete this interaction. Try again.' } });
+  }
+});
+
+app.get('/v1/nexus/capabilities', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { listNexusCapabilities } = await import('./nexus-interaction');
+    res.json({ success: true, data: { capabilities: listNexusCapabilities() } });
+  } catch (err) {
+    logger.error('Nexus capabilities failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'CAPABILITIES_UNAVAILABLE' } });
+  }
+});
+
+app.get('/v1/nexus/potential', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { listNexusCapabilities } = await import('./nexus-interaction');
+    const { assessPotentialFrontier } = await import('./potential-frontier');
+    res.json({ success: true, data: assessPotentialFrontier(listNexusCapabilities()) });
+  } catch (err) {
+    logger.error('Potential frontier failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'POTENTIAL_FRONTIER_UNAVAILABLE' } });
+  }
+});
+
+app.get('/v1/nexus/interactions', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const parsedLimit = Number(req.query.limit || 30);
+    const requestedLimit = Number.isFinite(parsedLimit) ? Math.floor(parsedLimit) : 30;
+    const { listNexusInteractions } = await import('./nexus-interaction');
+    const interactions = await listNexusInteractions(req.user!.userId, requestedLimit);
+    res.json({ success: true, data: { interactions } });
+  } catch (err) {
+    logger.error('Nexus interaction history failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'INTERACTION_HISTORY_UNAVAILABLE' } });
+  }
+});
+
+app.post('/v1/nexus/interactions/:id/outcome', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  const { userId } = req.user!;
+  const { result, note, value } = req.body || {};
+  if (!['worked', 'partial', 'failed'].includes(result)) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_OUTCOME', message: 'Outcome must be worked, partial, or failed.' } });
+  }
+  if (value != null && (typeof value !== 'number' || !Number.isFinite(value))) {
+    return res.status(400).json({ success: false, error: { code: 'INVALID_VALUE', message: 'Outcome value must be a finite number.' } });
+  }
+  if ((typeof note === 'string' && note.trim()) || value != null) {
+    return res.status(422).json({
+      success: false,
+      error: {
+        code: 'TYPED_OUTCOME_DETAILS_REQUIRED',
+        message: 'This interaction can record worked/partial/failed now. Notes and value require the forthcoming tenant-scoped typed outcome ledger.',
+      },
+    });
+  }
+  try {
+    const { recordNexusInteractionOutcome } = await import('./nexus-interaction');
+    const outcome = await recordNexusInteractionOutcome(userId, req.params.id, { result });
+    if (outcome.notFound) return res.status(404).json({ success: false, error: { code: 'INTERACTION_NOT_FOUND' } });
+    if (outcome.conflict) return res.status(409).json({ success: false, error: { code: 'OUTCOME_ALREADY_RECORDED' } });
+    if (!outcome.ok) return res.status(500).json({ success: false, error: { code: 'OUTCOME_NOT_PERSISTED' } });
+    res.json({ success: true, data: outcome });
+  } catch (err) {
+    logger.error('Nexus outcome failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'OUTCOME_UNAVAILABLE' } });
+  }
+});
+
+app.get('/v1/nexus/conversations', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { getConversations } = await import('./nova-core');
+    const conversations = await getConversations(req.user!.userId);
+    res.json({ success: true, data: { conversations } });
+  } catch {
+    res.status(503).json({ success: false, error: { code: 'CONVERSATIONS_UNAVAILABLE' } });
+  }
+});
+
+app.get('/v1/nexus/conversations/:id', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  try {
+    const { getMessages } = await import('./nova-core');
+    const messages = await getMessages(req.user!.userId, req.params.id);
+    res.json({ success: true, data: { messages } });
+  } catch {
+    res.status(503).json({ success: false, error: { code: 'CONVERSATION_UNAVAILABLE' } });
+  }
+});
+
+// Legacy compatibility: callers receive the old chat fields plus the canonical
+// Nexus receipt. New clients should call /v1/nexus/interact directly.
 
 app.post('/v1/nova/chat', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   const { userId } = req.user!;
   const { message, conversationId } = req.body || {};
-  if (!message || message.trim().length < 1) {
+  if (typeof message !== 'string' || message.trim().length < 1) {
     return res.status(400).json({ success: false, error: { code: 'EMPTY_MESSAGE' } });
   }
   try {
-    const { novaChat } = await import('./nova-core');
-    const result = await novaChat(userId, conversationId || null, message.trim());
-    res.json({ success: true, data: result });
+    const { nexusInteract } = await import('./nexus-interaction');
+    const nexus = await nexusInteract(userId, conversationId || null, message.trim());
+    res.json({
+      success: true,
+      data: {
+        conversationId: nexus.conversationId,
+        reply: nexus.nova.reply,
+        branch: nexus.intent.route ? { intent: nexus.intent.primary, ...nexus.intent.route } : null,
+        provider: nexus.nova.provider,
+        action: nexus.action,
+        nexus,
+      },
+    });
   } catch (err) {
+    if (err instanceof Error && err.message === 'Conversation not found.') {
+      return res.status(404).json({ success: false, error: { code: 'CONVERSATION_NOT_FOUND', message: err.message } });
+    }
     logger.error('NovaCore chat failed', err as Error);
     res.status(500).json({ success: false, error: { code: 'CHAT_FAILED', message: 'Nova could not respond. Try again.' } });
   }
@@ -12866,18 +13110,6 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
       wants || []
     );
 
-    // The substrate remembers (Manifesto §4): every card becomes a permanent,
-    // outcome-annotatable artifact. Fire-and-forget — the user never waits.
-    import('./substrate').then(({ writeArtifact }) =>
-      writeArtifact({
-        kind: 'decision_card',
-        regime: result.regime,
-        authorType: 'nova',
-        authorId: `intake:${result.provider}`,
-        payload: { content: result.content, context: context || '', haves: haves || [], wants: wants || [] },
-      })
-    ).catch(() => {});
-
     // PHASE 1 — persist the card so its outcome can close the loop later.
     let cardId: string | null = null;
     try {
@@ -12887,6 +13119,26 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
         regime: result.regime, provider: result.provider, content: result.content,
       });
     } catch { /* card still returns; loop just can't close for this one */ }
+
+    // The substrate keeps only a linkage receipt. Personal intake content lives
+    // in the owned intake_cards row; artifacts are not tenant-scoped yet and
+    // therefore must never duplicate raw context, haves, wants, or card text.
+    try {
+      const { writeArtifact } = await import('./substrate');
+      await writeArtifact({
+        kind: 'decision_card',
+        regime: result.regime,
+        authorType: 'nova',
+        authorId: `intake:${result.provider}`,
+        payload: {
+          cardId,
+          content: `intake_card:${cardId || 'unlinked'}`,
+          contentRedacted: true,
+          ownerScope: userId ? 'authenticated' : 'visitor',
+          provider: result.provider,
+        },
+      });
+    } catch { /* intake_cards remains the durable source of truth */ }
 
     res.json({
       success: true,
@@ -12912,9 +13164,27 @@ app.post('/v1/cards/outcome', async (req: Request, res: Response) => {
       res.status(400).json({ success: false, error: { code: 'BAD_OUTCOME', message: 'cardId + outcome (worked|partial|failed) required.' } });
       return;
     }
-    const value = Number.isFinite(Number(req.body?.value)) ? Number(req.body.value) : null;
+    const rawValue = req.body?.value;
+    const parsedValue = rawValue === null || rawValue === undefined || rawValue === '' ? null : Number(rawValue);
+    const value = parsedValue !== null && Number.isFinite(parsedValue) ? parsedValue : null;
+    const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.slice(0, 64) : null;
+    const userId = (req.headers['x-user-id'] as string) || null;
     const { markOutcome } = await import('./card-outcomes');
-    const r = await markOutcome(cardId, outcome as any, String(req.body?.note || ''), value);
+    const r = await markOutcome(
+      cardId,
+      outcome as any,
+      String(req.body?.note || ''),
+      value,
+      { userId, visitorId },
+    );
+    if (r.forbidden) {
+      res.status(403).json({ success: false, error: { code: 'CARD_SCOPE_MISMATCH', message: 'This card belongs to another visitor.' } });
+      return;
+    }
+    if (r.conflict) {
+      res.status(409).json({ success: false, error: { code: 'CARD_ALREADY_RESOLVED', message: 'This card already has an outcome.' } });
+      return;
+    }
     if (!r.ok) { res.status(404).json({ success: false, error: { code: 'CARD_NOT_FOUND', message: 'No such card.' } }); return; }
     res.json({ success: true, data: r });
   } catch (err) {
@@ -12927,7 +13197,7 @@ app.post('/v1/cards/outcome', async (req: Request, res: Response) => {
 app.get('/v1/cards/calibration', async (req: Request, res: Response) => {
   try {
     const { calibration } = await import('./card-outcomes');
-    const visitorId = typeof req.query.visitor === 'string' ? req.query.visitor : undefined;
+    const visitorId = typeof req.query.visitor === 'string' ? req.query.visitor.slice(0, 64) : undefined;
     const userId = (req.headers['x-user-id'] as string) || undefined;
     res.json({ success: true, data: await calibration(userId ? { userId } : visitorId ? { visitorId } : undefined) });
   } catch {
@@ -12939,7 +13209,7 @@ app.get('/v1/cards/calibration', async (req: Request, res: Response) => {
 app.get('/v1/cards/mine', async (req: Request, res: Response) => {
   try {
     const { listCards } = await import('./card-outcomes');
-    const visitorId = typeof req.query.visitor === 'string' ? req.query.visitor : undefined;
+    const visitorId = typeof req.query.visitor === 'string' ? req.query.visitor.slice(0, 64) : undefined;
     const userId = (req.headers['x-user-id'] as string) || undefined;
     if (!userId && !visitorId) { res.json({ success: true, data: { cards: [] } }); return; }
     res.json({ success: true, data: { cards: await listCards(userId ? { userId } : { visitorId }) } });
@@ -13140,7 +13410,7 @@ app.post('/v1/contact', async (req: Request, res: Response) => {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        from: 'Nova Contact <hello@novanexus-ai.com>',
+        from: 'Nexus Contact <hello@novanexus-ai.com>',
         to: ['hello@novanexus-ai.com'],
         reply_to: email,
         subject: `New inquiry: ${service || 'Nova'} — ${name}`,
@@ -13153,14 +13423,14 @@ app.post('/v1/contact', async (req: Request, res: Response) => {
         method: 'POST',
         headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          from: 'Nova Enterprises <hello@novanexus-ai.com>',
+          from: 'Nexus <hello@novanexus-ai.com>',
           to: [email],
           subject: `Got it, ${name.split(' ')[0]} — I'll follow up within 24 hours`,
           html: `<div style="font-family:system-ui;background:#0a0a0f;color:#fff;padding:24px;max-width:500px">
             <h2 style="color:#10b981">Thanks for reaching out.</h2>
             <p style="color:#9ca3af">I received your inquiry about ${service || 'Nova services'} and will follow up within 24 hours to schedule a setup call.</p>
             <p style="color:#9ca3af">If you need to reach me sooner: <a href="mailto:hello@novanexus-ai.com" style="color:#10b981">hello@novanexus-ai.com</a></p>
-            <p style="color:#374151;font-size:11px;margin-top:16px">Nova Enterprises · novanexus-ai.com</p>
+            <p style="color:#374151;font-size:11px;margin-top:16px">Nexus · the interaction company for Nova · novanexus-ai.com</p>
           </div>`,
         }),
       });
@@ -13184,13 +13454,15 @@ app.listen(PORT, () => {
   // Self-warm the Trend Radar so users never hit a cold start (cache TTL is 30 min).
   // Warm shortly after boot, then keep it hot every 25 minutes.
   const warmRadar = async () => {
-    try {
-      const { getTrendRadar } = await import('./trend-radar');
-      const r = await getTrendRadar('US');
-      logger.info('Trend Radar cache warmed', { products: r.productOpportunities, scanned: r.scanned });
-    } catch (err) {
-      logger.warn('Trend Radar warm failed', { error: (err as Error).message });
-    }
+    await runAutonomous('Trend Radar warm', async () => {
+      try {
+        const { getTrendRadar } = await import('./trend-radar');
+        const r = await getTrendRadar('US');
+        logger.info('Trend Radar cache warmed', { products: r.productOpportunities, scanned: r.scanned });
+      } catch (err) {
+        logger.warn('Trend Radar warm failed', { error: (err as Error).message });
+      }
+    });
   };
   setTimeout(warmRadar, 4000);
   setInterval(warmRadar, 25 * 60 * 1000);

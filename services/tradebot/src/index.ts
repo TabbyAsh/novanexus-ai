@@ -754,81 +754,6 @@ class ScannerEngine {
     this.marketData = marketData;
   }
 
-  private computeFee(notional: number): number {
-    if (!Number.isFinite(notional) || notional <= 0) return 0;
-    const fee = (notional * PAPER_TRADE_FEE_BPS) / 10000;
-    return Math.round(fee * 100) / 100;
-  }
-
-  private applySlippage(price: number, side: 'BUY' | 'SELL', integrity?: CandleIntegrity): { price: number; slippageBps: number } {
-    if (!Number.isFinite(price)) return { price, slippageBps: 0 };
-
-    // ── ATE-driven adaptive slippage (volatility-scaled, non-linear) ──
-    const ate = getAdaptiveEngine();
-    let slippageBps = ate.getAdaptiveParams().slippageBps;
-
-    // Add integrity-based adjustments on top of ATE baseline
-    if (integrity) {
-      const latency = integrity.latency_class.toLowerCase();
-      if (latency === 'medium') slippageBps += 2;
-      if (latency === 'high') slippageBps += 5;
-      if (latency === 'stale') slippageBps += 8;
-      if (integrity.confidence_score < 0.5) slippageBps += 3;
-      if (integrity.confidence_score < 0.3) slippageBps += 5;
-    }
-
-    slippageBps = Math.min(PAPER_TRADE_MAX_SLIPPAGE_BPS, Math.max(0, slippageBps));
-    const direction = side === 'BUY' ? 1 : -1;
-    const slippage = price * (slippageBps / 10000) * direction;
-    const adjusted = Math.round((price + slippage) * 100) / 100;
-    return { price: adjusted, slippageBps };
-  }
-
-  private getOpenPositionValue(): number {
-    let value = 0;
-    for (const trade of this.trades.values()) {
-      if (trade.status !== 'OPEN') continue;
-      const price = Number.isFinite(trade.currentPrice) ? (trade.currentPrice as number) : trade.entryPrice;
-      const direction = trade.side === 'BUY' ? 1 : -1;
-      value += price * trade.quantity * direction;
-    }
-    return value;
-  }
-
-  private recordEquitySnapshot(): void {
-    const equity = Math.round((this.portfolio.cash + this.getOpenPositionValue()) * 100) / 100;
-    this.equityHistory.push({ ts: nowTimestamp(), equity });
-    if (this.equityHistory.length > 5000) {
-      this.equityHistory.shift();
-    }
-  }
-
-  private async resolveMarketPrice(symbol: string): Promise<{ price: number; integrity?: CandleIntegrity }> {
-    const data = await this.marketData.getCandles(symbol, '1m', 2);
-    const candles = data?.candles || [];
-    const last = candles[candles.length - 1];
-    const integrity = data?.integrity ?? last?.integrity;
-
-    if (!hasIntegrityFields(integrity)) {
-      const err = new Error('CANDLE_INTEGRITY_MISSING');
-      (err as any).code = 'CANDLE_INTEGRITY_MISSING';
-      (err as any).details = [{ symbol: symbol.toUpperCase(), reason: 'integrity_missing' }];
-      throw err;
-    }
-
-    if (last && Number.isFinite(last.close)) {
-      return { price: last.close, integrity };
-    }
-
-    const quote = await this.marketData.getQuote(symbol);
-    if (quote && Number.isFinite(quote.price)) {
-      return { price: quote.price, integrity };
-    }
-
-    return { price: Number.NaN, integrity };
-  }
-
-
   async scan(symbols: string[], filters?: { minScore?: number; signals?: string[] }): Promise<ScannerResult[]> {
     if (symbols.length === 0) return [];
 
@@ -1190,6 +1115,80 @@ class PaperTradingSimulator {
 
   constructor(marketData: MarketDataClient) {
     this.marketData = marketData;
+  }
+
+  private computeFee(notional: number): number {
+    if (!Number.isFinite(notional) || notional <= 0) return 0;
+    const fee = (notional * PAPER_TRADE_FEE_BPS) / 10000;
+    return Math.round(fee * 100) / 100;
+  }
+
+  private applySlippage(price: number, side: 'BUY' | 'SELL', integrity?: CandleIntegrity): { price: number; slippageBps: number } {
+    if (!Number.isFinite(price)) return { price, slippageBps: 0 };
+
+    // ── ATE-driven adaptive slippage (volatility-scaled, non-linear) ──
+    const ate = getAdaptiveEngine();
+    let slippageBps = ate.getAdaptiveParams().slippageBps;
+
+    // Add integrity-based adjustments on top of ATE baseline
+    if (integrity) {
+      const latency = integrity.latency_class.toLowerCase();
+      if (latency === 'medium') slippageBps += 2;
+      if (latency === 'high') slippageBps += 5;
+      if (latency === 'stale') slippageBps += 8;
+      if (integrity.confidence_score < 0.5) slippageBps += 3;
+      if (integrity.confidence_score < 0.3) slippageBps += 5;
+    }
+
+    slippageBps = Math.min(PAPER_TRADE_MAX_SLIPPAGE_BPS, Math.max(0, slippageBps));
+    const direction = side === 'BUY' ? 1 : -1;
+    const slippage = price * (slippageBps / 10000) * direction;
+    const adjusted = Math.round((price + slippage) * 100) / 100;
+    return { price: adjusted, slippageBps };
+  }
+
+  private getOpenPositionValue(): number {
+    let value = 0;
+    for (const trade of this.trades.values()) {
+      if (trade.status !== 'OPEN') continue;
+      const price = Number.isFinite(trade.currentPrice) ? (trade.currentPrice as number) : trade.entryPrice;
+      const direction = trade.side === 'BUY' ? 1 : -1;
+      value += price * trade.quantity * direction;
+    }
+    return value;
+  }
+
+  private recordEquitySnapshot(): void {
+    const equity = Math.round((this.portfolio.cash + this.getOpenPositionValue()) * 100) / 100;
+    this.equityHistory.push({ ts: nowTimestamp(), equity });
+    if (this.equityHistory.length > 5000) {
+      this.equityHistory.shift();
+    }
+  }
+
+  private async resolveMarketPrice(symbol: string): Promise<{ price: number; integrity?: CandleIntegrity }> {
+    const data = await this.marketData.getCandles(symbol, '1m', 2);
+    const candles = data?.candles || [];
+    const last = candles[candles.length - 1];
+    const integrity = data?.integrity ?? last?.integrity;
+
+    if (!hasIntegrityFields(integrity)) {
+      const err = new Error('CANDLE_INTEGRITY_MISSING');
+      (err as any).code = 'CANDLE_INTEGRITY_MISSING';
+      (err as any).details = [{ symbol: symbol.toUpperCase(), reason: 'integrity_missing' }];
+      throw err;
+    }
+
+    if (last && Number.isFinite(last.close)) {
+      return { price: last.close, integrity };
+    }
+
+    const quote = await this.marketData.getQuote(symbol);
+    if (quote && Number.isFinite(quote.price)) {
+      return { price: quote.price, integrity };
+    }
+
+    return { price: Number.NaN, integrity };
   }
 
   async openTrade(thesis: ThesisCard, quantity: number): Promise<PaperTrade> {
@@ -2492,7 +2491,7 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
 
     let regime: string | null = null;
     try {
-      regime = (nexusTrader.getStatus().regime as any)?.currentRegime ?? null;
+      regime = nexusTrader.getStatus().nexus.regime.currentRegime ?? null;
     } catch {
       regime = null;
     }
@@ -2526,7 +2525,9 @@ app.post('/api/nexus/analyze', async (req: Request, res: Response) => {
         decision,
         card,
         decisionCardId: persisted.id,
-        message: decision.approved ? 'Trade approved by Nova Nexus' : 'Trade rejected by Nova Nexus',
+        message: decision.approved
+          ? 'Trade passed the market decision policy; execution authority is evaluated separately.'
+          : 'Trade was rejected by the market decision policy.',
       },
     });
   } catch (error) {
@@ -2578,7 +2579,7 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
 
     let regime: string | null = null;
     try {
-      regime = (nexusTrader.getStatus().regime as any)?.currentRegime ?? null;
+      regime = nexusTrader.getStatus().nexus.regime.currentRegime ?? null;
     } catch {
       regime = null;
     }
@@ -2654,7 +2655,9 @@ app.post('/api/nexus/execute', async (req: Request, res: Response) => {
         decisionCardId: persisted.id,
         executionMode: gateWithPolicy.mode,
         gate: gateWithPolicy,
-        message: result.executed ? 'Trade executed by Nova Nexus' : result.decision.reasoning,
+        message: result.executed
+          ? `Trade execution completed in ${gateWithPolicy.mode} mode under the active authorization boundary.`
+          : result.decision.reasoning,
       },
     });
   } catch (error) {
@@ -2705,7 +2708,7 @@ app.post('/api/nexus/autonomous-scan', async (req: Request, res: Response) => {
     const executions = [];
     let regime: string | null = null;
     try {
-      regime = (nexusTrader.getStatus().regime as any)?.currentRegime ?? null;
+      regime = nexusTrader.getStatus().nexus.regime.currentRegime ?? null;
     } catch {
       regime = null;
     }

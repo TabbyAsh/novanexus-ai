@@ -7,8 +7,8 @@
  * pressure."
  *
  * The Explorer is a real agent. Each run it takes two REAL, unrelated
- * observations from the system's own world (a live trending term, a live
- * market fact, a random artifact from the substrate) and abduces one
+ * observations from the system's own world (a live trending term and a live
+ * market fact) and abduces one
  * hypothesis at their intersection. It is FORBIDDEN from projecting revenue
  * or scoring anything — it evaluates interestingness: what's novel, what
  * doors open, what's the cheapest discriminating test. Findings land as
@@ -68,18 +68,9 @@ async function gatherObservations(): Promise<string[]> {
     }
   } catch { /* darkness allowed */ }
 
-  // a random memory from the substrate (the system's own past)
-  const row = await queryOne<{ kind: string; payload: any; created_at: string }>(
-    `SELECT kind, payload, created_at FROM artifacts
-     WHERE author_id != $1 ORDER BY RANDOM() LIMIT 1`,
-    [EXPLORER_ID]
-  ).catch(() => null);
-  if (row) {
-    const gist = row.kind === 'decision_card'
-      ? String(row.payload?.context || '').slice(0, 140)
-      : String(row.payload?.finding || row.payload?.findings?.[0] || '').slice(0, 140);
-    if (gist) obs.push(`From the substrate (${row.kind}, ${new Date(row.created_at).toISOString().slice(0, 10)}): ${gist}`);
-  }
+  // Cross-artifact exploration stays disabled until artifact reads enforce
+  // tenant/visibility scope. Public market and trend observations are safe
+  // inputs; private human memory is not a global research corpus.
 
   return obs;
 }

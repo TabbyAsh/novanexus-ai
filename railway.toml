@@ -5,7 +5,7 @@
 # The Dockerfile CMD (/app/start.sh) handles:
 #   1. Environment validation
 #   2. Database migrations
-#   3. PM2-runtime with ecosystem.config.js (gateway + 7 services)
+#   3. PM2-runtime with the service set in ecosystem.config.js
 
 [build]
 builder = "dockerfile"

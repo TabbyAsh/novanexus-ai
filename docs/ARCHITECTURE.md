@@ -1,17 +1,23 @@
-# Nova Platform Architecture
+# Nova / Nexus Architecture
 
 ## Overview
 
-Nova is an AI-orchestrated platform that unifies trading, e-commerce, and content creation into a single system. The architecture follows a microservices pattern with an event-sourced backbone.
+Nova is the realization layer: composable intelligence, tools, agents, economic
+engines, research, and memory. Nexus is the company and interaction layer:
+identity, intent, interfaces, policy, explanation, receipts, and feedback. The
+architecture follows a microservices pattern with an event-sourced backbone;
+legacy service and package names remain for compatibility.
 
 ## System Layers
 
-### 1. User Layer (Nova Hub)
-- **Web App**: Next.js dashboard for user interaction
+### 1. Nexus Interaction Layer
+- **Web App**: Next.js Nexus surfaces for human interaction
 - **Admin Console**: Policy management and kill switch controls
+- **Interaction contract**: intent, capability use, evidence, authority, gaps,
+  privacy-safe memory receipt, and outcome closure
 
-### 2. AI Orchestration Layer (NovaCore)
-The brain of the platform that:
+### 2. Nova Capability and Orchestration Layer
+The realization engine that:
 - Routes goals to specialized bots
 - Maintains priorities and constraints
 - Tracks outcomes and updates playbooks

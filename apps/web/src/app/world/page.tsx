@@ -2,9 +2,9 @@ import type { Metadata } from 'next';
 import WorldClient from './WorldClient';
 
 export const metadata: Metadata = {
-  title: 'The Nexus — Nova',
+  title: 'The World — Nexus',
   description:
-    'The interaction engine of Nova Enterprises. A living space where real agents, real memory, and real work are visible — and Nova finds your next move.',
+    'A spatial Nexus interface where Nova capabilities, real memory, active work, and human authority become visible.',
 };
 
 export default function WorldPage() {

@@ -11,11 +11,11 @@ import {
   transaction,
   generateTokenPair,
   verifyToken,
-  getDefaultScopes,
   computeEventHash,
   nowTimestamp,
 } from '@nova/shared';
-import type { ApiResponse, User, UserRole, Scope, Policy } from '@nova/shared';
+import type { ApiResponse, User, UserRole, Policy } from '@nova/shared';
+import { scopesForIdentity } from './platform-scopes';
 
 const app = express();
 const logger = createLogger('auth-service');
@@ -187,7 +187,7 @@ async function handleRegister(req: Request, res: Response) {
     });
 
     const role: UserRole = 'OWNER';
-    const scopes = getDefaultScopes(role);
+    const scopes = scopesForIdentity(role, result.user.email);
     const tokens = generateTokenPair({ userId: result.user.id, orgId: result.org.id, role, scopes });
 
     emitEvent(result.org.id, 'USER', result.user.id, EVENT_TYPES.USER_CREATED, {
@@ -276,7 +276,7 @@ app.post('/v1/auth/login', async (req: Request, res: Response) => {
     }
 
     const role = membership.role as UserRole;
-    const scopes = getDefaultScopes(role);
+    const scopes = scopesForIdentity(role, user.email);
     const tokens = generateTokenPair({ userId: user.id, orgId: membership.org_id, role, scopes });
 
     emitEvent(membership.org_id, 'USER', user.id, EVENT_TYPES.USER_LOGIN, {
@@ -381,8 +381,8 @@ app.post('/v1/auth/refresh', async (req: Request, res: Response) => {
       });
     }
 
-    const user = await queryOne<{ status: string }>(
-      'SELECT status FROM users WHERE id = $1',
+    const user = await queryOne<{ status: string; email: string }>(
+      'SELECT status, email FROM users WHERE id = $1',
       [payload.userId]
     );
 
@@ -397,7 +397,7 @@ app.post('/v1/auth/refresh', async (req: Request, res: Response) => {
       userId: payload.userId,
       orgId: payload.orgId,
       role: payload.role,
-      scopes: payload.scopes,
+      scopes: scopesForIdentity(payload.role, user.email),
     });
 
     res.json({

@@ -618,9 +618,10 @@ Keep it tight. Keep it real. Use their actual details. No padding.`;
     temperature: 0.75,
   };
 
-  // THE CANDLE (P1): the card is conditioned on the system's real current
-  // state, and retrieval pulls prior same-regime situations — the Library
-  // speaking into the present. Failures degrade to an unconditioned card.
+  // THE CANDLE (P1): the card is conditioned on real aggregate system state.
+  // Prior-situation retrieval currently returns no records until artifacts are
+  // tenant-scoped and outcome-linked; another person's context is never prompt
+  // material by default. Failures degrade to an unconditioned card.
   try {
     const { computeCandle, candleToPromptLine, retrieveForState } = await import('./candle');
     const [candle, priors] = await Promise.all([computeCandle(), retrieveForState(regime)]);

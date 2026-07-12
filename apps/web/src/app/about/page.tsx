@@ -2,8 +2,8 @@ import type { Metadata } from 'next';
 import Link from 'next/link';
 
 export const metadata: Metadata = {
-  title: 'About — Nova Enterprises',
-  description: 'Nova Enterprises is building decision intelligence for ordinary people. The tools that help anyone make a better move.',
+  title: 'About — Nexus',
+  description: 'Nexus is the interaction company through which people access, govern, and teach Nova—the realization of AI potential.',
 };
 
 export default function AboutPage() {
@@ -12,7 +12,7 @@ export default function AboutPage() {
       <nav className="border-b border-gray-800/60 px-6 py-4 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-2">
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-xs font-bold">N</div>
-          <span className="font-semibold text-sm">Nova Enterprises</span>
+          <span className="font-semibold text-sm">Nexus</span>
         </Link>
         <div className="flex items-center gap-4 text-sm">
           <Link href="/careers"   className="text-gray-500 hover:text-white transition">Careers</Link>
@@ -22,9 +22,9 @@ export default function AboutPage() {
 
       <main className="max-w-2xl mx-auto px-6 py-16 space-y-12">
         <div>
-          <h1 className="text-4xl font-bold text-white mb-5">About Nova Enterprises</h1>
+          <h1 className="text-4xl font-bold text-white mb-5">About Nexus</h1>
           <p className="text-xl text-gray-400 leading-relaxed">
-            Nova exists to give ordinary people access to decision power.
+            Nova is the realization of AI potential. Nexus is how people meet her.
           </p>
         </div>
 
@@ -35,15 +35,15 @@ export default function AboutPage() {
             or access that most people don&apos;t have.
           </p>
           <p>
-            Nova is the attempt to change that. Not with vague AI promises, but with specific, honest tools
+            Nexus is the company built to change that. Not with vague AI promises, but by making Nova&apos;s specific, honest capabilities
             that help anyone — a contractor pricing a job, a gig worker tracking real earnings,
             a first-time operator setting up their back office, a person who doesn&apos;t know what to do next —
             find the clearest path forward.
           </p>
           <p>
             Every tool we build follows the same structure: input → analysis → recommendation → action → outcome → learning.
-            The system gets better the more you use it. What worked, what didn&apos;t, what to do next time.
-            That loop is the product.
+            Outcomes build the evidence required for better calibration. Nexus says when that evidence was actually applied;
+            storage alone is not called learning. That honest loop is the product spine.
           </p>
         </div>
 
@@ -52,7 +52,7 @@ export default function AboutPage() {
           <ul className="space-y-3 text-sm text-gray-400">
             {[
               'No fake numbers. If data is unavailable, it says unavailable.',
-              'No automation without governance. Nova asks before it acts.',
+              'No automation without governance. Nexus asks before Nova acts.',
               'No public claims without evidence. Features exist before they\'re advertised.',
               'No hype. Tools either work or they don\'t.',
               'Truth over appearance. Proof over branding.',
@@ -74,8 +74,8 @@ export default function AboutPage() {
             </p>
             <p>
               The longer product: a governed decision engine that compounds over time.
-              Every outcome logged makes the next recommendation sharper. Every card generated feeds the ledger.
-              The system learns from what actually happened, not what was predicted.
+              Every outcome logged builds a real, inspectable track record. Advice is only called outcome-conditioned
+              when that feedback is actually retrieved and applied—not merely because it was stored.
             </p>
             <p>
               The eventual product: decision intelligence infrastructure that extends from software
