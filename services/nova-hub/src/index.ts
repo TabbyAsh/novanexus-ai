@@ -6754,9 +6754,18 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     if (isNumber(maxBuyPrice)) {
       reasons.push(`Safe buy ceiling is ${fmtMoney(maxBuyPrice)} based on fast-sale economics.`);
     }
-    reasons.push(flipCard.rationale_summary);
+    // The engine narrative is category-model math — quoting it under a
+    // comps-based verdict mixes two bases in one card (Trust Law: one basis
+    // per set of numbers shown).
+    if (estimateBasis === 'CATEGORY_MODEL') {
+      reasons.push(flipCard.rationale_summary);
+    }
 
-    const warnings = [...flipCard.risk_flags];
+    // "Low comparable data" is the engine's view before manual comps — with
+    // 3+ user comps it's no longer true.
+    const warnings = hasStrongComparableData
+      ? flipCard.risk_flags.filter((flag) => !/low comparable data/i.test(flag))
+      : [...flipCard.risk_flags];
     if (compCount > 0 && compCount < 3) {
       warnings.push('Add at least 3 sold comps for tighter valuation confidence.');
     }
