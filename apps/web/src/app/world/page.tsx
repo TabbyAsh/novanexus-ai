@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
-import WorldClient from './WorldClient';
+import WorldGate from './WorldGate';
 
 export const metadata: Metadata = {
   title: 'The Nexus — Nova',
-  description:
-    'The interaction engine of Nova Enterprises. A living space where real agents, real memory, and real work are visible — and Nova finds your next move.',
+  description: 'Private. Nova’s operating floor.',
+  // The World is founder-only now: keep it out of search results entirely.
+  robots: { index: false, follow: false },
 };
 
 export default function WorldPage() {
-  return <WorldClient />;
+  return <WorldGate />;
 }
