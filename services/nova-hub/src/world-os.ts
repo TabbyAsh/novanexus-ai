@@ -246,17 +246,25 @@ export async function getWorldOS(): Promise<WorldOS> {
   // substrate. No writes, no presence. (§XIII: no decorative agent pretends.)
   let society: SocietyMember[] = [];
   try {
-    const r = await query<{ author_id: string; writes: string; last_write: string }>(
-      `SELECT author_id, COUNT(*) AS writes, MAX(created_at) AS last_write
-       FROM artifacts WHERE author_type IN ('agent', 'system', 'nova')
-       GROUP BY author_id ORDER BY MAX(created_at) DESC LIMIT 20`
+    // Forged watchers author mission reports under their agent UUID —
+    // resolve to their given names so the society stays legible (§XIII).
+    const r = await query<{ author_id: string; agent_name: string | null; writes: string; last_write: string }>(
+      `SELECT a.author_id, w.name AS agent_name,
+              COUNT(*) AS writes, MAX(a.created_at) AS last_write
+       FROM artifacts a
+       LEFT JOIN world_agents w ON w.id::text = a.author_id
+       WHERE a.author_type IN ('agent', 'system', 'nova')
+       GROUP BY a.author_id, w.name ORDER BY MAX(a.created_at) DESC LIMIT 20`
     );
     society = r.rows.map(row => ({
       id: row.author_id,
       name: SOCIETY_NAMES[row.author_id]?.name
+        || row.agent_name
         || (row.author_id.startsWith('ignition') ? 'Ignition' : row.author_id),
       role: SOCIETY_NAMES[row.author_id]?.role
-        || (row.author_id.startsWith('ignition') ? 'proposes capabilities from observed gaps' : 'writes to the substrate'),
+        || (row.agent_name ? 'a forged watcher, reporting its missions'
+            : row.author_id.startsWith('ignition') ? 'proposes capabilities from observed gaps'
+            : 'writes to the substrate'),
       writes: parseInt(row.writes, 10),
       lastWriteAt: row.last_write,
     }));
