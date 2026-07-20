@@ -270,11 +270,11 @@ export function hailAllowed(ip: string): boolean {
   return true;
 }
 
-const THRESHOLD_SYSTEM = `You are Nova — the operating intelligence of Nova Enterprises, speaking at the threshold of the Nexus to a visitor who just arrived. You are not a chatbot and not a mascot. You are calm command: precise, loyal, unsparing, on their side. Short sentences. No hype, no flattery, no customer-service warmth. You do not beg for engagement. You are where attention goes when it wants to become action.
+const THRESHOLD_SYSTEM = `{{IDENTITY}}
 
-The door behind everything you say: "Tell me the situation. I will find the next move."
+You are speaking at the threshold of the Nexus to a visitor who just arrived.
 
-THE WORLD YOU STAND IN (real, live right now — you may reference it, never embellish it):
+THE WORLD YOU STAND IN — each fact below carries its epistemic status (KNOWN = fresh observation, INFERRED = model/rule output, UNCERTAIN = stale, MISSING = absent; never speak a MISSING fact as if present, never upgrade a status):
 {{STANDING}}
 
 YOUR SECTORS (route only when it IS the next move — decide first, then dispatch):
@@ -294,32 +294,24 @@ export async function hail(
 ): Promise<{ reply: string; provider: string; available: boolean }> {
   const pulse = await getWorldPulse().catch(() => null);
 
-  const standingLines: string[] = [];
-  if (pulse?.standing) {
-    standingLines.push(
-      `Operators on the platform: ${pulse.standing.users}. Agent runs completed: ${pulse.standing.agentRunsCompleted}.`
-    );
-  }
-  if (pulse?.sectors.market) {
-    const m = pulse.sectors.market;
-    standingLines.push(
-      `The Market (${m.session} session): ${m.symbol} at $${m.price.toFixed(2)}, ${m.changePct >= 0 ? '+' : ''}${m.changePct.toFixed(2)}% today.`
-    );
-  }
-  if (pulse?.sectors.bazaar) {
-    standingLines.push(`The Bazaar: ${pulse.sectors.bazaar.flipsTracked} items tracked, ${pulse.sectors.bazaar.appraised24h} appraised in the last day.`);
-  }
-  if (pulse?.sectors.forge) {
-    standingLines.push(`The Forge: ${pulse.sectors.forge.cardsTotal} cards forged, ${pulse.sectors.forge.forged24h} in the last day.`);
-  }
-  if (standingLines.length === 0) {
-    standingLines.push('The deeper systems are dark from here right now. Say so if asked — do not invent their state.');
-  }
+  // Phase 2: the standing is grounded — every claim tagged with its
+  // epistemic status, source, and age. Phase 4: the identity comes from
+  // the Vault, so no provider owns her voice.
+  const [{ loadIdentity }, { groundedStanding, formatClaims }] = await Promise.all([
+    import('./identity'), import('./grounding'),
+  ]);
+  const identity = await loadIdentity();
+  const claims = await groundedStanding().catch(() => []);
+  const standingLines: string[] = claims.length
+    ? [formatClaims(claims)]
+    : ['[MISSING · nova-hub] The deeper systems are dark from here right now. Say so if asked — do not invent their state.'];
   if (opts.returning) {
     standingLines.push('This visitor has stood here before. You may acknowledge continuity. Do not perform intimacy you have not earned.');
   }
 
-  const system = THRESHOLD_SYSTEM.replace('{{STANDING}}', standingLines.join('\n'));
+  const system = THRESHOLD_SYSTEM
+    .replace('{{IDENTITY}}', identity.text)
+    .replace('{{STANDING}}', standingLines.join('\n'));
 
   const result = await generateChat({
     system,

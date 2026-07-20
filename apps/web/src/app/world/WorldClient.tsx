@@ -68,7 +68,9 @@ interface WorldOS {
     capableOfLLM: boolean;
     sovereignty: { score: number; band: string; rationale: string };
   };
-  vault: { mounted: boolean; note: string };
+  vault: { mounted: boolean; note: string; entries?: number };
+  lattice: { nodes: number; edges: number } | null;
+  intents: Record<string, number>;
   continuance: { constitution: string; ratified: string; doorHasWord: boolean; laws: number };
 }
 
@@ -529,8 +531,18 @@ export default function WorldClient() {
             mind {os.mind.sovereignty.band} · {os.mind.sovereignty.score}% sovereign · {os.mind.providers.filter(p => p.configured).length}/{os.mind.providers.length} providers lit
           </div>
           <div className="text-[10px] tracking-widest uppercase" style={{ color: os.vault.mounted ? '#5d7891' : '#8a5a52' }}>
-            vault {os.vault.mounted ? os.vault.note : 'unmounted'}
+            vault {os.vault.mounted ? `${os.vault.entries ?? '?'} entries at rest` : 'unmounted'}
           </div>
+          {os.lattice && (
+            <div className="text-[10px] tracking-widest uppercase" style={{ color: '#5d7891' }}>
+              lattice {os.lattice.nodes} minds · {os.lattice.edges} threads
+            </div>
+          )}
+          {Object.keys(os.intents).length > 0 && (
+            <div className="text-[10px] tracking-widest uppercase" style={{ color: '#5d7891' }}>
+              intents {Object.entries(os.intents).map(([k, v]) => `${v} ${k}`).join(' · ')}
+            </div>
+          )}
           <div className="text-[10px] tracking-widest uppercase" style={{ color: '#3d5266' }}>
             the continuance · ratified {os.continuance.ratified}
           </div>

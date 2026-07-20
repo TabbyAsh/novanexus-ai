@@ -126,7 +126,9 @@ export interface WorldOS {
     };
   };
   mind: ReturnType<typeof healthSnapshot>;
-  vault: { mounted: boolean; note: string };
+  vault: { mounted: boolean; note: string; entries?: number };
+  lattice: { nodes: number; edges: number } | null;
+  intents: Record<string, number>;
   continuance: {
     constitution: string;
     ratified: string;
@@ -326,20 +328,23 @@ export async function getWorldOS(): Promise<WorldOS> {
     }));
   } catch {}
 
-  // The Vault — honest status. It is not pretended into existence (§VII).
-  const vaultDir = process.env.VAULT_DIR;
-  let vault: WorldOS['vault'];
-  if (!vaultDir) {
-    vault = { mounted: false, note: 'Not mounted on this node. The database is a derived artifact, not the Vault.' };
-  } else {
-    try {
-      const fs = await import('fs/promises');
-      const entries = await fs.readdir(vaultDir);
-      vault = { mounted: true, note: `${entries.length} entries at rest` };
-    } catch {
-      vault = { mounted: false, note: `VAULT_DIR is set but unreadable — the mount is not real yet.` };
-    }
-  }
+  // The Vault — honest status via the organ itself (§VII).
+  const { vaultStatus } = await import('./vault');
+  const vs = await vaultStatus();
+  const vault: WorldOS['vault'] = { mounted: vs.mounted, note: vs.note, entries: vs.entries };
+
+  // The lattice and the intents — present only as far as they are real.
+  let lattice: WorldOS['lattice'] = null;
+  try {
+    const n = await queryOne<{ n: string }>(`SELECT COUNT(*) AS n FROM lattice_nodes`);
+    const e = await queryOne<{ n: string }>(`SELECT COUNT(*) AS n FROM lattice_edges`);
+    if (n) lattice = { nodes: parseInt(n.n, 10), edges: parseInt(e?.n || '0', 10) };
+  } catch { /* tables not migrated yet — absent, not faked */ }
+  let intents: Record<string, number> = {};
+  try {
+    const { intentCounts } = await import('./intents');
+    intents = await intentCounts();
+  } catch { /* absent, not faked */ }
 
   return {
     pulse,
@@ -350,6 +355,8 @@ export async function getWorldOS(): Promise<WorldOS> {
     ledgers,
     mind,
     vault,
+    lattice,
+    intents,
     continuance: {
       constitution: 'The Full Inside-and-Out Manifesto',
       ratified: '2026-07-20',

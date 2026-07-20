@@ -10630,6 +10630,146 @@ setTimeout(() => {
   import('./failure-memory').then(({ seedQuotaLesson }) => seedQuotaLesson()).catch(() => {});
 }, 90 * 1000);
 
+// ═══════════════════════════════════════════════════════════════════════
+// THE CONSTITUTION, PHASES 1–5 (Manifesto §XXIII)
+// Vault · Grounding · Lattice · Identity · MindSpace/Intents
+// Every route below is founder-only: sealed behind the world key.
+// ═══════════════════════════════════════════════════════════════════════
+
+async function requireWorldKey(req: Request, res: Response): Promise<boolean> {
+  const { verifyWorldKey } = await import('./world-os');
+  if (!verifyWorldKey(req.headers['x-world-key'] as string | undefined)) {
+    res.status(401).json({ success: false, error: { code: 'WORLD_SEALED', message: 'This chamber is private.' } });
+    return false;
+  }
+  return true;
+}
+
+// ── Phase 1: THE VAULT ────────────────────────────────────────────────
+app.get('/v1/vault/status', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { vaultStatus } = await import('./vault');
+  res.json({ success: true, data: await vaultStatus() });
+});
+
+app.get('/v1/vault/search', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { searchVault } = await import('./vault');
+  res.json({ success: true, data: { hits: await searchVault(String(req.query.q || ''), 15) } });
+});
+
+app.get('/v1/vault/entry', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { readEntry } = await import('./vault');
+  const content = await readEntry(String(req.query.path || ''));
+  if (content === null) { res.status(404).json({ success: false, error: { code: 'NO_ENTRY', message: 'No such entry.' } }); return; }
+  res.json({ success: true, data: { content } });
+});
+
+app.post('/v1/vault/entry', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { writeEntry } = await import('./vault');
+  const r = await writeEntry({
+    dir: req.body?.dir, slug: String(req.body?.slug || ''), kind: String(req.body?.kind || 'memory'),
+    source: String(req.body?.source || 'human:founder'), title: String(req.body?.title || ''),
+    body: String(req.body?.body || ''), refs: req.body?.refs, confidence: req.body?.confidence,
+  });
+  if ('error' in r) { res.status(400).json({ success: false, error: { code: 'VAULT_REFUSED', message: r.error } }); return; }
+  res.json({ success: true, data: r });
+});
+
+app.post('/v1/vault/amend', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { amendEntry } = await import('./vault');
+  const r = await amendEntry(String(req.body?.path || ''), String(req.body?.correction || ''), String(req.body?.source || 'human:founder'));
+  if ('error' in r) { res.status(400).json({ success: false, error: { code: 'VAULT_REFUSED', message: r.error } }); return; }
+  res.json({ success: true, data: r });
+});
+
+// ── Phase 2: GROUNDING ────────────────────────────────────────────────
+app.get('/v1/grounding/standing', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { groundedStanding } = await import('./grounding');
+  res.json({ success: true, data: { claims: await groundedStanding() } });
+});
+
+// ── Phase 3: THE MIND LATTICE ─────────────────────────────────────────
+app.get('/v1/lattice', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { getLattice } = await import('./lattice');
+  res.json({ success: true, data: await getLattice() });
+});
+
+app.post('/v1/lattice/rebuild', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { rebuildLattice, snapshotTrajectories } = await import('./lattice');
+  const built = await rebuildLattice();
+  const snapped = await snapshotTrajectories();
+  res.json({ success: true, data: { ...built, snapshots: snapped } });
+});
+
+app.get('/v1/lattice/emergence/:key', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { emergenceFor } = await import('./lattice');
+  res.json({ success: true, data: await emergenceFor(String(req.params.key)) });
+});
+
+// ── Phase 5: MINDSPACE + INTENTS ──────────────────────────────────────
+app.post('/v1/mindspace/deliberate', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const situation = String(req.body?.situation || '').trim();
+  if (!situation) { res.status(400).json({ success: false, error: { code: 'EMPTY', message: 'Say something real.' } }); return; }
+  const { deliberate } = await import('./mindspace');
+  res.json({ success: true, data: await deliberate(situation) });
+});
+
+app.get('/v1/intents', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { listIntents, intentCounts } = await import('./intents');
+  res.json({ success: true, data: { intents: await listIntents(), counts: await intentCounts() } });
+});
+
+app.post('/v1/intents/:id/decide', async (req: Request, res: Response) => {
+  if (!(await requireWorldKey(req, res))) return;
+  const { decideIntent } = await import('./intents');
+  const decision = String(req.body?.decision || '');
+  if (!['authorized', 'declined'].includes(decision)) {
+    res.status(400).json({ success: false, error: { code: 'BAD_DECISION', message: 'decision must be authorized|declined.' } }); return;
+  }
+  const r = await decideIntent(String(req.params.id), decision as any, String(req.body?.decidedBy || 'human:founder'));
+  if (!r.ok) { res.status(400).json({ success: false, error: { code: 'INTENT_REFUSED', message: r.error } }); return; }
+  res.json({ success: true, data: { id: req.params.id, status: decision } });
+});
+
+// Boot: the vault seeds itself, identity records this body, the lattice
+// rebuilds from reality — and again every 6 hours.
+setTimeout(async () => {
+  try {
+    const { seedVault } = await import('./vault');
+    await seedVault();
+    const { recordContinuity } = await import('./identity');
+    const { healthSnapshot } = await import('./providers');
+    const mind = healthSnapshot();
+    await recordContinuity(
+      `Boot. Providers configured: ${mind.providers.filter(p => p.configured).map(p => p.name).join(', ') || 'none'}. ` +
+      `Sovereignty: ${mind.sovereignty.score}% (${mind.sovereignty.band}).`
+    );
+    const { rebuildLattice, snapshotTrajectories } = await import('./lattice');
+    await rebuildLattice();
+    await snapshotTrajectories();
+    logger.info('Constitution boot complete: vault seeded, continuity recorded, lattice rebuilt');
+  } catch (err) {
+    logger.warn('Constitution boot partial', { error: (err as Error).message });
+  }
+}, 30 * 1000);
+
+setInterval(() => {
+  import('./lattice').then(async ({ rebuildLattice, snapshotTrajectories }) => {
+    await rebuildLattice();
+    await snapshotTrajectories();
+  }).catch(() => {});
+}, 6 * 60 * 60 * 1000);
+
 // PHASE 3 — Approval-as-training: pending proposals + the human's decision.
 app.get('/v1/agents/proposals', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
