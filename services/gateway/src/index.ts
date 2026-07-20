@@ -115,6 +115,13 @@ const PUBLIC_ROUTES = [
   '/v1/flip-card/',
   // The World — public arrival surface (pulse + hail)
   '/v1/world/',
+  // The constitution organs (Phases 1-5) — nova-hub seals each behind the
+  // world key itself; the gateway only carries them.
+  '/v1/vault/',
+  '/v1/lattice',
+  '/v1/mindspace/',
+  '/v1/intents',
+  '/v1/grounding/',
   // Agent eval leaderboard — public read (Forge Control surface)
   '/v1/agents/evals/leaderboard',
   // Sovereign Mind Layer provider health — public read (Forge Control)
@@ -1543,6 +1550,24 @@ app.get('/v1/platform/stats', (req: Request, res: Response) => {
 
 // The World — public arrival surface (pulse + hail) -> Nova Hub
 app.all('/v1/world/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// The constitution organs (Phases 1-5) -> Nova Hub. Each route is sealed
+// behind the world key INSIDE nova-hub — the gateway is a carrier here.
+app.all('/v1/vault/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/lattice*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/mindspace/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/intents*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+app.all('/v1/grounding/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
