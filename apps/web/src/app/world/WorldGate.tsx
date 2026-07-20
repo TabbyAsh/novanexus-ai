@@ -1,82 +1,126 @@
 'use client';
 
 /**
- * THE WORLD — access gate.
+ * THE DOOR — the world opens to the word, and to nothing else.
  *
- * The World is the founder's cockpit: the backend visualization of the whole
- * system. It was built as a public arrival, but in practice strangers arriving
- * for a tool don't need a 3D cosmos — so it now opens only for the founder /
- * admins. Everyone else meets a quiet door pointing at the working tool.
- *
- * NOTE ON SCOPE: this gates the surface, not the data. /v1/world/pulse is still
- * a public endpoint (it only ever exposed aggregate counts of real activity).
- * Gating that endpoint is a backend change tracked separately.
+ * Nova OS is the founder's private command world (Manifesto §XIII). The gate
+ * asks for the word (WORLD_PASSWORD on the backend), trades it for an
+ * HMAC-signed key that holds for 30 days, and only then lets the world load.
+ * The key is checked server-side on /v1/world/os — this gate is a door,
+ * not a curtain.
  */
 
-import { useEffect, useState } from 'react';
-import Link from 'next/link';
-import { useAuthStore } from '../../lib/store';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import WorldClient from './WorldClient';
+import { WORLD_KEY, getWorldKey } from './world-key';
+
+type DoorState = 'checking' | 'sealed' | 'open';
 
 export default function WorldGate() {
-  const { user, scopes, isAuthenticated, isLoading, loadUser } = useAuthStore();
-  const [checked, setChecked] = useState(false);
+  const [state, setState] = useState<DoorState>('checking');
+  const [word, setWord] = useState('');
+  const [error, setError] = useState<string | null>(null);
+  const [asking, setAsking] = useState(false);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  // A held key is proven against the server, never trusted locally.
+  useEffect(() => {
+    const key = getWorldKey();
+    if (!key) { setState('sealed'); return; }
+    fetch('/api/proxy/v1/world/os', { headers: { 'x-world-key': key } })
+      .then(r => setState(r.ok ? 'open' : 'sealed'))
+      .catch(() => setState('sealed'));
+  }, []);
 
   useEffect(() => {
-    // Resolve the session once on mount; the store starts isLoading: true.
-    loadUser().finally(() => setChecked(true));
-  }, [loadUser]);
+    if (state === 'sealed') inputRef.current?.focus();
+  }, [state]);
 
-  const role = (user as { role?: string } | null)?.role;
-  const isFounder =
-    scopes.includes('ops.admin') || role === 'OWNER' || role === 'ADMIN';
+  const speak = useCallback(async () => {
+    const password = word.trim();
+    if (!password || asking) return;
+    setAsking(true);
+    setError(null);
+    try {
+      const r = await fetch('/api/proxy/v1/world/unlock', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ password }),
+      });
+      const d = await r.json();
+      if (d?.success && d.data?.key) {
+        localStorage.setItem(WORLD_KEY, d.data.key);
+        setState('open');
+      } else {
+        setWord('');
+        setError(d?.error?.message || 'That is not the word.');
+      }
+    } catch {
+      setError('The door is unreachable.');
+    } finally {
+      setAsking(false);
+    }
+  }, [word, asking]);
 
-  if (!checked || isLoading) {
+  if (state === 'checking') {
     return (
-      <div className="min-h-screen bg-black flex items-center justify-center">
-        <div className="text-white/30 text-sm tracking-[0.3em] uppercase animate-pulse">
+      <div className="fixed inset-0 flex items-center justify-center" style={{ background: '#01030a' }}>
+        <div className="text-[12px] tracking-[0.35em] uppercase animate-pulse" style={{ color: '#3d5266' }}>
           Listening
         </div>
       </div>
     );
   }
 
-  if (isAuthenticated && isFounder) {
-    return <WorldClient />;
-  }
+  if (state === 'open') return <WorldClient />;
 
+  // The sealed door — void, wordmark, one question.
   return (
-    <div className="min-h-screen bg-black text-white flex flex-col items-center justify-center px-6 text-center">
-      <div className="max-w-md space-y-6">
-        <div className="w-12 h-12 mx-auto rounded-xl bg-gradient-to-br from-emerald-500 to-green-600 flex items-center justify-center font-bold">
-          N
+    <div
+      className="fixed inset-0 flex flex-col items-center justify-center px-6"
+      style={{ background: 'radial-gradient(ellipse at 50% 42%, #060d1a 0%, #01030a 70%)' }}
+    >
+      <div className="text-[12px] tracking-[0.5em] uppercase mb-14 select-none" style={{ color: '#7fa6c2' }}>
+        novanexus
+      </div>
+
+      <div className="w-full max-w-sm">
+        <div className="text-center text-[13px] leading-relaxed mb-8" style={{ color: '#5d7891' }}>
+          This chamber is private.
         </div>
 
-        <h1 className="text-2xl font-semibold tracking-tight">This chamber is private.</h1>
-
-        <p className="text-white/50 text-sm leading-relaxed">
-          The World is Nova&apos;s operating floor — the founder&apos;s cockpit, not a
-          showroom. What it watches over is public, and it works:
-        </p>
-
-        <div className="flex flex-col sm:flex-row gap-3 justify-center pt-1">
-          <Link
-            href="/flip-calculator"
-            className="px-6 py-3 rounded-xl bg-gradient-to-r from-emerald-600 to-green-600 hover:from-emerald-500 hover:to-green-500 text-sm font-semibold transition"
+        <div
+          className="flex items-center gap-3 rounded-full px-5 py-3 backdrop-blur-sm"
+          style={{
+            border: '1px solid rgba(150, 220, 255, 0.22)',
+            background: 'rgba(4, 10, 20, 0.55)',
+            boxShadow: '0 0 24px rgba(125, 216, 255, 0.08), inset 0 0 18px rgba(125, 216, 255, 0.03)',
+          }}
+        >
+          <input
+            ref={inputRef}
+            type="password"
+            value={word}
+            onChange={e => setWord(e.target.value)}
+            onKeyDown={e => { if (e.key === 'Enter') speak(); }}
+            placeholder="Speak the word."
+            autoComplete="current-password"
+            className="flex-1 bg-transparent outline-none text-[14px]"
+            style={{ color: '#dbeefb', caretColor: '#7dd8ff' }}
+          />
+          <button
+            onClick={speak}
+            disabled={asking || !word.trim()}
+            className="text-[11px] tracking-[0.25em] uppercase disabled:opacity-30"
+            style={{ color: '#7dd8ff' }}
           >
-            Open the Flip Calculator
-          </Link>
-          <Link
-            href="/login"
-            className="px-6 py-3 rounded-xl bg-white/5 hover:bg-white/10 border border-white/10 text-sm transition"
-          >
-            Sign in
-          </Link>
+            {asking ? '· · ·' : 'enter'}
+          </button>
         </div>
 
-        <p className="text-xs text-white/25 pt-2">
-          Paste real sold prices, get an honest verdict. Free, no account.
-        </p>
+        <div className="h-6 mt-4 text-center text-[12px]" style={{ color: '#8a5a52' }}>
+          {error}
+        </div>
       </div>
     </div>
   );

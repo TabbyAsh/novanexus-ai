@@ -17,7 +17,8 @@ const logger = createLogger('substrate');
 
 export type ArtifactKind =
   | 'decision_card' | 'mission_report' | 'anomaly'
-  | 'hypothesis' | 'outcome' | 'correction' | 'audit';
+  | 'hypothesis' | 'outcome' | 'correction' | 'audit'
+  | 'non_arrival';
 
 export interface ArtifactInput {
   kind: ArtifactKind;
@@ -43,6 +44,11 @@ const VALIDATORS: Record<ArtifactKind, (p: Record<string, unknown>) => string | 
   outcome: p => (p.result === undefined ? 'outcome requires payload.result' : null),
   correction: p => (!p.reason ? 'correction requires payload.reason' : null),
   audit: p => (!p.finding ? 'audit requires payload.finding' : null),
+  // §XXI — what did not reach the citizen, and what carried the work instead.
+  non_arrival: p =>
+    (!p.absorbed || !p.carried_by
+      ? 'non_arrival requires payload.absorbed (what failed silently) and payload.carried_by (what carried the work)'
+      : null),
 };
 
 export async function writeArtifact(a: ArtifactInput): Promise<string | null> {

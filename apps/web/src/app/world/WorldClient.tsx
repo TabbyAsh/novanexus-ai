@@ -13,6 +13,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import dynamic from 'next/dynamic';
 import type { Beat, NovaMode, SwarmEventInput, NebulaData, WorldStage } from '../../components/world/ArrivalScene';
+import { WORLD_KEY, getWorldKey } from './world-key';
 
 const ArrivalScene = dynamic(() => import('../../components/world/ArrivalScene'), { ssr: false });
 
@@ -43,6 +44,43 @@ function getVisitorId(): string {
 }
 
 interface MyAgent { id: string; name: string; symbol: string | null; latest_finding: string | null }
+
+// ── NOVA OS (§XIII) — the deep state, founder's eyes only ─────────────
+interface OSBlockage { sector: string; code: string; label: string; unlock: string }
+interface OSAgent {
+  id: string; name: string; mission: string; symbol: string | null; sector: string;
+  status: string; lastRunAt: string | null; findings: number; flares: number; latestFinding: string | null;
+}
+interface OSSociety { id: string; name: string; role: string; writes: number; lastWriteAt: string | null }
+interface WorldOS {
+  blockages: OSBlockage[];
+  scars: { anomalies14d: number; failedRuns7d: number; recent: Array<{ observation: string; at: string }> };
+  agents: OSAgent[];
+  society: OSSociety[];
+  ledgers: {
+    truth: { artifacts: number; byKind: Record<string, number> };
+    trust: { predictionsLogged: number; predictionsResolved: number; meanBrier: number | null };
+    event: { total: number; last24h: number };
+    nonArrival: { absorbed: number; refusals: number; recent: Array<{ absorbed: string; carriedBy: string; at: string }> };
+  };
+  mind: {
+    providers: Array<{ name: string; configured: boolean }>;
+    capableOfLLM: boolean;
+    sovereignty: { score: number; band: string; rationale: string };
+  };
+  vault: { mounted: boolean; note: string };
+  continuance: { constitution: string; ratified: string; doorHasWord: boolean; laws: number };
+}
+
+function relTime(ts: string | null): string {
+  if (!ts) return 'never';
+  const mins = Math.floor((Date.now() - new Date(ts).getTime()) / 60000);
+  if (mins < 1) return 'now';
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 48) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
 
 // Evaluated once per page load, before the marker is written — StrictMode
 // re-runs effects in dev, and she must never claim memory she does not have.
@@ -131,6 +169,30 @@ export default function WorldClient() {
     return () => clearInterval(iv);
   }, [fetchPulse]);
 
+  // ── NOVA OS — the deep state. The key is proven server-side on every
+  // call; if it dies, the world seals itself and returns you to the door.
+  const [os, setOs] = useState<WorldOS | null>(null);
+  const fetchOS = useCallback(async () => {
+    const key = getWorldKey();
+    if (!key) return;
+    try {
+      const r = await fetch('/api/proxy/v1/world/os', { headers: { 'x-world-key': key } });
+      if (r.status === 401) {
+        localStorage.removeItem(WORLD_KEY);
+        window.location.reload(); // sealed — back to the door
+        return;
+      }
+      const d = await r.json();
+      if (d?.success && d.data) setOs(d.data);
+    } catch { /* the deep state goes dark; the world keeps breathing on the pulse */ }
+  }, []);
+
+  useEffect(() => {
+    fetchOS();
+    const iv = setInterval(fetchOS, 45_000);
+    return () => clearInterval(iv);
+  }, [fetchOS]);
+
   // ── First words — only real numbers, only when present ──────────────
   const greet = useCallback(() => {
     setMessages(prev => {
@@ -205,32 +267,35 @@ export default function WorldClient() {
     }));
   }, [pulse]);
 
-  // ── Nebulae — light earned from real data ────────────────────────────
+  // ── Nebulae — light earned from real data; blockages dim honestly ────
   const nebulae: NebulaData[] = useMemo(() => {
     const m = pulse?.sectors.market ?? null;
     const b = pulse?.sectors.bazaar ?? null;
     const f = pulse?.sectors.forge ?? null;
+    const blocked = (sector: string) => os?.blockages.some(x => x.sector === sector) ?? false;
+    const mark = (sub: string | null, sector: string) =>
+      sub === null ? null : blocked(sector) ? `${sub} · ⊘ blocked` : sub;
     return [
       {
         key: 'market', label: 'The Market', href: '/market',
-        sub: m ? `${m.symbol} $${m.price.toFixed(2)} · ${m.changePct >= 0 ? '+' : ''}${m.changePct.toFixed(2)}% · session ${m.session}` : null,
+        sub: mark(m ? `${m.symbol} $${m.price.toFixed(2)} · ${m.changePct >= 0 ? '+' : ''}${m.changePct.toFixed(2)}% · session ${m.session}` : null, 'market'),
         active: m ? (m.session === 'open' ? 0.9 : 0.4) : 0.08,
         weather: m ? Math.max(-1, Math.min(1, m.changePct / 2)) : 0,
       },
       {
         key: 'bazaar', label: 'The Bazaar', href: '/bazaar',
-        sub: b ? `${b.flipsTracked} items tracked · ${b.appraised24h} appraised today` : null,
+        sub: mark(b ? `${b.flipsTracked} items tracked · ${b.appraised24h} appraised today` : null, 'bazaar'),
         active: b ? Math.min(1, 0.3 + b.appraised24h * 0.2) : 0.08,
         weather: 0,
       },
       {
         key: 'forge', label: 'The Forge', href: '/forge',
-        sub: f ? `${f.cardsTotal} cards forged · ${f.forged24h} today` : null,
+        sub: mark(f ? `${f.cardsTotal} cards forged · ${f.forged24h} today` : null, 'forge'),
         active: f ? Math.min(1, 0.3 + f.forged24h * 0.15) : 0.08,
         weather: 0,
       },
     ];
-  }, [pulse]);
+  }, [pulse, os]);
 
   if (reduced === null) return <div className="fixed inset-0" style={{ background: '#01030a' }} />;
 
@@ -322,39 +387,131 @@ export default function WorldClient() {
         </div>
       )}
 
-      {/* The pulse ledger — the swarm's work, legible. Real events only. */}
+      {/* RIGHT COLUMN — pulse · ledgers · blockages. Real rows only (§XIII). */}
       {open && (
-        <div className="absolute right-4 top-16 w-64 hidden lg:block select-none" style={{ pointerEvents: 'none' }}>
-          <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
-            {pulseDark ? 'the pulse is dark from here' : 'live pulse'}
-          </div>
-          {!pulseDark && pulse?.pulse.slice(0, 8).map((e, i) => (
-            <div key={e.id} className="text-[11px] leading-relaxed truncate" style={{ color: '#5d7891', opacity: 1 - i * 0.11 }}>
-              {e.label}
+        <div className="absolute right-4 top-16 w-64 hidden lg:block select-none space-y-5" style={{ pointerEvents: 'none' }}>
+          <div>
+            <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
+              {pulseDark ? 'the pulse is dark from here' : 'live pulse'}
             </div>
-          ))}
-          {!pulseDark && pulse && pulse.pulse.length === 0 && (
-            <div className="text-[11px]" style={{ color: '#5d7891' }}>
-              Quiet. The systems are young — every light here will be earned.
+            {!pulseDark && pulse?.pulse.slice(0, 7).map((e, i) => (
+              <div key={e.id} className="text-[11px] leading-relaxed truncate" style={{ color: '#5d7891', opacity: 1 - i * 0.12 }}>
+                {e.label}
+              </div>
+            ))}
+            {!pulseDark && pulse && pulse.pulse.length === 0 && (
+              <div className="text-[11px]" style={{ color: '#5d7891' }}>
+                Quiet. The systems are young — every light here will be earned.
+              </div>
+            )}
+          </div>
+
+          {os && (
+            <div>
+              <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
+                the ledgers
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{ color: '#5d7891' }}>
+                truth — {os.ledgers.truth.artifacts} artifacts on the substrate
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{ color: '#5d7891' }}>
+                trust — {os.ledgers.trust.predictionsResolved} of {os.ledgers.trust.predictionsLogged} claims scored
+                {os.ledgers.trust.meanBrier !== null ? ` · brier ${os.ledgers.trust.meanBrier}` : ''}
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{ color: '#5d7891' }}>
+                events — {os.ledgers.event.last24h} today of {os.ledgers.event.total}
+              </div>
+              <div className="text-[11px] leading-relaxed" style={{ color: '#5d7891' }}>
+                non-arrival — {os.ledgers.nonArrival.absorbed} absorbed · {os.ledgers.nonArrival.refusals} honest refusals
+              </div>
+              {os.ledgers.nonArrival.recent[0] && (
+                <div className="text-[10px] leading-snug italic mt-1 truncate" style={{ color: '#4d6a80' }}>
+                  {os.ledgers.nonArrival.recent[0].absorbed}
+                </div>
+              )}
+            </div>
+          )}
+
+          {os && os.blockages.length > 0 && (
+            <div>
+              <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#6b4a35' }}>
+                blockages — real constraints
+              </div>
+              {os.blockages.slice(0, 6).map(b => (
+                <div key={b.code} className="text-[10px] leading-snug mb-1.5" style={{ color: '#c98a5e' }}>
+                  ⊘ {b.label}
+                </div>
+              ))}
             </div>
           )}
         </div>
       )}
 
-      {/* YOUR AGENTS — they remain (canon §I) */}
-      {open && myAgents.length > 0 && (
-        <div className="absolute left-4 top-16 w-60 select-none" style={{ pointerEvents: 'none' }}>
-          <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
-            your agents
-          </div>
-          {myAgents.map(a => (
-            <div key={a.id} className="mb-2">
-              <div className="text-[12px]" style={{ color: '#9be8ff' }}>◆ {a.name}</div>
-              {a.latest_finding && (
-                <div className="text-[10px] leading-snug" style={{ color: '#5d7891' }}>{a.latest_finding}</div>
+      {/* LEFT COLUMN — the watchers · the society · scars. All earned. */}
+      {open && (
+        <div className="absolute left-4 top-16 w-64 hidden lg:block select-none space-y-5" style={{ pointerEvents: 'none' }}>
+          {(os?.agents.length || myAgents.length) ? (
+            <div>
+              <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
+                the watchers
+              </div>
+              {(os?.agents.slice(0, 5) || []).map(a => (
+                <div key={a.id} className="mb-2">
+                  <div className="text-[12px]" style={{ color: a.status === 'ACTIVE' ? '#9be8ff' : '#4d6a80' }}>
+                    ◆ {a.name}{a.symbol ? ` · ${a.symbol}` : ''}
+                    <span className="text-[9px] tracking-[0.2em] uppercase ml-2" style={{ color: '#3d5266' }}>
+                      {a.status === 'ACTIVE' ? relTime(a.lastRunAt) : a.status.toLowerCase()}
+                    </span>
+                  </div>
+                  <div className="text-[10px] leading-snug truncate" style={{ color: '#5d7891' }}>
+                    {a.latestFinding || `${a.findings} findings · ${a.flares} flares`}
+                  </div>
+                </div>
+              ))}
+              {!os && myAgents.map(a => (
+                <div key={a.id} className="mb-2">
+                  <div className="text-[12px]" style={{ color: '#9be8ff' }}>◆ {a.name}</div>
+                  {a.latest_finding && (
+                    <div className="text-[10px] leading-snug" style={{ color: '#5d7891' }}>{a.latest_finding}</div>
+                  )}
+                </div>
+              ))}
+            </div>
+          ) : null}
+
+          {os && os.society.length > 0 && (
+            <div>
+              <div className="text-[10px] tracking-[0.3em] uppercase mb-2" style={{ color: '#3d5266' }}>
+                the society — presence is written
+              </div>
+              {os.society.slice(0, 6).map(s => (
+                <div key={s.id} className="mb-1.5">
+                  <div className="text-[11px]" style={{ color: '#7fb8d9' }}>
+                    ◇ {s.name}
+                    <span className="text-[9px] ml-2" style={{ color: '#3d5266' }}>
+                      {s.writes} writes · {relTime(s.lastWriteAt)}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {os && (os.scars.anomalies14d > 0 || os.scars.failedRuns7d > 0) && (
+            <div>
+              <div className="text-[10px] tracking-[0.3em] uppercase mb-1" style={{ color: '#5a3d44 ' }}>
+                scars
+              </div>
+              <div className="text-[10px] leading-snug" style={{ color: '#8a5a52' }}>
+                {os.scars.anomalies14d} anomalies held 14d · {os.scars.failedRuns7d} failed runs 7d
+              </div>
+              {os.scars.recent[0] && (
+                <div className="text-[10px] leading-snug italic mt-1 truncate" style={{ color: '#6b4a4a' }}>
+                  {os.scars.recent[0].observation}
+                </div>
               )}
             </div>
-          ))}
+          )}
         </div>
       )}
 
@@ -362,6 +519,21 @@ export default function WorldClient() {
       {open && pulse?.standing && (
         <div className="absolute left-4 bottom-4 text-[10px] tracking-widest uppercase" style={{ color: '#3d5266' }}>
           {pulse.standing.users} operators · {pulse.standing.agentRunsCompleted} runs completed
+        </div>
+      )}
+
+      {/* THE MIND · THE VAULT · THE CONTINUANCE — bottom-right, quiet truth */}
+      {open && os && (
+        <div className="absolute right-4 bottom-4 text-right hidden md:block select-none" style={{ pointerEvents: 'none' }}>
+          <div className="text-[10px] tracking-widest uppercase" style={{ color: os.mind.capableOfLLM ? '#5d7891' : '#8a5a52' }}>
+            mind {os.mind.sovereignty.band} · {os.mind.sovereignty.score}% sovereign · {os.mind.providers.filter(p => p.configured).length}/{os.mind.providers.length} providers lit
+          </div>
+          <div className="text-[10px] tracking-widest uppercase" style={{ color: os.vault.mounted ? '#5d7891' : '#8a5a52' }}>
+            vault {os.vault.mounted ? os.vault.note : 'unmounted'}
+          </div>
+          <div className="text-[10px] tracking-widest uppercase" style={{ color: '#3d5266' }}>
+            the continuance · ratified {os.continuance.ratified}
+          </div>
         </div>
       )}
     </div>

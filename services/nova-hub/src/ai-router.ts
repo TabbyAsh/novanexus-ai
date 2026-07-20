@@ -154,6 +154,12 @@ export async function route(req: AIRequest, tier: TaskTier, prefer?: ProviderNam
   if (!chain.providerUnavailable && chain.content && chain.provider) {
     lastRun = { provider: chain.provider, at: new Date().toISOString(), tier };
     import('./candle').then(({ reportMindHealth }) => reportMindHealth(true)).catch(() => {});
+    // §XXI: if earlier providers failed before this one carried the work,
+    // that absorbed failure goes to the Ledger of Non-Arrival.
+    if (chain.attempts.length > 1) {
+      const carried = chain.provider;
+      import('./failure-memory').then(({ recordAbsorbedFailover }) => recordAbsorbedFailover(tier, chain.attempts, carried)).catch(() => {});
+    }
     logger.info('LLM routed', { provider: chain.provider, tier, attempts: chain.attempts });
   } else {
     import('./candle').then(({ reportMindHealth }) => reportMindHealth(false)).catch(() => {});

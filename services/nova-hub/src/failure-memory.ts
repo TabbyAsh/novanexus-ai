@@ -41,6 +41,43 @@ export async function recordProviderUnavailable(tier: string, attempts: Array<{ 
   logger.warn('Sovereignty failure recorded', { tier, quotaDark });
 }
 
+// ── THE LEDGER OF NON-ARRIVAL (Manifesto §XXI) ────────────────────────
+// Records what did NOT reach the citizen: a provider failed and another
+// route carried the work. Quiet and factual — one entry per failure
+// signature per hour, so a flaky provider produces a record, not a flood.
+
+const nonArrivalSeen = new Map<string, number>();
+const NON_ARRIVAL_COOLDOWN_MS = 60 * 60 * 1000;
+
+export async function recordAbsorbedFailover(
+  tier: string,
+  attempts: Array<{ name: string; outcome: string }>,
+  carriedBy: string
+): Promise<void> {
+  // Only real absorbed failures count — 'absent' (unconfigured) is not a failure.
+  const failed = attempts.filter(a => a.name !== carriedBy && (a.outcome === 'quota' || a.outcome === 'error'));
+  if (failed.length === 0) return;
+
+  const signature = `${failed.map(f => `${f.name}:${f.outcome}`).sort().join(',')}→${carriedBy}`;
+  const now = Date.now();
+  const last = nonArrivalSeen.get(signature) || 0;
+  if (now - last < NON_ARRIVAL_COOLDOWN_MS) return;
+  nonArrivalSeen.set(signature, now);
+
+  await writeArtifact({
+    kind: 'non_arrival',
+    authorType: 'system',
+    authorId: 'continuance',
+    payload: {
+      absorbed: `Provider failure on a '${tier}' task: ${failed.map(f => `${f.name} (${f.outcome})`).join(', ')}.`,
+      carried_by: carriedBy,
+      note: 'The work arrived. The failure did not reach the citizen.',
+      tier,
+    },
+  }).catch(() => {});
+  logger.info('Non-arrival recorded', { signature });
+}
+
 // Seed the founding lesson explicitly (idempotent-ish; called once on boot).
 export async function seedQuotaLesson(): Promise<void> {
   const existing = await readArtifacts({ kind: 'anomaly', limit: 50 }).catch(() => []);

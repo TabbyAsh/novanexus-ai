@@ -10835,6 +10835,50 @@ app.post('/v1/world/hail', async (req: Request, res: Response) => {
   }
 });
 
+// ── NOVA OS — the private command world (Manifesto §XIII) ─────────────────────
+// The World is founder-only now. The door opens to the word (WORLD_PASSWORD)
+// and to nothing else; the key it issues is HMAC-signed and revoked wholesale
+// by rotating the word. Fail closed: no word set → the world stays sealed.
+
+app.post('/v1/world/unlock', async (req: Request, res: Response) => {
+  try {
+    const { unlockWorld, unlockAllowed, doorHasWord } = await import('./world-os');
+    const ip = (req.headers['x-forwarded-for'] as string)?.split(',')[0]?.trim() || req.ip || 'unknown';
+    if (!unlockAllowed(ip)) {
+      res.status(429).json({ success: false, error: { code: 'DOOR_LIMIT', message: 'The door is patient. Return in a quarter hour.' } });
+      return;
+    }
+    if (!doorHasWord()) {
+      res.status(503).json({ success: false, error: { code: 'NO_WORD', message: 'The door has no word set. WORLD_PASSWORD is absent on this node.' } });
+      return;
+    }
+    const password = String(req.body?.password || '');
+    const unlocked = unlockWorld(password);
+    if (!unlocked) {
+      res.status(401).json({ success: false, error: { code: 'WRONG_WORD', message: 'That is not the word.' } });
+      return;
+    }
+    res.json({ success: true, data: unlocked });
+  } catch (err) {
+    logger.error('World unlock failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'WORLD_DARK', message: 'Unavailable.' } });
+  }
+});
+
+app.get('/v1/world/os', async (req: Request, res: Response) => {
+  try {
+    const { verifyWorldKey, getWorldOS } = await import('./world-os');
+    if (!verifyWorldKey(req.headers['x-world-key'] as string | undefined)) {
+      res.status(401).json({ success: false, error: { code: 'WORLD_SEALED', message: 'This chamber is private.' } });
+      return;
+    }
+    res.json({ success: true, data: await getWorldOS() });
+  } catch (err) {
+    logger.error('World OS failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'WORLD_DARK', message: 'The state is unavailable.' } });
+  }
+});
+
 // ── GET /v1/admin/users ───────────────────────────────────────────────────────
 // Founder-only user list with outcome value per user.
 // Requires ops.admin scope (enforced at gateway).
