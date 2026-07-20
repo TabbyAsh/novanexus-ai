@@ -624,6 +624,18 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
       headers['Authorization'] = req.headers.authorization;
     }
 
+    // The world key (Nova OS door) must survive the hop to nova-hub.
+    if (req.headers['x-world-key']) {
+      headers['X-World-Key'] = req.headers['x-world-key'] as string;
+    }
+
+    // True client IP — downstream per-IP rate limits (hail, unlock) are
+    // meaningless if every request arrives wearing the gateway's address.
+    const xff = (req.headers['x-forwarded-for'] as string) || req.ip;
+    if (xff) {
+      headers['X-Forwarded-For'] = xff;
+    }
+
     // Add user context headers
     if (req.auth) {
       headers['X-User-ID'] = req.auth.userId;
