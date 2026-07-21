@@ -86,6 +86,18 @@ describe('Phase 1 — The Vault', () => {
     }
   });
 
+  it('flags a non-absolute VAULT_DIR as unmounted, not as a working vault', async () => {
+    // The 2026-07-20 incident: a shell mangled '/vault' into a Windows path,
+    // the vault wrote happily into ephemeral storage, and every memory died
+    // on the next deploy while status still read "mounted".
+    const vault = await import('../vault');
+    process.env.VAULT_DIR = 'C:/Program Files/Git/vault';
+    expect(vault.vaultRootProblem()).toMatch(/absolute/);
+    const st = await vault.vaultStatus();
+    expect(st.mounted).toBe(false);
+    process.env.VAULT_DIR = dir;
+  });
+
   it('records continuity into the identity file', async () => {
     const vault = await import('../vault');
     const identity = await import('../identity');

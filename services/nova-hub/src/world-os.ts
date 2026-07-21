@@ -153,7 +153,11 @@ const SOCIETY_NAMES: Record<string, { name: string; role: string }> = {
   'nova': { name: 'Nova', role: 'the coordinating intelligence' },
 };
 
-function detectBlockages(pulse: WorldPulse, mind: ReturnType<typeof healthSnapshot>): Blockage[] {
+function detectBlockages(
+  pulse: WorldPulse,
+  mind: ReturnType<typeof healthSnapshot>,
+  vaultProblem: string | null
+): Blockage[] {
   const out: Blockage[] = [];
 
   if (!process.env.EBAY_CLIENT_ID || !process.env.EBAY_CLIENT_SECRET) {
@@ -196,6 +200,12 @@ function detectBlockages(pulse: WorldPulse, mind: ReturnType<typeof healthSnapsh
       sector: 'core', code: 'VAULT_UNMOUNTED',
       label: 'No durable plain-text Vault on this node — memory lives only in the derived database',
       unlock: 'Mount a Railway volume and set VAULT_DIR (Manifesto Phase 1)',
+    });
+  } else if (vaultProblem) {
+    out.push({
+      sector: 'core', code: 'VAULT_MISCONFIGURED',
+      label: `The Vault path is not durable — ${vaultProblem}`,
+      unlock: 'Set VAULT_DIR to the absolute volume mount path (e.g. /vault)',
     });
   }
   return out;
@@ -329,8 +339,9 @@ export async function getWorldOS(): Promise<WorldOS> {
   } catch {}
 
   // The Vault — honest status via the organ itself (§VII).
-  const { vaultStatus } = await import('./vault');
+  const { vaultStatus, vaultRootProblem } = await import('./vault');
   const vs = await vaultStatus();
+  const vaultProblem = vaultRootProblem();
   const vault: WorldOS['vault'] = { mounted: vs.mounted, note: vs.note, entries: vs.entries };
 
   // The lattice and the intents — present only as far as they are real.
@@ -348,7 +359,7 @@ export async function getWorldOS(): Promise<WorldOS> {
 
   return {
     pulse,
-    blockages: detectBlockages(pulse, mind),
+    blockages: detectBlockages(pulse, mind, vaultProblem),
     scars,
     agents,
     society,

@@ -32,6 +32,20 @@ export function vaultRoot(): string | null {
   return process.env.VAULT_DIR || null;
 }
 
+/** A misconfigured root is not a vault. VAULT_DIR must be an ABSOLUTE path
+ *  or the Vault silently lands in ephemeral container storage and every
+ *  memory dies with the next deploy — which is exactly what happened on
+ *  2026-07-20 when a shell mangled '/vault' into 'C:/Program Files/Git/vault'.
+ *  Distance to Notice (§XX): this failure now announces itself. */
+export function vaultRootProblem(): string | null {
+  const root = vaultRoot();
+  if (!root) return null; // absent is honest; that is a different state
+  if (!path.isAbsolute(root) || /^[A-Za-z]:/.test(root)) {
+    return `VAULT_DIR is not an absolute path on this platform ('${root}') — memory would live in ephemeral storage and die on the next deploy.`;
+  }
+  return null;
+}
+
 function safeSlug(s: string): string {
   return s.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 80) || 'entry';
 }
@@ -209,6 +223,11 @@ export async function vaultStatus(): Promise<{
   if (!root) {
     return { mounted: false, root: null, entries: 0, byDir: {}, lastWriteAt: null,
       note: 'Not mounted on this node. The database is a derived artifact, not the Vault.' };
+  }
+  const problem = vaultRootProblem();
+  if (problem) {
+    // Writable but doomed is NOT mounted. Say so.
+    return { mounted: false, root, entries: 0, byDir: {}, lastWriteAt: null, note: problem };
   }
   try {
     const files = await walk(root);
