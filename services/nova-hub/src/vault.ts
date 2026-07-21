@@ -120,20 +120,32 @@ export async function writeEntry(e: VaultEntryInput): Promise<{ path: string } |
   }
 }
 
+/** Containment, done correctly: resolve, then ask path.relative whether the
+ *  result is still beneath the root. The older prefix-string form was subtly
+ *  wrong and silently swallowed every read on the mounted volume. */
+function resolveInside(root: string, relPath: string): string | null {
+  const base = path.resolve(root);
+  const target = path.resolve(base, relPath);
+  const rel = path.relative(base, target);
+  if (rel === '' || rel.startsWith('..') || path.isAbsolute(rel)) return null;
+  return target;
+}
+
 export async function amendEntry(
   relPath: string, correction: string, source: string
 ): Promise<{ path: string } | { error: string }> {
   const root = vaultRoot();
   if (!root) return { error: 'Vault not mounted' };
-  const filePath = path.join(root, relPath);
-  if (!filePath.startsWith(path.resolve(root))) return { error: 'Path escapes the vault' };
+  const filePath = resolveInside(root, relPath);
+  if (!filePath) return { error: 'Path escapes the vault' };
   try {
     await fs.access(filePath);
     const block = `\n## Correction (${new Date().toISOString()}, ${source})\n\n${correction.trim()}\n`;
     await fs.appendFile(filePath, block);
     logger.info('Vault entry amended', { path: relPath });
     return { path: relPath };
-  } catch {
+  } catch (err) {
+    logger.warn('Vault amend failed', { path: relPath, error: (err as Error).message });
     return { error: `No such entry: ${relPath}` };
   }
 }
@@ -141,9 +153,14 @@ export async function amendEntry(
 export async function readEntry(relPath: string): Promise<string | null> {
   const root = vaultRoot();
   if (!root) return null;
-  const filePath = path.join(root, relPath);
-  if (!filePath.startsWith(path.resolve(root))) return null;
-  try { return await fs.readFile(filePath, 'utf8'); } catch { return null; }
+  const filePath = resolveInside(root, relPath);
+  if (!filePath) { logger.warn('Vault read refused: outside root', { path: relPath }); return null; }
+  try {
+    return await fs.readFile(filePath, 'utf8');
+  } catch (err) {
+    logger.warn('Vault read failed', { path: relPath, resolved: filePath, error: (err as Error).message });
+    return null;
+  }
 }
 
 async function walk(dir: string, out: string[] = []): Promise<string[]> {

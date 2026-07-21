@@ -89,14 +89,15 @@ export function _clearIdentityCache(): void { cache = null; }
 export async function recordContinuity(note: string): Promise<void> {
   if (!vaultRoot()) return;
   const rel = 'identity/continuity.md';
-  const existing = await readEntry(rel);
-  if (!existing) {
-    await writeEntry({
-      dir: 'identity', slug: 'continuity', kind: 'identity', source: 'system:identity',
-      title: 'Autobiographical continuity — the bodies that carried her',
-      body: 'Each entry below records a boot of NovaCore and the language organs available to it. The identity is the continuity across these entries, not any single one.',
-    }).catch(() => {});
-  }
-  await amendEntry(rel, note, 'system:identity').catch(() => {});
-  logger.info('Continuity recorded');
+  // Create-if-absent is a write attempt, not a read decision: writeEntry
+  // refuses duplicates on its own, so the boot note is never lost to a
+  // failed existence check.
+  await writeEntry({
+    dir: 'identity', slug: 'continuity', kind: 'identity', source: 'system:identity',
+    title: 'Autobiographical continuity — the bodies that carried her',
+    body: 'Each entry below records a boot of NovaCore and the language organs available to it. The identity is the continuity across these entries, not any single one.',
+  }).catch(() => {});
+  const r = await amendEntry(rel, note, 'system:identity').catch(() => ({ error: 'amend threw' }));
+  if ('error' in r) logger.warn('Continuity NOT recorded', { reason: r.error });
+  else logger.info('Continuity recorded');
 }

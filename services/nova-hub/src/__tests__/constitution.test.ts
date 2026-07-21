@@ -71,6 +71,28 @@ describe('Phase 1 — The Vault', () => {
   it('escaping the vault root is refused', async () => {
     const vault = await import('../vault');
     expect(await vault.readEntry('../../etc/passwd')).toBeNull();
+    expect(await vault.readEntry('/etc/passwd')).toBeNull();
+  });
+
+  it('reads back every seeded entry by its listed path', async () => {
+    // Regression: the old prefix-string containment check silently nulled
+    // EVERY read on the mounted volume in production while search worked.
+    const vault = await import('../vault');
+    await vault.seedVault();
+    const paths = await vault.listEntries();
+    expect(paths.length).toBeGreaterThan(3);
+    for (const p of paths) {
+      expect(await vault.readEntry(p)).not.toBeNull();
+    }
+  });
+
+  it('records continuity into the identity file', async () => {
+    const vault = await import('../vault');
+    const identity = await import('../identity');
+    await vault.seedVault();
+    await identity.recordContinuity('Boot. Providers configured: test.');
+    const raw = await vault.readEntry('identity/continuity.md');
+    expect(raw).toContain('Boot. Providers configured: test.');
   });
 });
 
