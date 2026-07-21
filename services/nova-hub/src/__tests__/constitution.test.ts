@@ -142,6 +142,23 @@ describe('Phase 4 — Identity is provider-independent', () => {
   });
 });
 
+describe('Phase 5 — Intelligence Never Executes (§XI)', () => {
+  it('refuses every non-human decider before it ever reaches the database', async () => {
+    const { decideIntent } = await import('../intents');
+    for (const who of ['agent:the-smith', 'nova', 'system:auto', 'mindspace', '']) {
+      const r = await decideIntent('any-id', 'authorized', who);
+      expect(r.ok).toBe(false);
+      expect(r.error).toMatch(/Only a human/);
+    }
+  });
+
+  it('exports no execute path from the intelligence', async () => {
+    const intents = await import('../intents');
+    expect(Object.keys(intents)).not.toContain('execute');
+    expect(Object.keys(intents)).not.toContain('executeIntent');
+  });
+});
+
 describe('Phase 5 — the decision shape is law', () => {
   const valid = {
     happening: 'the flip pipeline is stalled on missing comps',
