@@ -13086,6 +13086,10 @@ app.post('/v1/cards/intake', async (req: Request, res: Response) => {
       data: {
         cardId,
         content: result.content, provider: result.provider, free: result.free,
+        // TRUST LAW: a template is not a reading of your situation. The
+        // deterministic fallback returns confident prose that never saw the
+        // user's words — the surface MUST be able to tell them apart.
+        personalized: result.provider !== 'deterministic',
         regime: result.regime, regimeRationale: result.regimeRationale,
       },
     });

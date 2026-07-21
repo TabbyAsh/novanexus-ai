@@ -60,6 +60,7 @@ function HeroSection() {
   const [situation, setSituation] = useState('');
   const [loading, setLoading] = useState(false);
   const [card, setCard] = useState<string | null>(null);
+  const [personalized, setPersonalized] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [topTrend, setTopTrend] = useState<string | null>(null);
 
@@ -93,7 +94,13 @@ function HeroSection() {
         body: JSON.stringify({ context }),
       });
       const d = await res.json();
-      if (d.success) { setCard(d.data?.content || null); }
+      if (d.success) {
+        setCard(d.data?.content || null);
+        // Honesty rail: when Nova's reasoning is dark the backend returns a
+        // generic playbook that never read the situation. Say so plainly —
+        // seven testers hit this and correctly concluded "it doesn't work."
+        setPersonalized(d.data?.personalized !== false);
+      }
       else { setError('Could not generate your card. Try describing your situation in a bit more detail.'); }
     } catch { setError('Network error. Please try again.'); }
     finally { setLoading(false); }
@@ -202,12 +209,21 @@ function HeroSection() {
                 <motion.div
                   initial={{ opacity: 0, y: 12 }}
                   animate={{ opacity: 1, y: 0 }}
-                  className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-5"
+                  className={`rounded-xl border p-5 ${personalized ? 'border-emerald-500/30 bg-emerald-500/5' : 'border-amber-500/30 bg-amber-500/5'}`}
                 >
                   <div className="flex items-center gap-2 mb-3">
-                    <div className="w-6 h-6 rounded-lg bg-emerald-600 flex items-center justify-center text-xs font-bold text-white shrink-0">N</div>
-                    <span className="text-xs font-semibold text-emerald-400 uppercase tracking-widest">Your Card</span>
+                    <div className={`w-6 h-6 rounded-lg flex items-center justify-center text-xs font-bold text-white shrink-0 ${personalized ? 'bg-emerald-600' : 'bg-amber-600'}`}>N</div>
+                    <span className={`text-xs font-semibold uppercase tracking-widest ${personalized ? 'text-emerald-400' : 'text-amber-400'}`}>
+                      {personalized ? 'Your Card' : 'General Playbook — not a read of your situation'}
+                    </span>
                   </div>
+                  {!personalized && (
+                    <p className="text-xs text-amber-300/90 leading-relaxed mb-4 border-l-2 border-amber-500/40 pl-3">
+                      Nova&apos;s reasoning is unavailable right now, so this is a standard playbook for
+                      situations like yours — it has <strong>not</strong> read what you wrote, and any
+                      [bracketed] parts are yours to fill in. Come back later for a card written for you.
+                    </p>
+                  )}
                   <div className="text-sm text-gray-200 whitespace-pre-wrap leading-relaxed">{card}</div>
                   <div className="mt-4 flex items-center justify-between">
                     <p className="text-xs text-gray-600">Sign up to save this and generate unlimited cards</p>
