@@ -91,10 +91,20 @@ describe('Phase 1 — The Vault', () => {
     // the vault wrote happily into ephemeral storage, and every memory died
     // on the next deploy while status still read "mounted".
     const vault = await import('../vault');
+    const path = await import('path');
+    // The incident value is only *relative* on POSIX; on Windows it is a
+    // legitimate absolute path and must NOT be condemned.
     process.env.VAULT_DIR = 'C:/Program Files/Git/vault';
+    if (path.isAbsolute('C:/Program Files/Git/vault')) {
+      expect(vault.vaultRootProblem()).toBeNull();      // Windows: real vault
+    } else {
+      expect(vault.vaultRootProblem()).toMatch(/absolute/); // Linux: the incident
+      expect((await vault.vaultStatus()).mounted).toBe(false);
+    }
+    // A genuinely relative root is refused on every platform.
+    process.env.VAULT_DIR = 'some/relative/vault';
     expect(vault.vaultRootProblem()).toMatch(/absolute/);
-    const st = await vault.vaultStatus();
-    expect(st.mounted).toBe(false);
+    expect((await vault.vaultStatus()).mounted).toBe(false);
     process.env.VAULT_DIR = dir;
   });
 

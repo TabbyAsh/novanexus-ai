@@ -40,7 +40,11 @@ export function vaultRoot(): string | null {
 export function vaultRootProblem(): string | null {
   const root = vaultRoot();
   if (!root) return null; // absent is honest; that is a different state
-  if (!path.isAbsolute(root) || /^[A-Za-z]:/.test(root)) {
+  // path.isAbsolute is already platform-correct and catches BOTH cases:
+  // on Linux 'C:/Program Files/...' is relative (the 2026-07-20 incident),
+  // while on Windows 'D:/Brained2/NovaVault' is genuinely absolute. An extra
+  // drive-letter regex here wrongly condemned every real Windows vault.
+  if (!path.isAbsolute(root)) {
     return `VAULT_DIR is not an absolute path on this platform ('${root}') — memory would live in ephemeral storage and die on the next deploy.`;
   }
   return null;
