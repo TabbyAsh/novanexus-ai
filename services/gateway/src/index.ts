@@ -115,6 +115,8 @@ const PUBLIC_ROUTES = [
   '/v1/flip-card/',
   // The World — public arrival surface (pulse + hail)
   '/v1/world/',
+  // Verified flip finds — reading is public; publishing is key-gated in the hub.
+  '/v1/deals/',
   // The constitution organs (Phases 1-5) — nova-hub seals each behind the
   // world key itself; the gateway only carries them.
   '/v1/vault/',
@@ -634,6 +636,11 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
     // The world key (Nova OS door) must survive the hop to nova-hub.
     if (req.headers['x-world-key']) {
       headers['X-World-Key'] = req.headers['x-world-key'] as string;
+    }
+
+    // The deal-publish key likewise (the local scanner authenticates with it).
+    if (req.headers['x-publish-key']) {
+      headers['X-Publish-Key'] = req.headers['x-publish-key'] as string;
     }
 
     // True client IP — downstream per-IP rate limits (hail, unlock) are
@@ -1550,6 +1557,12 @@ app.get('/v1/platform/stats', (req: Request, res: Response) => {
 
 // The World — public arrival surface (pulse + hail) -> Nova Hub
 app.all('/v1/world/*', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
+// Verified flip finds -> Nova Hub. GET /live is public; POST /publish is
+// gated by the shared key inside the hub.
+app.all('/v1/deals/*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 

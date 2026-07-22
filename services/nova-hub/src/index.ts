@@ -10975,6 +10975,69 @@ app.post('/v1/world/hail', async (req: Request, res: Response) => {
   }
 });
 
+// ── PUBLISHED DEALS — the local scanner's verified finds, made public ─────────
+// The scan can only run from a residential IP (eBay 403s datacenter traffic),
+// so Nova scans on the founder's machine and publishes the results here.
+// Publishing needs the shared key; reading is open to anyone.
+
+app.post('/v1/deals/publish', async (req: Request, res: Response) => {
+  try {
+    const key = process.env.DEALS_PUBLISH_KEY;
+    if (!key) { res.status(503).json({ success: false, error: { code: 'NO_KEY', message: 'Publishing is not configured on this node.' } }); return; }
+    if (req.headers['x-publish-key'] !== key) { res.status(401).json({ success: false, error: { code: 'BAD_KEY', message: 'Not authorized to publish.' } }); return; }
+
+    const deals = Array.isArray(req.body?.deals) ? req.body.deals : [];
+    const scannedAt = req.body?.scannedAt || new Date().toISOString();
+    const batch = crypto.randomUUID();
+
+    for (const d of deals.slice(0, 40)) {
+      await query(
+        `INSERT INTO published_deals (batch, title, asking_price, resale_median, resale_low, resale_high,
+           comps_count, shipping, net_profit, roi_pct, region, listing_url, query_used, scanned_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
+        [batch, String(d.title || '').slice(0, 200), d.price, d.resale, d.low ?? null, d.high ?? null,
+         d.comps || 0, d.shipping || 0, d.net, d.roi || 0, d.region || null,
+         d.url || null, d.query || null, scannedAt]
+      ).catch(() => {});
+    }
+    logger.info('Deals published', { count: deals.length, batch });
+    res.json({ success: true, data: { batch, published: deals.length } });
+  } catch (err) {
+    logger.error('Deal publish failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'PUBLISH_FAILED', message: 'Unavailable.' } });
+  }
+});
+
+// Public: the latest batch of verified finds. Absence is honest — if no scan
+// has ever run, it says so rather than inventing deals.
+app.get('/v1/deals/live', async (_req: Request, res: Response) => {
+  try {
+    const latest = await queryOne<{ batch: string; scanned_at: string }>(
+      `SELECT batch, scanned_at FROM published_deals ORDER BY created_at DESC LIMIT 1`
+    );
+    if (!latest) { res.json({ success: true, data: { deals: [], scannedAt: null } }); return; }
+    const rows = await query<any>(
+      `SELECT title, asking_price, resale_median, resale_low, resale_high, comps_count,
+              shipping, net_profit, roi_pct, region, listing_url, query_used, scanned_at
+       FROM published_deals WHERE batch = $1 ORDER BY net_profit DESC`, [latest.batch]
+    );
+    res.json({ success: true, data: {
+      scannedAt: latest.scanned_at,
+      deals: rows.rows.map((r: any) => ({
+        title: r.title, price: Number(r.asking_price), resale: Number(r.resale_median),
+        low: r.resale_low === null ? null : Number(r.resale_low),
+        high: r.resale_high === null ? null : Number(r.resale_high),
+        comps: r.comps_count, shipping: Number(r.shipping),
+        net: Number(r.net_profit), roi: r.roi_pct, region: r.region,
+        url: r.listing_url, query: r.query_used,
+      })),
+    }});
+  } catch (err) {
+    logger.error('Deals live failed', err as Error);
+    res.status(503).json({ success: false, error: { code: 'DEALS_DARK', message: 'Unavailable.' } });
+  }
+});
+
 // ── NOVA OS — the private command world (Manifesto §XIII) ─────────────────────
 // The World is founder-only now. The door opens to the word (WORLD_PASSWORD)
 // and to nothing else; the key it issues is HMAC-signed and revoked wholesale
