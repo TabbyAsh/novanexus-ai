@@ -1,0 +1,116 @@
+# ============================================================================
+# nova.constraints.yaml — human-owned architectural constraints for Nova Forge.
+#
+# OWNERSHIP: humans only. Forge agents may READ this file (RepoGraph serves it
+# in context packs) but any agent-authored change to it is DENIED by CmdX
+# (see protected_paths below — this file protects itself).
+# ============================================================================
+
+version: 1
+
+# ----------------------------------------------------------------------------
+# Control plane: paths agents may never modify, in any mode, at any trust.
+# CmdX denies write-ish commands touching these paths; CODEOWNERS + branch
+# protection provide the second and third layer.
+# ----------------------------------------------------------------------------
+protected_paths:
+  - nova.constraints.yaml
+  - CODEOWNERS
+  - .github/workflows/**
+  - services/cmdx/**
+  - libs/policy/**
+  - libs/agent-contracts/**
+  - services/forge-evals/**
+  - infra/migrations/** # migrations are append-only via human-reviewed PRs
+
+# ----------------------------------------------------------------------------
+# Architectural rules. Architect/reviewer agents must cite the rule id when
+# a plan or review decision depends on one.
+# ----------------------------------------------------------------------------
+rules:
+  - id: ARCH-001
+    rule: Services never import another service's src; share code via libs/* only.
+  - id: ARCH-002
+    rule: All database access goes through @nova/shared query/queryOne/transaction helpers.
+  - id: ARCH-003
+    rule: Every state-changing action emits a hash-chained event into the events table.
+  - id: ARCH-004
+    rule: All tsconfigs need explicit paths mappings (Windows workspace junctions).
+  - id: ARCH-005
+    rule: New services follow the tsc build pattern; esbuild is a documented exception (tradebot).
+  - id: FORGE-001
+    rule: Agents execute commands only via CmdX; no direct shell, no exceptions.
+  - id: FORGE-002
+    rule: Agent work happens on forge/* branches in ephemeral clones; never on master, never in the host checkout.
+  - id: FORGE-003
+    rule: T3 actions (push, external network, deletes outside workspace) always require human approval.
+  - id: FORGE-004
+    rule: Production deploys and non-sandbox database statements are human-only rituals.
+  - id: FORGE-005
+    rule: Prompt/strategy/tool changes ship as versioned candidates through the eval-and-promotion gate.
+
+# ----------------------------------------------------------------------------
+# Port registry (source of truth mirrored in @nova/shared SERVICE_PORTS).
+# ----------------------------------------------------------------------------
+ports:
+  gateway: 3000
+  auth: 3001
+  orchestrator: 3002
+  eventbus: 3003
+  audit: 3004
+  notifier: 3005
+  billing: 3006
+  tradebot: 3010
+  storebot: 3011
+  socialbot: 3012
+  researchbot: 3013
+  opsbot: 3014
+  forgebot: 3015
+  forge-runner: 3016
+  cmdx: 3017
+  repograph: 3018
+  forge-evals: 3019
+  marketdata: 3020
+  contentdata: 3021
+  commercedata: 3022
+  nova-hub: 3030
+  scheduler: 3040
+  web: 4000
+
+# ----------------------------------------------------------------------------
+# Sandbox environment: the ONLY env vars CmdX will resolve into a sandbox.
+# Everything else (JWT_SECRET, STRIPE_*, OPENAI_*, DATABASE_URL, ...) is
+# stripped and the attempt is recorded as a violation.
+# ----------------------------------------------------------------------------
+sandbox_env_allowlist:
+  - NODE_ENV
+  - CI
+  - TZ
+  - LANG
+  - NPM_CONFIG_REGISTRY
+  - SANDBOX_DATABASE_URL
+  - SANDBOX_REDIS_URL
+  - TURBO_TELEMETRY_DISABLED
+  - NEXT_TELEMETRY_DISABLED
+
+# ----------------------------------------------------------------------------
+# Egress allowlist for sandbox network traffic (enforced by proxy sidecar,
+# Phase 2+). Documented here from day one so rules are reviewable.
+# ----------------------------------------------------------------------------
+egress_allowlist:
+  - registry.npmjs.org
+  - github.com
+  - codeload.github.com
+
+# ----------------------------------------------------------------------------
+# PII-bearing tables: builder agents get schema shapes, never row data.
+# Sandbox databases are seeded with synthetic data only.
+# ----------------------------------------------------------------------------
+pii_tables:
+  - users
+  - api_keys
+  - broker_connections
+  - entitlements
+
+# Branch namespace reserved for agent work.
+branch_namespace: forge/
