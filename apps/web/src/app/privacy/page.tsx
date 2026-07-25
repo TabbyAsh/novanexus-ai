@@ -89,7 +89,19 @@ const SECTIONS = [
     ],
   },
   {
-    title: '10. Changes to This Policy',
+    title: '10. Nova Lens Browser Extension',
+    items: [
+      'Nova Lens runs only on eBay listing pages (ebay.com/itm/…). It does not run on any other site, and it has no access to your browsing history or other tabs.',
+      'What it reads: the title, asking price, condition, and shipping cost shown on the listing you are viewing, plus recent sold prices for that item fetched from eBay\'s own public sold-listings search using your existing browser session.',
+      'What it sends: that item description and the list of sold prices are sent to Nova\'s appraisal service to compute the verdict. Nothing else leaves your browser.',
+      'What we log: the appraisal request, its verdict, and the requesting IP address, for abuse prevention and free-tier rate limiting. No account is required to use the extension.',
+      'What it never collects: your eBay credentials, cookies, session tokens, payment details, messages, purchase history, or any personally identifying information. Nova Lens reads page content only — it never authenticates as you.',
+      'We do not sell extension data, use it for advertising, or transfer it to third parties beyond the AI and hosting providers listed in section 4.',
+      'Remove it at any time from chrome://extensions. Uninstalling stops all collection immediately.',
+    ],
+  },
+  {
+    title: '11. Changes to This Policy',
     items: [
       'We may update this Privacy Policy. We will notify registered users of material changes by email. Continued use after changes constitutes acceptance of the updated policy.',
     ],

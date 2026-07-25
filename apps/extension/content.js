@@ -37,6 +37,19 @@
     return { title: title.slice(0, 140), price, condition, shipping };
   }
 
+  // An eBay sold page for "DeWalt DCD771C2" also contains batteries, chargers
+  // and empty cases. Unfiltered, those drag the median down and Nova tells you
+  // to overpay — the exact failure the product exists to prevent. Anything far
+  // off the median is a different product, so it is dropped before appraisal.
+  function rejectOutliers(prices) {
+    if (prices.length < 4) return prices; // too few to judge; the API caps confidence anyway
+    const sorted = [...prices].sort((a, b) => a - b);
+    const median = sorted[Math.floor(sorted.length / 2)];
+    if (!(median > 0)) return prices;
+    const kept = prices.filter((p) => p >= median * 0.25 && p <= median * 3);
+    return kept.length >= 3 ? kept : prices;
+  }
+
   // ── 2. Harvest real sold comps (same-origin fetch, your own session) ──
   async function harvestComps(title) {
     // trim to the meaningful head of the title for a tighter sold-search
@@ -48,12 +61,14 @@
       const doc = new DOMParser().parseFromString(html, 'text/html');
       const prices = [];
       for (const el of doc.querySelectorAll('.s-item__price, .s-card__price')) {
+        // "$18.99 to $24.99" ranges are multi-variant listings, not one sale — skip
+        if (/\bto\b/i.test(el.textContent)) continue;
         const m = el.textContent.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d{1,2})?)/);
         if (m) { const p = parseFloat(m[1]); if (p > 0 && p < 100000) prices.push(p); }
       }
       // drop the first (often a promoted placeholder) and cap at 25
       const clean = prices.slice(1, 26);
-      return { comps: clean, soldUrl: url, query: q };
+      return { comps: rejectOutliers(clean), soldUrl: url, query: q };
     } catch { return { comps: [], soldUrl: url, query: q }; }
   }
 
@@ -101,7 +116,13 @@
   // ── main ───────────────────────────────────────────────────────────────
   async function main() {
     const L = readListing();
-    if (!L.title || !Number.isFinite(L.price)) return; // not a parsable listing — stay silent
+    if (!L.title || !Number.isFinite(L.price)) {
+      // We are on an /itm/ page, so this IS a listing — failing to read it is a
+      // real breakage (eBay changed its markup), not a quiet no-op. Say so:
+      // silence would read as "the extension is broken" with nothing to report.
+      render({ error: 'Could not read this listing’s title or price — eBay may have changed its layout. Nothing was guessed.' });
+      return;
+    }
     render({ loading: 'Reading listing + pulling real sold comps…' });
     const { comps, soldUrl } = await harvestComps(L.title);
     chrome.runtime.sendMessage(
