@@ -131,3 +131,5 @@ ENV/
 # Local/generated env files (Phase 5.2)
 .env.dev
 .env.prod
+.gstack/
+.first-contact.json
