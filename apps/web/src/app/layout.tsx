@@ -5,6 +5,9 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
+  // Without metadataBase, Next resolves Open Graph images and canonicals
+  // against localhost, so every share card and canonical tag was wrong.
+  metadataBase: new URL('https://novanexus-ai.com'),
   title: 'NovaNexus — Market Intelligence & Operational Infrastructure',
   description: 'Resale analytics, stock screening, deal scoring, and operational tools. Built on real data and transparent assumptions.',
 };
