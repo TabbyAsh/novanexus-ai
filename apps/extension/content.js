@@ -58,8 +58,10 @@
         const t = li.querySelector('.s-item__title, .s-card__title');
         const p = li.querySelector('.s-item__price, .s-card__price');
         if (!t || !p) continue;
-        const text = t.textContent.trim();
-        if (!text || /^shop on ebay$/i.test(text)) continue; // eBay's placeholder row
+        // eBay glues "Opens in a new window or tab" onto titles with no space,
+        // so match the filler row by prefix rather than exact equality.
+        const text = t.textContent.replace(/opens in a new window or tab/gi, ' ').trim();
+        if (!text || /^shop on ebay\b/i.test(text)) continue; // eBay's placeholder row
         // "$18.99 to $24.99" ranges are multi-variant listings, not one sale — skip
         if (/\bto\b/i.test(p.textContent)) continue;
         const m = p.textContent.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d{1,2})?)/);

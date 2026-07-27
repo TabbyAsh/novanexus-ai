@@ -85,6 +85,42 @@ console.log('\nC. the guard refuses rather than inventing a number');
   check('the refusal explains itself', /different product|not enough/i.test(mismatched.reason));
 }
 
+console.log('\nE. REAL capture from ebay.com/itm/185953427238 (the $1.86 report)');
+{
+  // Verbatim rows harvested from the live sold page, including eBay's
+  // "Opens in a new window or tab" a11y suffix and its "Shop on eBay" filler.
+  const source = 'Samsung Galaxy Watch Active 2 40mm Smartwatch';
+  const rows = [
+    { title: 'Shop on eBay', price: 20.0 },
+    { title: 'Shop on eBay', price: 20.0 },
+    { title: 'Samsung Galaxy Watch Active 2 40mm Smartwatch PinkOpens in a new window or tab', price: 25.0 },
+    { title: 'Samsung Galaxy Watch Strap Silicone Sport Band 20mm 22mm Active 1 2 Gear 2Opens in a new window or tab', price: 6.25 },
+    { title: 'For Samsung Galaxy Watch 3 41mm Active 2 40mm 44mm 20mm 22mm Band StrapOpens in a new window or tab', price: 5.45 },
+    { title: 'Samsung Galaxy Watch Active2 (40mm) Aqua BlackOpens in a new window or tab', price: 36.05 },
+    { title: 'Samsung Galaxy Watch Active2 SM-R820 44mm Bluetooth Smartwatch - Black SROpens in a new window or tab', price: 44.95 },
+    { title: 'Silicone Watchband Strap Belt For Samsung Galaxy Watch Active 2 40mm 44mm PartsOpens in a new window or tab', price: 10.58 },
+    { title: 'Stainless Steel Bracelet Band Strap For Samsung Galaxy Watch 3 4 41/45mm Active2Opens in a new window or tab', price: 9.49 },
+    { title: 'Samsung Galaxy Watch Active2 40mm SM-R835U LTE Black Aluminum Smartwatch GPSOpens in a new window or tab', price: 39.97 },
+    { title: 'Wireless Magnetic Charger Dock For Samsung Galaxy Watch pro/5/4/3/Active 2/1Opens in a new window or tab', price: 7.95 },
+    { title: 'For Samsung Galaxy Watch 3 41mm Active 2 40mm 44mm Silicone 20mm Band StrapOpens in a new window or tab', price: 5.49 },
+    { title: 'Samsung Galaxy Active 2 SM-R825U 44mm Rear Back Glass Plastic Cover (Black)Opens in a new window or tab', price: 33.07 },
+    { title: 'EB-BR830ABY Battery For Samsung Galaxy Watch Active 2 SM-R830 SM-R835 40mmOpens in a new window or tab', price: 11.59 },
+    { title: 'Watch Band Silicone Sport Strap For Samsung Galaxy Watch 5 6 Active 2 40 44 42Opens in a new window or tab', price: 7.99 },
+  ];
+
+  const naive = C.rejectOutliers(rows.map((r) => r.price));
+  check('reproduces it — naive median is strap money', median(naive) < 15, `naive median=${median(naive)}`);
+
+  const sel = C.selectComps(source, rows.filter((r) => !/^shop on ebay$/i.test(r.title)));
+  const priced = C.rejectOutliers(sel.comps);
+  check('keeps the three real 40mm watches', sel.comps.length === 3, `kept ${sel.comps.length}: ${sel.comps}`);
+  check('median is a real watch price', median(priced) >= 25 && median(priced) <= 40, `median=${median(priced)}`);
+  check('excludes the 44mm variants', !sel.comps.includes(44.95) && !sel.comps.includes(33.07));
+  check('excludes every strap, band, dock and battery',
+    ![6.25, 5.45, 10.58, 9.49, 7.95, 5.49, 11.59, 7.99].some((p) => sel.comps.includes(p)));
+  check('a $30 asking price now reads as coherent', C.assessCoherence(priced, 30).ok);
+}
+
 console.log('\nD. selling the accessory itself still works');
 {
   const source = 'DeWalt DCB201 20V MAX Battery Pack';

@@ -24,7 +24,9 @@
 
   // Words that mark a listing as a PART or ACCESSORY of the thing, not the thing.
   const ACCESSORY = [
-    'case', 'cases', 'cover', 'skin', 'sleeve', 'pouch', 'bag', 'strap',
+    'case', 'cases', 'cover', 'skin', 'sleeve', 'pouch', 'bag', 'strap', 'straps',
+    'band', 'bands', 'watchband', 'wristband', 'bracelet', 'belt', 'dock',
+    'protector', 'glass', 'lens', 'buckle', 'clasp', 'pins', 'link', 'links',
     'charger', 'charging', 'cable', 'cord', 'adapter', 'adaptor', 'power supply',
     'battery', 'batteries', 'manual', 'instructions', 'booklet', 'insert',
     'box only', 'empty box', 'empty', 'replacement', 'screen protector',
@@ -42,6 +44,11 @@
 
   function normalize(s) {
     return String(s || '')
+      // eBay appends this to result titles with NO separating space, so
+      // "Band Strap" arrives as "Band StrapOpens in a new window or tab" and
+      // the token becomes "strapopens" — which silently defeated every
+      // word-boundary check below. Strip it before anything else.
+      .replace(/opens in a new window or tab/gi, ' ')
       .toLowerCase()
       .replace(/[^a-z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
