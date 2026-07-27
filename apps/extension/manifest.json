@@ -27,7 +27,7 @@
   "content_scripts": [
     {
       "matches": ["https://www.ebay.com/itm/*", "https://ebay.com/itm/*"],
-      "js": ["content.js"],
+      "js": ["comps.js", "content.js"],
       "css": ["card.css"],
       "run_at": "document_idle"
     }

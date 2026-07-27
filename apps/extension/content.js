@@ -37,20 +37,13 @@
     return { title: title.slice(0, 140), price, condition, shipping };
   }
 
-  // An eBay sold page for "DeWalt DCD771C2" also contains batteries, chargers
-  // and empty cases. Unfiltered, those drag the median down and Nova tells you
-  // to overpay — the exact failure the product exists to prevent. Anything far
-  // off the median is a different product, so it is dropped before appraisal.
-  function rejectOutliers(prices) {
-    if (prices.length < 4) return prices; // too few to judge; the API caps confidence anyway
-    const sorted = [...prices].sort((a, b) => a - b);
-    const median = sorted[Math.floor(sorted.length / 2)];
-    if (!(median > 0)) return prices;
-    const kept = prices.filter((p) => p >= median * 0.25 && p <= median * 3);
-    return kept.length >= 3 ? kept : prices;
-  }
-
   // ── 2. Harvest real sold comps (same-origin fetch, your own session) ──
+  //
+  // Prices are read together with the TITLE they belong to. Reading prices
+  // alone is what produced a "$1.86 max buy" on a real listing: a sold page
+  // returns the item's cables, cases and manuals too, and when those outnumber
+  // the product they become the median. Selection is delegated to NovaComps
+  // (comps.js) so it can be unit-tested without a live eBay page.
   async function harvestComps(title) {
     // trim to the meaningful head of the title for a tighter sold-search
     const q = title.split(/[\-–|,(]/)[0].split(/\s+/).slice(0, 8).join(' ');
@@ -59,17 +52,27 @@
       const res = await fetch(url, { credentials: 'same-origin' });
       const html = await res.text();
       const doc = new DOMParser().parseFromString(html, 'text/html');
-      const prices = [];
-      for (const el of doc.querySelectorAll('.s-item__price, .s-card__price')) {
+
+      const rows = [];
+      for (const li of doc.querySelectorAll('li.s-item, li.s-card')) {
+        const t = li.querySelector('.s-item__title, .s-card__title');
+        const p = li.querySelector('.s-item__price, .s-card__price');
+        if (!t || !p) continue;
+        const text = t.textContent.trim();
+        if (!text || /^shop on ebay$/i.test(text)) continue; // eBay's placeholder row
         // "$18.99 to $24.99" ranges are multi-variant listings, not one sale — skip
-        if (/\bto\b/i.test(el.textContent)) continue;
-        const m = el.textContent.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d{1,2})?)/);
-        if (m) { const p = parseFloat(m[1]); if (p > 0 && p < 100000) prices.push(p); }
+        if (/\bto\b/i.test(p.textContent)) continue;
+        const m = p.textContent.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d{1,2})?)/);
+        if (!m) continue;
+        const price = parseFloat(m[1]);
+        if (price > 0 && price < 100000) rows.push({ title: text, price });
+        if (rows.length >= 60) break;
       }
-      // drop the first (often a promoted placeholder) and cap at 25
-      const clean = prices.slice(1, 26);
-      return { comps: rejectOutliers(clean), soldUrl: url, query: q };
-    } catch { return { comps: [], soldUrl: url, query: q }; }
+
+      const sel = NovaComps.selectComps(title, rows);
+      const comps = NovaComps.rejectOutliers(sel.comps);
+      return { comps, soldUrl: url, query: q, scanned: rows.length, rejected: sel.rejected, reasons: sel.reasons };
+    } catch { return { comps: [], soldUrl: url, query: q, scanned: 0, rejected: 0, reasons: {} }; }
   }
 
   // ── 3. The card ────────────────────────────────────────────────────────
@@ -82,7 +85,12 @@
       return;
     }
     if (state.error) {
-      el.innerHTML = `<div class="nl-head"><span class="nl-logo">N</span> Nova Lens</div><div class="nl-body nl-dim">${state.error}</div>`;
+      const link = state.soldUrl
+        ? `<div class="nl-actions"><a class="nl-btn nl-link" href="${state.soldUrl}" target="_blank">See sold comps</a></div>`
+        : '';
+      el.innerHTML = `<div class="nl-head"><span class="nl-logo">N</span> Nova Lens<button class="nl-x" id="nl-close">×</button></div><div class="nl-body nl-dim">${state.error}</div>${link}`;
+      const x = document.getElementById('nl-close');
+      if (x) x.onclick = () => el.remove();
       return;
     }
     const a = state.appraisal, L = state.listing;
@@ -124,7 +132,20 @@
       return;
     }
     render({ loading: 'Reading listing + pulling real sold comps…' });
-    const { comps, soldUrl } = await harvestComps(L.title);
+    const { comps, soldUrl, scanned, rejected } = await harvestComps(L.title);
+
+    // Refuse rather than invent. If the surviving comps are too few, or worth a
+    // fraction of what is being asked, the match is wrong — and a confident
+    // wrong number is worse than no number, because someone acts on it.
+    const coherence = NovaComps.assessCoherence(comps, L.price);
+    if (!coherence.ok) {
+      render({
+        error: `${coherence.reason} Checked ${scanned} sold listing${scanned === 1 ? '' : 's'}, ${rejected} were a different product. Open the sold comps and judge it yourself.`,
+        soldUrl,
+      });
+      return;
+    }
+
     chrome.runtime.sendMessage(
       { type: 'appraise', title: L.title, price: L.price, condition: L.condition, shipping: L.shipping, comps },
       (resp) => {
