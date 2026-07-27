@@ -17,6 +17,7 @@ const path = require('path');
 const { parseCsv } = require('./csv');
 const { normalizeRecords } = require('./normalize');
 const { findInternalTransfers, findRecurring, monthlySummary, computeRunway } = require('./analyze');
+const { discover, SEARCH_DIRS } = require('./discover');
 
 const ROOT = path.join(__dirname, '..', '..');
 const LEDGER_DIR = path.join(ROOT, '.ledger');
@@ -127,8 +128,110 @@ function cmdRecurring() {
   console.log('is the fastest dollar in this whole system.\n');
 }
 
+/**
+ * The whole thing in one command: find the exports, read them, and say what
+ * they mean. No moving files, no flags, no knowing which number to supply.
+ */
+function cmdAuto() {
+  console.log('\nLooking for financial exports in your Downloads, Desktop and Documents…\n');
+  const found = discover([INBOX]);
+
+  if (found.length === 0) {
+    console.log('Found none yet. Nothing is wrong — there is just nothing to read.\n');
+    console.log('Download a CSV export from your bank, card, Webull or Cash App');
+    console.log('(see scripts/ledger/EXPORTS.md for exactly where the button is),');
+    console.log('leave it wherever it lands, and run this again:\n');
+    console.log('  node scripts/ledger auto\n');
+    return;
+  }
+
+  console.log(`Found ${found.length} file${found.length === 1 ? '' : 's'} that look like money:\n`);
+  const all = [];
+  for (const f of found) {
+    const account = f.name.replace(/\.csv$/i, '');
+    const { transactions, mapping, skipped, signNote } = normalizeRecords(f.records, f.headers, f.name, account);
+    console.log(`  ${f.name}  —  ${f.institution}`);
+    console.log(`    ${transactions.length} transactions${skipped ? `, ${skipped} rows skipped` : ''}`);
+    if (mapping.assumptions.length) console.log(`    read as: ${mapping.assumptions.join('; ')}`);
+    if (signNote) console.log(`    NOTE: ${signNote}`);
+    console.log('');
+    all.push(...transactions);
+  }
+
+  if (all.length === 0) {
+    console.log('None of them had readable dates and amounts. Send me the output above and I will fix the parser.\n');
+    return;
+  }
+
+  all.sort((a, b) => a.date.localeCompare(b.date));
+  fs.mkdirSync(LEDGER_DIR, { recursive: true });
+  fs.writeFileSync(STORE, JSON.stringify({ importedAt: new Date().toISOString(), transactions: all }, null, 2));
+
+  const flags = findInternalTransfers(all);
+  const months = monthlySummary(all, flags);
+  const dates = all.map((t) => t.date);
+  console.log('─'.repeat(64));
+  console.log(`\n${all.length} transactions, ${dates[0]} to ${dates[dates.length - 1]}`);
+  if (flags.size) console.log(`${flags.size} were transfers between your own accounts — not counted as income or spending.`);
+
+  if (months.length) {
+    console.log('\nmonth      income        spend          net');
+    for (const m of months) {
+      console.log(`${m.month}  ${money(m.income).padStart(10)}  ${money(m.spend).padStart(11)}  ${money(m.net).padStart(11)}`);
+    }
+  }
+
+  // Use the statement's own closing balance when it has one, so there is no
+  // number to look up. Labelled, because a credit-card balance is debt.
+  const cashArg = arg('--cash');
+  const inferred = inferCash(all);
+  const cash = cashArg != null ? Number(String(cashArg).replace(/[$,]/g, '')) : inferred.total;
+
+  const r = computeRunway(months, cash);
+  console.log('');
+  if (!r.ok) {
+    console.log(r.reason);
+  } else {
+    if (cashArg == null && inferred.accounts.length) {
+      console.log('Closing balances read from the statements themselves:');
+      for (const a of inferred.accounts) console.log(`  ${money(a.balance).padStart(12)}  ${a.account} (as of ${a.date})`);
+      console.log('  If any of those is a CREDIT CARD, that is debt, not cash —');
+      console.log('  re-run with:  node scripts/ledger auto --cash <your real cash>');
+      console.log('');
+    }
+    console.log(r.verdict);
+    if (r.runwayMonths != null) console.log(`At this rate, funds run out around ${r.runwayDate}.`);
+  }
+
+  const rec = findRecurring(all);
+  if (rec.length) {
+    const total = rec.reduce((s, x) => s + x.monthly, 0);
+    console.log(`\n${rec.length} recurring charges — ${money(total)}/month, ${money(total * 12)}/year:`);
+    for (const x of rec.slice(0, 12)) {
+      console.log(`  ${money(x.monthly).padStart(10)}  ${x.label.padEnd(22)} ${x.occurrences}x, last ${x.lastSeen}`);
+    }
+    console.log('\nRent and utilities belong here; so do subscriptions you forgot.');
+    console.log('Cancelling one of the forgettable ones is the fastest dollar in this system.');
+  }
+
+  console.log('\nNothing left this machine. Paste this output to me and I will read it with you.\n');
+}
+
+/** Most recent closing balance per account, when the export carries one. */
+function inferCash(transactions) {
+  const latest = new Map();
+  for (const t of transactions) {
+    if (typeof t.balance !== 'number' || !Number.isFinite(t.balance)) continue;
+    const cur = latest.get(t.account);
+    if (!cur || t.date >= cur.date) latest.set(t.account, { account: t.account, balance: t.balance, date: t.date });
+  }
+  const accounts = [...latest.values()];
+  return { accounts, total: accounts.length ? accounts.reduce((s, a) => s + a.balance, 0) : null };
+}
+
 const cmd = process.argv[2];
-if (cmd === 'import') cmdImport();
+if (cmd === 'auto' || cmd === undefined) cmdAuto();
+else if (cmd === 'import') cmdImport();
 else if (cmd === 'runway') cmdRunway();
 else if (cmd === 'recurring') cmdRecurring();
 else if (cmd === 'months') cmdMonths();
