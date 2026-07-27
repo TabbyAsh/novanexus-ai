@@ -18,13 +18,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
           condition: msg.condition || 'Good',
           shipping_or_pickup: 'shipping',
           target_platform: 'eBay',
-          // estimatedShipping is deliberately NOT sent. The API subtracts it
-          // from RESALE proceeds — it is the cost of shipping the item to your
-          // buyer, a different quantity from the listing's inbound shipping.
-          // Passing the listing's value meant every "free shipping" item was
-          // appraised as though reselling it cost nothing to ship, inflating
-          // max buy by ~$8 on a watch. Omitting it lets the API apply its own
-          // category estimate.
+          // The cost of shipping it TO YOUR BUYER — never the listing's inbound
+          // shipping, which is a different quantity. Sent only when sellers of
+          // this same item were observed charging it; otherwise omitted so the
+          // API applies its category model rather than being handed a guess.
+          estimatedShipping: typeof msg.resaleShipping === 'number' && msg.resaleShipping > 0
+            ? msg.resaleShipping
+            : undefined,
           manualComps: Array.isArray(msg.comps) && msg.comps.length ? msg.comps : undefined,
         }),
       });

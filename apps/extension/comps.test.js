@@ -121,6 +121,44 @@ console.log('\nE. REAL capture from ebay.com/itm/185953427238 (the $1.86 report)
   check('a $30 asking price now reads as coherent', C.assessCoherence(priced, 30).ok);
 }
 
+console.log('\nF. shipping learned from real sales, not guessed');
+{
+  check('reads "Free shipping" as zero', C.parseShipping('Free shipping') === 0);
+  check('reads a charged amount', C.parseShipping('+$8.95 shipping') === 8.95);
+  check('survives the a11y suffix', C.parseShipping('+$12.00 deliveryOpens in a new window or tab') === 12);
+  check('unknown stays unknown, not zero', C.parseShipping('Not specified') === null);
+  check('empty stays unknown', C.parseShipping('') === null);
+
+  // Free-shipping sales are NOT evidence that shipping is free — the cost is
+  // buried in the price. Only charged shipping is evidence.
+  const allFree = C.shippingEstimate([{ shipping: 0 }, { shipping: 0 }, { shipping: 0 }]);
+  check('all-free yields no evidence, never $0', allFree.value === null && allFree.basis === 'no_evidence');
+
+  const mixed = C.shippingEstimate([{ shipping: 0 }, { shipping: 8.95 }, { shipping: 6.5 }, { shipping: 9.2 }]);
+  check('uses the median of what was actually charged', mixed.value === 8.95, `got ${mixed.value}`);
+  check('reports how much evidence it had', mixed.observed === 3, `observed=${mixed.observed}`);
+
+  const unknown = C.shippingEstimate([{ shipping: null }, { shipping: null }]);
+  check('no data yields no evidence', unknown.value === null);
+}
+
+console.log('\nG. comps normalised to total buyer cost');
+{
+  const source = 'Samsung Galaxy Watch Active 2 40mm Smartwatch';
+  // The same $40 sale, expressed two ways by two sellers.
+  const rows = [
+    { title: 'Samsung Galaxy Watch Active 2 40mm Smartwatch', price: 40, shipping: 0 },
+    { title: 'Samsung Galaxy Watch Active 2 40mm Smartwatch Black', price: 32, shipping: 8 },
+    { title: 'Samsung Galaxy Watch Active 2 40mm Smartwatch Pink', price: 35, shipping: 5 },
+  ];
+  const sel = C.selectComps(source, rows);
+  check('a $32+$8 sale counts as $40, not $32', sel.comps.every((v) => v === 40), `values=${sel.comps}`);
+  check('the phantom spread disappears', Math.max(...sel.comps) - Math.min(...sel.comps) === 0);
+  // Charged: $8 and $5. On an even count the upper is taken — erring high on a
+  // COST understates profit, which is the safe direction to be wrong in.
+  check('shipping evidence comes from the charged sales', C.shippingEstimate(sel.kept).value === 8, `got ${C.shippingEstimate(sel.kept).value}`);
+}
+
 console.log('\nD. selling the accessory itself still works');
 {
   const source = 'DeWalt DCB201 20V MAX Battery Pack';

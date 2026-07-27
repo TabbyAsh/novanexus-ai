@@ -67,14 +67,19 @@
         const m = p.textContent.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d{1,2})?)/);
         if (!m) continue;
         const price = parseFloat(m[1]);
-        if (price > 0 && price < 100000) rows.push({ title: text, price });
+        // What each seller charged to ship this exact item — real evidence of
+        // what shipping costs, instead of a category guess.
+        const ship = li.querySelector('.s-item__shipping, .s-card__shipping, .s-item__logisticsCost, .s-card__logisticsCost');
+        const shipping = NovaComps.parseShipping(ship && ship.textContent);
+        if (price > 0 && price < 100000) rows.push({ title: text, price, shipping });
         if (rows.length >= 60) break;
       }
 
       const sel = NovaComps.selectComps(title, rows);
       const comps = NovaComps.rejectOutliers(sel.comps);
-      return { comps, soldUrl: url, query: q, scanned: rows.length, rejected: sel.rejected, reasons: sel.reasons };
-    } catch { return { comps: [], soldUrl: url, query: q, scanned: 0, rejected: 0, reasons: {} }; }
+      const ship = NovaComps.shippingEstimate(sel.kept);
+      return { comps, soldUrl: url, query: q, scanned: rows.length, rejected: sel.rejected, reasons: sel.reasons, ship };
+    } catch { return { comps: [], soldUrl: url, query: q, scanned: 0, rejected: 0, reasons: {}, ship: { value: null, basis: 'no_evidence', observed: 0 } }; }
   }
 
   // ── 3. The card ────────────────────────────────────────────────────────
@@ -106,7 +111,7 @@
       <div class="nl-grid">
         <div><span>${L.shipping ? 'Costs you' : 'Asking'}</span><b>${money(L.price + (L.shipping || 0))}</b>${L.shipping ? `<i class="nl-note">${money(L.price)} + ${money(L.shipping)} ship</i>` : ''}</div>
         <div><span>Sold range</span><b>${money(a.expectedResaleLow)}–${money(a.expectedResaleHigh)}</b></div>
-        <div><span>Fees + resale ship</span><b>${money(a.estimatedFees)} + ${money(a.estimatedShipping)}</b></div>
+        <div><span>Fees + resale ship</span><b>${money(a.estimatedFees)} + ${money(a.estimatedShipping)}</b>${state.ship && state.ship.basis === 'observed' ? `<i class="nl-note">ship from ${state.ship.observed} real sale${state.ship.observed === 1 ? '' : 's'}</i>` : `<i class="nl-note">ship estimated by category</i>`}</div>
         <div><span>Net if resold</span><b>${money(a.expectedNetProfitLow)} to ${money(a.expectedNetProfitHigh)}</b></div>
         <div><span>Est. sale time</span><b>${state.days || '—'}</b></div>
         <div><span>Confidence</span><b>${Math.round((a.confidence || 0) * 100)}%</b></div>
@@ -134,7 +139,7 @@
       return;
     }
     render({ loading: 'Reading listing + pulling real sold comps…' });
-    const { comps, soldUrl, scanned, rejected } = await harvestComps(L.title);
+    const { comps, soldUrl, scanned, rejected, ship } = await harvestComps(L.title);
 
     // Refuse rather than invent. If the surviving comps are too few, or worth a
     // fraction of what is being asked, the match is wrong — and a confident
@@ -149,7 +154,12 @@
     }
 
     chrome.runtime.sendMessage(
-      { type: 'appraise', title: L.title, price: L.price, condition: L.condition, shipping: L.shipping, comps },
+      {
+        type: 'appraise', title: L.title, price: L.price, condition: L.condition,
+        shipping: L.shipping,                       // what YOU pay to receive it
+        resaleShipping: ship && ship.value,         // what sellers of this item actually charge
+        comps,
+      },
       (resp) => {
         if (!resp || !resp.ok || !resp.data?.appraisal) {
           render({ error: (resp && resp.error) || 'Nova unreachable — try again in a minute.' });
@@ -160,6 +170,7 @@
           listing: L,
           compCount: comps.length,
           soldUrl,
+          ship,
           days: resp.data.est_days_to_sell || resp.data.appraisal?.est_days_to_sell,
         });
       }

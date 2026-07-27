@@ -138,10 +138,49 @@
         reasons.irrelevant++;
         continue;
       }
-      kept.push({ title, price });
+      // Normalise to what the BUYER paid in total. A $32 item with $8 shipping
+      // and a $40 item shipped free are the same $40 sale; comparing the raw
+      // prices would treat them as a $8 spread that does not exist.
+      const shipping = typeof row.shipping === 'number' ? row.shipping : null;
+      const value = price + (shipping && shipping > 0 ? shipping : 0);
+      kept.push({ title, price, shipping, value });
     }
 
-    return { comps: kept.map((k) => k.price), kept, rejected: (rows || []).length - kept.length, reasons };
+    return { comps: kept.map((k) => k.value), kept, rejected: (rows || []).length - kept.length, reasons };
+  }
+
+  /**
+   * "Free shipping", "+$8.95 shipping", "Not specified" → 0, 8.95, null.
+   * null means UNKNOWN, which is not the same as zero and must not become it.
+   */
+  function parseShipping(text) {
+    if (text == null) return null;
+    const t = String(text).replace(/opens in a new window or tab/gi, ' ').trim();
+    if (!t) return null;
+    if (/free/i.test(t)) return 0;
+    const m = t.replace(/,/g, '').match(/\$\s*(\d+(?:\.\d{1,2})?)/);
+    if (!m) return null; // "not specified", "may not ship to…"
+    const v = parseFloat(m[1]);
+    return Number.isFinite(v) && v >= 0 && v < 1000 ? v : null;
+  }
+
+  /**
+   * What it actually costs to ship this item, learned from sellers who moved
+   * the same thing — rather than guessed from its category.
+   *
+   * Only CHARGED shipping is evidence. A "free shipping" sale does not mean
+   * shipping was free; it means the seller buried the cost in the price, so it
+   * tells us nothing about the cost and must not drag the estimate to zero.
+   * If nobody charged separately, we have no evidence and say so, and the API
+   * falls back to its category model.
+   */
+  function shippingEstimate(rows) {
+    const charged = (rows || [])
+      .map((r) => r && r.shipping)
+      .filter((v) => typeof v === 'number' && v > 0);
+    if (charged.length === 0) return { value: null, basis: 'no_evidence', observed: 0 };
+    const s = [...charged].sort((a, b) => a - b);
+    return { value: s[Math.floor(s.length / 2)], basis: 'observed', observed: charged.length };
   }
 
   /** Second pass: drop absurd values once we know the set is on-topic. */
@@ -176,7 +215,7 @@
     return { ok: true, median };
   }
 
-  const api = { normalize, tokens, modelTokens, relevance, selectComps, rejectOutliers, assessCoherence, ACCESSORY, BROKEN };
+  const api = { normalize, tokens, modelTokens, relevance, selectComps, rejectOutliers, assessCoherence, parseShipping, shippingEstimate, ACCESSORY, BROKEN };
   root.NovaComps = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : globalThis);
