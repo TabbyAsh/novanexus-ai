@@ -133,3 +133,7 @@ ENV/
 .env.prod
 .gstack/
 .first-contact.json
+
+# Personal financial data — never commit. Nova Ledger reads CSVs from here.
+.ledger/
+*.ledger.json
