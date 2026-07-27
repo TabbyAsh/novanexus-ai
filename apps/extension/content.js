@@ -104,9 +104,9 @@
         <button class="nl-x" id="nl-close">×</button></div>
       <div class="nl-verdict ${cls}">${v}${a.maxBuyPrice ? ` · max buy ${money(a.maxBuyPrice)}` : ''}</div>
       <div class="nl-grid">
-        <div><span>Asking</span><b>${money(L.price)}</b></div>
+        <div><span>${L.shipping ? 'Costs you' : 'Asking'}</span><b>${money(L.price + (L.shipping || 0))}</b>${L.shipping ? `<i class="nl-note">${money(L.price)} + ${money(L.shipping)} ship</i>` : ''}</div>
         <div><span>Sold range</span><b>${money(a.expectedResaleLow)}–${money(a.expectedResaleHigh)}</b></div>
-        <div><span>Fees + ship</span><b>${money(a.estimatedFees)} + ${money(a.estimatedShipping)}</b></div>
+        <div><span>Fees + resale ship</span><b>${money(a.estimatedFees)} + ${money(a.estimatedShipping)}</b></div>
         <div><span>Net if resold</span><b>${money(a.expectedNetProfitLow)} to ${money(a.expectedNetProfitHigh)}</b></div>
         <div><span>Est. sale time</span><b>${state.days || '—'}</b></div>
         <div><span>Confidence</span><b>${Math.round((a.confidence || 0) * 100)}%</b></div>

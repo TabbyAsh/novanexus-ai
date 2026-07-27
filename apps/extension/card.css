@@ -31,6 +31,8 @@
 #nova-lens-card .nl-grid div { display: flex; flex-direction: column; }
 #nova-lens-card .nl-grid span { font-size: 10px; color: #66788c; text-transform: uppercase; letter-spacing: 0.08em; }
 #nova-lens-card .nl-grid b { font-size: 13px; color: #e8f4ff; font-weight: 600; }
+/* the breakdown under a figure, e.g. "$44.95 + $8.00 ship" */
+#nova-lens-card .nl-grid .nl-note { font-size: 10px; color: #66788c; font-style: normal; margin-top: 1px; }
 #nova-lens-card .nl-actions { display: flex; gap: 8px; padding: 0 12px 12px; }
 #nova-lens-card .nl-btn {
   flex: 1; text-align: center; padding: 8px 10px; border-radius: 8px; cursor: pointer;

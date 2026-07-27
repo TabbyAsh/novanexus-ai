@@ -12,11 +12,19 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           title: msg.title,
-          buy_price: msg.price,
+          // What it actually costs to acquire: the price PLUS what you pay to
+          // have it shipped to you.
+          buy_price: Number((msg.price + (Number.isFinite(msg.shipping) ? msg.shipping : 0)).toFixed(2)),
           condition: msg.condition || 'Good',
           shipping_or_pickup: 'shipping',
           target_platform: 'eBay',
-          estimatedShipping: msg.shipping,
+          // estimatedShipping is deliberately NOT sent. The API subtracts it
+          // from RESALE proceeds — it is the cost of shipping the item to your
+          // buyer, a different quantity from the listing's inbound shipping.
+          // Passing the listing's value meant every "free shipping" item was
+          // appraised as though reselling it cost nothing to ship, inflating
+          // max buy by ~$8 on a watch. Omitting it lets the API apply its own
+          // category estimate.
           manualComps: Array.isArray(msg.comps) && msg.comps.length ? msg.comps : undefined,
         }),
       });
