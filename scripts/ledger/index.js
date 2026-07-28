@@ -18,6 +18,8 @@ const { parseCsv } = require('./csv');
 const { normalizeRecords } = require('./normalize');
 const { findInternalTransfers, findRecurring, monthlySummary, computeRunway } = require('./analyze');
 const { discover, SEARCH_DIRS } = require('./discover');
+const { readPdf } = require('./pdf');
+const { parseStatement } = require('./statements');
 
 const ROOT = path.join(__dirname, '..', '..');
 const LEDGER_DIR = path.join(ROOT, '.ledger');
@@ -148,9 +150,35 @@ function cmdAuto() {
   console.log(`Found ${found.length} file${found.length === 1 ? '' : 's'} that look like money:\n`);
   const all = [];
   for (const f of found) {
+    console.log(`  ${f.name}  —  ${f.institution}`);
+
+    if (f.kind === 'pdf') {
+      const r = readPdf(f.path);
+      if (!r.text) {
+        for (const w of r.warnings) console.log(`    ${w}`);
+        console.log('');
+        continue;
+      }
+      const p = parseStatement(r.text, f.name.replace(/\.pdf$/i, ''));
+      if (p.transactions.length === 0) {
+        console.log('    no transaction table found — skipping (probably not a statement)\n');
+        continue;
+      }
+      const how = r.method === 'ocr' ? `scanned pages, read by OCR` : 'text in the PDF';
+      console.log(`    ${p.transactions.length} transactions from ${how}`);
+      console.log(`    ${p.reconciled} of ${p.transactions.length} reconcile against the running balance`);
+      if (p.accounts.length > 1) console.log(`    accounts: ${p.accounts.join(' | ')}`);
+      if (p.unreconciled > 0) {
+        console.log(`    ${p.unreconciled} did not — their amounts come from the balance change, which is`);
+        console.log('    the reliable column, but check those rows if a figure looks odd.');
+      }
+      console.log('');
+      all.push(...p.transactions);
+      continue;
+    }
+
     const account = f.name.replace(/\.csv$/i, '');
     const { transactions, mapping, skipped, signNote } = normalizeRecords(f.records, f.headers, f.name, account);
-    console.log(`  ${f.name}  —  ${f.institution}`);
     console.log(`    ${transactions.length} transactions${skipped ? `, ${skipped} rows skipped` : ''}`);
     if (mapping.assumptions.length) console.log(`    read as: ${mapping.assumptions.join('; ')}`);
     if (signNote) console.log(`    NOTE: ${signNote}`);

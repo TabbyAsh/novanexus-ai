@@ -14,16 +14,45 @@ const path = require('path');
 const os = require('os');
 const { parseCsv } = require('./csv');
 const { buildMapping } = require('./normalize');
+const { extractTextLayer } = require('./pdf');
 
 const HOME = os.homedir();
-const SEARCH_DIRS = [
-  path.join(HOME, 'Downloads'),
-  path.join(HOME, 'Desktop'),
-  path.join(HOME, 'Documents'),
-  path.join(HOME, 'OneDrive', 'Downloads'),
-  path.join(HOME, 'OneDrive', 'Desktop'),
-  path.join(HOME, 'OneDrive', 'Documents'),
-];
+const FOLDERS = ['Downloads', 'Desktop', 'Documents'];
+
+/**
+ * Downloads is not always under the home directory — a second drive is a
+ * common setup, and a tool that only looks in C:\Users\<name> will report
+ * "found nothing" while the statements sit in D:\Kibble\Downloads. So the
+ * usual places are checked, then every fixed drive one level deep.
+ * Override entirely with NOVA_LEDGER_DIRS="D:/somewhere;E:/else".
+ */
+function searchDirs() {
+  const dirs = [];
+  for (const f of FOLDERS) {
+    dirs.push(path.join(HOME, f));
+    dirs.push(path.join(HOME, 'OneDrive', f));
+  }
+
+  const fromEnv = String(process.env.NOVA_LEDGER_DIRS || '').split(/[;,]/).map((s) => s.trim()).filter(Boolean);
+  dirs.unshift(...fromEnv);
+
+  if (process.platform === 'win32') {
+    for (const letter of 'DEFGH') {
+      const root = `${letter}:\\`;
+      let top;
+      try { top = fs.readdirSync(root, { withFileTypes: true }); } catch { continue; }
+      for (const f of FOLDERS) dirs.push(path.join(root, f));
+      for (const e of top) {
+        if (!e.isDirectory()) continue;
+        if (/^(\$|Windows|Program Files|System Volume)/i.test(e.name)) continue;
+        for (const f of FOLDERS) dirs.push(path.join(root, e.name, f));
+      }
+    }
+  }
+  return [...new Set(dirs)];
+}
+
+const SEARCH_DIRS = searchDirs();
 
 const MAX_AGE_DAYS = 180;
 const MAX_BYTES = 25 * 1024 * 1024;
@@ -51,13 +80,53 @@ function guessInstitution(filename, headers) {
   return 'a bank or card';
 }
 
+/** A PDF worth opening: says statement-ish things, or is named that way. */
+function pdfLooksFinancial(full, name) {
+  const { text } = extractTextLayer(full);
+  if (text && text.replace(/\s/g, '').length > 200) {
+    // A single word like "balance" or "account" appears in plenty of ordinary
+    // documents, so require several distinct banking signals AND a column of
+    // actual money amounts. Otherwise every business ebook in Downloads
+    // registers as a bank statement.
+    const signals = ['statement', 'balance', 'deposit', 'withdrawal', 'transaction', 'account summary', 'posted', 'available balance']
+      .filter((w) => new RegExp(w, 'i').test(text)).length;
+    const amounts = (text.match(/\$\s?\d{1,3}(?:,\d{3})*\.\d{2}/g) || []).length;
+    return signals >= 3 && amounts >= 5;
+  }
+  // No text layer — it is a scan, and only OCR could tell. Judge by the name
+  // rather than OCR'ing every PDF in Downloads, which would take minutes.
+  return /statement|bank|account|checking|savings|credit|transaction/i.test(name);
+}
+
 function scanDir(dir, out, seen) {
   let entries;
   try { entries = fs.readdirSync(dir, { withFileTypes: true }); } catch { return; }
   for (const e of entries) {
     if (!e.isFile()) continue;
-    if (!/\.csv$/i.test(e.name)) continue;
+    const isPdf = /\.pdf$/i.test(e.name);
+    if (!/\.csv$/i.test(e.name) && !isPdf) continue;
     const full = path.join(dir, e.name);
+
+    if (isPdf) {
+      if (seen.has(full.toLowerCase())) continue;
+      let st;
+      try { st = fs.statSync(full); } catch { continue; }
+      if (st.size > MAX_BYTES || st.size < 200) continue;
+      if ((Date.now() - st.mtimeMs) / 86400000 > MAX_AGE_DAYS) continue;
+      if (!pdfLooksFinancial(full, e.name)) continue;
+      seen.add(full.toLowerCase());
+      out.push({
+        kind: 'pdf',
+        path: full,
+        name: e.name,
+        dir,
+        rows: null,
+        modified: new Date(st.mtimeMs).toISOString().slice(0, 10),
+        institution: guessInstitution(e.name, []),
+      });
+      continue;
+    }
+
     if (seen.has(full.toLowerCase())) continue;
     let st;
     try { st = fs.statSync(full); } catch { continue; }
@@ -77,6 +146,7 @@ function scanDir(dir, out, seen) {
 
     seen.add(full.toLowerCase());
     out.push({
+      kind: 'csv',
       path: full,
       name: e.name,
       dir,
