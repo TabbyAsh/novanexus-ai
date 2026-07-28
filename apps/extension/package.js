@@ -14,7 +14,7 @@ const path = require('path');
 const zlib = require('zlib');
 
 const ROOT = __dirname;
-const SHIP = ['manifest.json', 'background.js', 'comps.js', 'content.js', 'card.css',
+const SHIP = ['manifest.json', 'background.js', 'comps.js', 'content.js', 'scout.js', 'card.css',
   'icons/icon16.png', 'icons/icon32.png', 'icons/icon48.png', 'icons/icon128.png'];
 
 const CRC_TABLE = (() => {

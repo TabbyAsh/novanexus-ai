@@ -50,6 +50,11 @@
       // word-boundary check below. Strip it before anything else.
       .replace(/opens in a new window or tab/gi, ' ')
       .toLowerCase()
+      // Model numbers are routinely hyphenated: HEG-001, SM-R820, WH-1000XM5.
+      // Splitting on the hyphen destroys them ("heg" + "001" is neither a model
+      // number nor anything useful), which silently disabled model matching on
+      // most real listings. Join them back up first.
+      .replace(/([a-z0-9])-([a-z0-9])/g, '$1$2')
       .replace(/[^a-z0-9\s]/g, ' ')
       .replace(/\s+/g, ' ')
       .trim();
@@ -215,7 +220,50 @@
     return { ok: true, median };
   }
 
-  const api = { normalize, tokens, modelTokens, relevance, selectComps, rejectOutliers, assessCoherence, parseShipping, shippingEstimate, ACCESSORY, BROKEN };
+  /**
+   * Which search results are worth spending a comps lookup on.
+   *
+   * Every lookup is a request from the user's own session, so the budget is
+   * small and must be spent well. Items with no model number rarely produce
+   * trustworthy comps, and duplicates of the same listing waste the budget
+   * outright. Sorted by price because a mispriced expensive item is worth more
+   * than a mispriced cheap one, and the cheapest results are usually
+   * accessories rather than bargains.
+   */
+  function prioritiseListings(rows, max) {
+    const seen = new Set();
+    const out = [];
+    for (const r of rows || []) {
+      if (!r || !r.title || !(r.price > 0)) continue;
+      if (modelTokens(r.title).length === 0) continue;
+      const key = normalize(r.title).slice(0, 60);
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(r);
+    }
+    out.sort((a, b) => b.price - a.price);
+    return out.slice(0, max || 25);
+  }
+
+  /**
+   * The bar a find must clear before it is shown as an opportunity.
+   * Both a floor and a margin: $12 on a $20 item is a real flip, $12 on a $400
+   * item is noise dressed as one. A verdict the engine would not act on is
+   * never promoted here either.
+   */
+  function clearsBar(result, opts) {
+    const o = opts || {};
+    const minProfit = o.minProfit == null ? 12 : o.minProfit;
+    const minMargin = o.minMargin == null ? 0.22 : o.minMargin;
+    const profit = Number(result && result.profit);
+    const cost = Number(result && result.cost);
+    const decision = result && result.decision;
+    if (!Number.isFinite(profit) || !Number.isFinite(cost) || cost <= 0) return false;
+    if (decision !== 'BUY' && decision !== 'NEGOTIATE') return false;
+    return profit >= minProfit && profit / cost >= minMargin;
+  }
+
+  const api = { normalize, tokens, modelTokens, relevance, selectComps, rejectOutliers, assessCoherence, parseShipping, shippingEstimate, prioritiseListings, clearsBar, ACCESSORY, BROKEN };
   root.NovaComps = api;
   if (typeof module !== 'undefined' && module.exports) module.exports = api;
 })(typeof self !== 'undefined' ? self : globalThis);

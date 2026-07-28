@@ -23,12 +23,36 @@
       "128": "icons/icon128.png"
     }
   },
-  "background": { "service_worker": "background.js" },
+  "background": {
+    "service_worker": "background.js"
+  },
   "content_scripts": [
     {
-      "matches": ["https://www.ebay.com/itm/*", "https://ebay.com/itm/*"],
-      "js": ["comps.js", "content.js"],
-      "css": ["card.css"],
+      "matches": [
+        "https://www.ebay.com/itm/*",
+        "https://ebay.com/itm/*"
+      ],
+      "js": [
+        "comps.js",
+        "content.js"
+      ],
+      "css": [
+        "card.css"
+      ],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": [
+        "https://www.ebay.com/sch/*",
+        "https://ebay.com/sch/*"
+      ],
+      "js": [
+        "comps.js",
+        "scout.js"
+      ],
+      "css": [
+        "card.css"
+      ],
       "run_at": "document_idle"
     }
   ]

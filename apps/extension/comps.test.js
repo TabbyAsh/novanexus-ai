@@ -159,6 +159,34 @@ console.log('\nG. comps normalised to total buyer cost');
   check('shipping evidence comes from the charged sales', C.shippingEstimate(sel.kept).value === 8, `got ${C.shippingEstimate(sel.kept).value}`);
 }
 
+console.log('\nH. Scout — choosing where to spend a lookup');
+{
+  const rows = [
+    { title: 'DeWalt DCD771C2 20V Drill Kit', price: 60 },
+    { title: 'DeWalt DCD771C2 20V Drill Kit', price: 60 },        // duplicate listing
+    { title: 'Assorted tools lot great condition', price: 200 },  // no model number
+    { title: 'Sony WH1000XM5 Headphones Black', price: 180 },
+    { title: 'Nintendo Switch OLED HEG-001 Console', price: 250 },
+  ];
+  const picked = C.prioritiseListings(rows, 25);
+  check('duplicates collapse to one', picked.filter((r) => /DCD771C2/.test(r.title)).length === 1);
+  check('model-less listings are skipped', !picked.some((r) => /Assorted tools/.test(r.title)));
+  check('highest value first', picked[0].price === 250, `first=${picked[0].price}`);
+  check('budget is respected', C.prioritiseListings(rows, 2).length === 2);
+}
+
+console.log('\nI. Scout — the bar a find must clear');
+{
+  check('a real flip passes', C.clearsBar({ profit: 20, cost: 45, decision: 'BUY' }));
+  check('NEGOTIATE passes too', C.clearsBar({ profit: 20, cost: 45, decision: 'NEGOTIATE' }));
+  check('a PASS verdict is never promoted', !C.clearsBar({ profit: 50, cost: 45, decision: 'PASS' }));
+  // $12 on a $20 item is a flip; $12 on a $400 item is noise wearing its clothes.
+  check('thin margin on an expensive item is rejected', !C.clearsBar({ profit: 12, cost: 400, decision: 'BUY' }));
+  check('good margin on a cheap item is accepted', C.clearsBar({ profit: 13, cost: 25, decision: 'BUY' }));
+  check('below the floor is rejected', !C.clearsBar({ profit: 5, cost: 10, decision: 'BUY' }));
+  check('missing numbers are rejected', !C.clearsBar({ profit: NaN, cost: 45, decision: 'BUY' }));
+}
+
 console.log('\nD. selling the accessory itself still works');
 {
   const source = 'DeWalt DCB201 20V MAX Battery Pack';
