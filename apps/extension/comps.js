@@ -232,17 +232,24 @@
    */
   function prioritiseListings(rows, max) {
     const seen = new Set();
-    const out = [];
+    const withModel = [];
+    const withoutModel = [];
     for (const r of rows || []) {
       if (!r || !r.title || !(r.price > 0)) continue;
-      if (modelTokens(r.title).length === 0) continue;
       const key = normalize(r.title).slice(0, 60);
       if (seen.has(key)) continue;
       seen.add(key);
-      out.push(r);
+      (modelTokens(r.title).length > 0 ? withModel : withoutModel).push(r);
     }
-    out.sort((a, b) => b.price - a.price);
-    return out.slice(0, max || 25);
+    const byPrice = (a, b) => b.price - a.price;
+    withModel.sort(byPrice);
+    withoutModel.sort(byPrice);
+    // Model numbers go FIRST because their comps are trustworthy — but they are
+    // not a requirement. Only 2 of 6 real "Nintendo Switch console" listings
+    // carry one, so demanding a model number discarded most of the page before
+    // checking anything and produced a confident "no opportunities" that was
+    // really "I barely looked".
+    return [...withModel, ...withoutModel].slice(0, max || 25);
   }
 
   /**

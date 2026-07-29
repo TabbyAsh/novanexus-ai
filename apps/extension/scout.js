@@ -119,7 +119,32 @@
     if (x) x.onclick = () => panel().remove();
   }
 
-  function renderResults(found, checked) {
+  /**
+   * An empty result must account for itself. "Nothing found" and "silently
+   * broken" look identical from the outside, so every listing that was dropped
+   * is counted and the reason shown — otherwise a bug reads as market truth.
+   */
+  function explain(stats) {
+    const lines = [];
+    if (stats.read === 0) return 'Could not read any listings on this page — eBay may have changed its search markup. That is a bug, not a verdict.';
+    lines.push(`${stats.read} listings on the page, ${stats.checked} checked against their own sold comps.`);
+    const bits = [];
+    if (stats.noComps) bits.push(`${stats.noComps} had too few matching sold listings`);
+    if (stats.incoherent) bits.push(`${stats.incoherent} had comps that did not match the item`);
+    if (stats.apiFail) bits.push(`${stats.apiFail} could not be appraised`);
+    if (stats.passVerdict) bits.push(`${stats.passVerdict} sell for less than they are asking`);
+    if (stats.belowBar) bits.push(`${stats.belowBar} were profitable but too thin to bother`);
+    if (bits.length) lines.push(`Of those: ${bits.join('; ')}.`);
+    if (stats.passVerdict >= Math.max(1, stats.checked * 0.6)) {
+      lines.push('That pattern — most listings priced at or above what they sell for — is what a picked-over search looks like. The edges are in messy searches: misspellings, vague titles, bundles, auctions ending soon.');
+    }
+    if (stats.noComps >= Math.max(1, stats.checked * 0.6)) {
+      lines.push('Mostly missing comps, which usually means the search terms are too generic to match sold listings. Try a more specific search.');
+    }
+    return lines.join(' ');
+  }
+
+  function renderResults(found, checked, stats) {
     const rows = found.map((f) => `
       <a class="ns-row" href="${f.listing.url}" target="_blank">
         <div class="ns-row-top">
@@ -136,7 +161,7 @@
       <div class="ns-head"><span class="ns-logo">N</span> Nova Scout
         <span class="ns-basis">${found.length} of ${checked} checked</span>
         <button class="ns-x" id="ns-close">×</button></div>
-      ${found.length ? rows : `<div class="ns-body">Nothing on this page clears the bar — every listing is priced at or above what it actually sells for. That is the normal answer on a picked-over search, and it is worth more than a made-up opportunity.</div>`}
+      ${found.length ? rows : `<div class="ns-body">Nothing here clears the bar.<br><br>${explain(stats || {})}</div>`}
       <div class="ns-foot">Profit is after eBay fees and shipping, from SOLD comps only. Decision support, not a guarantee.</div>`;
     const x = document.getElementById('ns-close');
     if (x) x.onclick = () => panel().remove();
@@ -145,24 +170,24 @@
   // ── main ───────────────────────────────────────────────────────────────
   async function scan() {
     const all = readResults();
-    if (all.length === 0) return;
+    const stats = { read: all.length, checked: 0, noComps: 0, incoherent: 0, apiFail: 0, passVerdict: 0, belowBar: 0 };
+    if (all.length === 0) { renderResults([], 0, stats); return; }
     const candidates = NovaComps.prioritiseListings(all, MAX_LOOKUPS);
-    if (candidates.length === 0) {
-      renderResults([], 0);
-      return;
-    }
+    if (candidates.length === 0) { renderResults([], 0, stats); return; }
 
     const found = [];
     for (let i = 0; i < candidates.length; i++) {
       renderProgress(i, candidates.length, found.length);
       const listing = candidates[i];
       const { comps, ship } = await fetchComps(listing.title);
+      stats.checked++;
 
+      if (comps.length < 3) { stats.noComps++; await sleep(DELAY_MS); continue; }
       const coherence = NovaComps.assessCoherence(comps, listing.price);
-      if (!coherence.ok) { await sleep(DELAY_MS); continue; }
+      if (!coherence.ok) { stats.incoherent++; await sleep(DELAY_MS); continue; }
 
       const a = await appraise(listing, comps, ship.value);
-      if (!a) { await sleep(DELAY_MS); continue; }
+      if (!a) { stats.apiFail++; await sleep(DELAY_MS); continue; }
 
       const cost = listing.price + (listing.shipping || 0);
       const profit = a.expectedNetProfitMid;
@@ -170,11 +195,15 @@
       if (NovaComps.clearsBar({ profit, cost, decision: a.decision }, { minProfit: MIN_PROFIT, minMargin: MIN_MARGIN })) {
         found.push({ listing, a, profit, margin, cost, compCount: comps.length });
         found.sort((x, y) => y.profit - x.profit);
+      } else if (a.decision !== 'BUY' && a.decision !== 'NEGOTIATE') {
+        stats.passVerdict++;
+      } else {
+        stats.belowBar++;
       }
       await sleep(DELAY_MS);
     }
 
-    renderResults(found, candidates.length);
+    renderResults(found, candidates.length, stats);
   }
 
   // eBay search pages are single-page-app navigations, so rescan on change.

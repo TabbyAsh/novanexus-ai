@@ -170,9 +170,18 @@ console.log('\nH. Scout — choosing where to spend a lookup');
   ];
   const picked = C.prioritiseListings(rows, 25);
   check('duplicates collapse to one', picked.filter((r) => /DCD771C2/.test(r.title)).length === 1);
-  check('model-less listings are skipped', !picked.some((r) => /Assorted tools/.test(r.title)));
-  check('highest value first', picked[0].price === 250, `first=${picked[0].price}`);
+  check('model-less listings are still checked', picked.some((r) => /Assorted tools/.test(r.title)));
+  check('model-numbered items are checked first', picked[0].price === 250, `first=${picked[0].price}`);
+  check('model-less items rank last', /Assorted tools/.test(picked[picked.length - 1].title));
   check('budget is respected', C.prioritiseListings(rows, 2).length === 2);
+  // The real failure this guards: demanding a model number discarded 4 of 6
+  // genuine "Nintendo Switch console" listings and reported no opportunities.
+  const switchTitles = [
+    'Nintendo Switch OLED Model White Console',
+    'Nintendo Switch Console - Neon Blue and Red Joy-Con',
+    'Nintendo Switch Lite Turquoise Handheld Console',
+  ].map((t, i) => ({ title: t, price: 200 + i }));
+  check('a page with no model numbers is still examined', C.prioritiseListings(switchTitles, 25).length === 3);
 }
 
 console.log('\nI. Scout — the bar a find must clear');
