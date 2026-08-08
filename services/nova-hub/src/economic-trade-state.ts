@@ -314,9 +314,9 @@ async function seedTrade0001(userId: string): Promise<string> {
      ON CONFLICT (user_id, reference) DO NOTHING`,
     [
       userId,
-      'Apex Washing → Greencastle Storage and Parking',
-      'Apex Washing',
-      'Greencastle Storage and Parking',
+      'Service Operator → Commercial Site',
+      'Service Operator',
+      'Commercial Site',
       'Commercial exterior cleaning',
     ],
   );
@@ -536,7 +536,7 @@ export async function createFieldMeasurementTask(userId: string): Promise<Econom
      ) VALUES ($1, $2, 'FIELD_MEASUREMENT', $3, 'AWAITING_HUMAN', 'ASSIST', 'R1', $4, $5::jsonb)
      ON CONFLICT (idempotency_key) DO NOTHING
      RETURNING id`,
-    [trade.id, userId, 'Measure and photograph Greencastle Storage structures', idempotencyKey, JSON.stringify(payload)],
+    [trade.id, userId, 'Measure and photograph the commercial site structures', idempotencyKey, JSON.stringify(payload)],
   );
 
   if (inserted?.id) {
@@ -561,7 +561,7 @@ export async function createFieldMeasurementTask(userId: string): Promise<Econom
 
 export function targetsTrade0001(message: string): boolean {
   return /\btrade\s*#?\s*0*1\b/i.test(message)
-    || /\bgreencastle\s+storage\b/i.test(message)
+    || /\bcommercial\s+site\b/i.test(message)
     || /\bfield[-\s]?measurement\b/i.test(message);
 }
 

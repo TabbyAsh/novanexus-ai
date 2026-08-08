@@ -16,7 +16,7 @@ import { writeArtifact, readArtifacts } from './substrate';
 const logger = createLogger('ignition');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const OWNER_EMAIL = process.env.OWNER_EMAIL || 'kibblewyatt@gmail.com';
+const OWNER_EMAIL = process.env.OWNER_EMAIL || '';
 const FROM_EMAIL = process.env.ALERT_FROM_EMAIL || 'Nova <nova@novanexus-ai.com>';
 
 // ── The sector grammar (hardcoded physics) ─────────────────────────────
@@ -66,7 +66,7 @@ export async function generateSectorBlueprint(goal: string): Promise<{ blueprint
   });
   if (!blueprintId) return { error: 'Blueprint could not be recorded — nothing proceeds off the record.' };
 
-  if (RESEND_API_KEY) {
+  if (RESEND_API_KEY && OWNER_EMAIL) {
     fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },

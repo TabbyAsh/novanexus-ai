@@ -25,7 +25,7 @@ import { writeArtifact, readArtifacts } from './substrate';
 const logger = createLogger('auditor');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const OWNER_EMAIL = process.env.OWNER_EMAIL || 'kibblewyatt@gmail.com';
+const OWNER_EMAIL = process.env.OWNER_EMAIL || '';
 const FROM_EMAIL = process.env.ALERT_FROM_EMAIL || 'Nova <nova@novanexus-ai.com>';
 const AUDITOR_ID = 'the-mirror';
 
@@ -108,7 +108,7 @@ async function huntRegimeSkew(): Promise<AuditFinding[]> {
 }
 
 async function emailOwner(findings: AuditFinding[]): Promise<void> {
-  if (!RESEND_API_KEY || findings.length === 0) return;
+  if (!RESEND_API_KEY || !OWNER_EMAIL || findings.length === 0) return;
   const body = findings
     .map(f => `[SEV ${f.severity}] ${f.finding}`)
     .join('\n\n');

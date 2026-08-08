@@ -181,7 +181,7 @@ export default function FunctionalWorldShell() {
   const refresh = useCallback(async () => {
     setBusy('Reading durable Trade state');
     try {
-      await callNexus('What is blocking Trade #0001, and how do we close it?');
+      await callNexus('What is blocking the current field-measurement case, and how do we close it?');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Trade state is unavailable.');
     } finally {
@@ -196,7 +196,7 @@ export default function FunctionalWorldShell() {
   const submitEvidence = useCallback(async (marker: 'GEOMETRY_EVIDENCE:' | 'CONDITION_EVIDENCE:', payload: unknown) => {
     setBusy(marker.startsWith('GEOMETRY') ? 'Evaluating geometry evidence' : 'Evaluating condition evidence');
     try {
-      await callNexus(`Trade #0001\n${marker}${JSON.stringify(payload)}`);
+      await callNexus(`${marker}${JSON.stringify(payload)}`);
       setWorldRevision(value => value + 1);
       setTab('receipts');
     } catch (error) {
@@ -249,7 +249,7 @@ export default function FunctionalWorldShell() {
             <header className="flex items-start justify-between gap-4 border-b border-white/7 px-5 py-4">
               <div>
                 <div className="text-[9px] uppercase tracking-[.32em] text-cyan-100/40">Nova OS · Evidence boundary</div>
-                <h2 className="mt-2 text-xl font-semibold">Trade #0001 verification</h2>
+                <h2 className="mt-2 text-xl font-semibold">Private case verification</h2>
                 <p className="mt-1 text-xs text-white/35">Submission does not close a fracture. The deterministic evaluator decides whether the explicit rule passed.</p>
               </div>
               <div className="flex gap-2">
@@ -340,7 +340,7 @@ function Fact({ label, value }: { label: string; value: string }) {
 }
 
 function GeometryEvidenceForm({ disabled, onSubmit }: { disabled: boolean; onSubmit: (payload: unknown) => void }) {
-  const [measuredBy, setMeasuredBy] = useState('Wyatt Kirby');
+  const [measuredBy, setMeasuredBy] = useState('');
   const [measuredAt, setMeasuredAt] = useState(() => new Date().toISOString().slice(0, 16));
   const [method, setMethod] = useState('Laser distance meter and tape cross-check');
   const [allCaptured, setAllCaptured] = useState(false);
@@ -406,7 +406,7 @@ function GeometryEvidenceForm({ disabled, onSubmit }: { disabled: boolean; onSub
 }
 
 function ConditionEvidenceForm({ disabled, onSubmit }: { disabled: boolean; onSubmit: (payload: unknown) => void }) {
-  const [observedBy, setObservedBy] = useState('Wyatt Kirby');
+  const [observedBy, setObservedBy] = useState('');
   const [observedAt, setObservedAt] = useState(() => new Date().toISOString().slice(0, 16));
   const [allCaptured, setAllCaptured] = useState(false);
   const [attested, setAttested] = useState(false);

@@ -15,7 +15,7 @@ import { writeArtifact } from './substrate';
 const logger = createLogger('tuner');
 
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const OWNER_EMAIL = process.env.OWNER_EMAIL || 'kibblewyatt@gmail.com';
+const OWNER_EMAIL = process.env.OWNER_EMAIL || '';
 const FROM_EMAIL = process.env.ALERT_FROM_EMAIL || 'Nova <nova@novanexus-ai.com>';
 
 const MIN_OUTCOMES_TO_TUNE = 30; // entry condition (P5): outcome volume first
@@ -62,7 +62,7 @@ export async function runTunerPass(): Promise<{ proposed: boolean; reason: strin
     },
   });
 
-  if (RESEND_API_KEY) {
+  if (RESEND_API_KEY && OWNER_EMAIL) {
     fetch('https://api.resend.com/emails', {
       method: 'POST',
       headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },

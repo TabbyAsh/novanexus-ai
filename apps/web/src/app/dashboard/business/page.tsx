@@ -4,7 +4,7 @@
  * NovaNexus Business OS — the flagship operator product.
  *
  * The productized "company-in-a-box": a persistent CRM/pipeline that any
- * service business owner can run. This is what Nova built by hand for Apex,
+ * service business owner can run. This is what Nova generalized from early operator work,
  * generalized for every user and backed by the database.
  *
  * Pipeline: LEAD → QUOTED → SCHEDULED → COMPLETED → PAID (or LOST)

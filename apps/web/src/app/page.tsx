@@ -1,41 +1,38 @@
 import Link from 'next/link';
 
-const lifecycle = [
+const novaLoop = [
   {
-    label: 'Objective',
-    value: 'Win and responsibly scope a commercial exterior-cleaning customer.',
+    number: '01',
+    name: 'Notice',
+    detail: 'Capture what changed without forcing it into an outdated plan.',
   },
   {
-    label: 'Trade',
-    value: 'Apex Washing → Greencastle Storage and Parking.',
+    number: '02',
+    name: 'Frame',
+    detail: 'Separate the decision, the unknowns, and the constraints that actually matter.',
   },
   {
-    label: 'Blockers',
-    value: 'Verified parcel and building geometry; current, structure-labeled surface-condition evidence.',
+    number: '03',
+    name: 'Commit',
+    detail: 'Name one next action, one owner, and the boundary they must not cross.',
   },
   {
-    label: 'Action',
-    value: 'Create a durable field-measurement task with a checklist for dimensions and photographs.',
+    number: '04',
+    name: 'Verify',
+    detail: 'Require evidence before work, payment, or completion is treated as real.',
   },
   {
-    label: 'Next',
-    value: 'Complete the checklist and submit evidence before Nova treats the scope or fixed bid as defensible.',
+    number: '05',
+    name: 'Adapt',
+    detail: 'Carry the result forward so the next decision starts smarter instead of starting over.',
   },
 ];
 
-const availableCapabilities = [
-  {
-    name: 'Private Nova OS',
-    detail: 'Existing authorized accounts can sign in to the authenticated operator workspace.',
-  },
-  {
-    name: 'Trade state',
-    detail: 'A Trade can retain its stage, blockers, next action, action history, and event history.',
-  },
-  {
-    name: 'Evidence-aware control',
-    detail: 'Missing evidence stays visible, human work is explicit, and no external execution is implied without a receipt.',
-  },
+const operatingQuestions = [
+  'What changed?',
+  'What matters now?',
+  'Who owns the next move?',
+  'What would prove it worked?',
 ];
 
 export default function HomePage() {
@@ -49,12 +46,15 @@ export default function HomePage() {
           <Link href="/" className="text-sm font-black uppercase tracking-[0.22em]">
             Nova
           </Link>
-          <div className="flex items-center gap-5 text-sm md:gap-8">
-            <Link href="#markets" className="underline-offset-4 hover:underline">
-              Markets
+          <div className="flex flex-wrap items-center gap-5 text-sm md:gap-8">
+            <Link href="#product" className="underline-offset-4 hover:underline">
+              Product
             </Link>
-            <Link href="#services" className="underline-offset-4 hover:underline">
-              Services
+            <Link href="#method" className="underline-offset-4 hover:underline">
+              Method
+            </Link>
+            <Link href="/services/back-office-os" className="underline-offset-4 hover:underline">
+              Guided Pilot
             </Link>
             <Link href="/login" className="underline-offset-4 hover:underline">
               Sign In
@@ -63,99 +63,107 @@ export default function HomePage() {
         </nav>
       </header>
 
-      <section className="mx-auto grid min-h-[68vh] max-w-6xl content-center gap-10 border-x border-[#1d211b] px-5 py-20 md:px-12 lg:grid-cols-[minmax(0,1fr)_18rem] lg:gap-20 lg:py-28">
+      <section className="mx-auto grid min-h-[76vh] max-w-6xl content-center gap-12 border-x border-[#1d211b] px-5 py-20 md:px-12 lg:grid-cols-[minmax(0,1fr)_19rem] lg:gap-20 lg:py-28">
         <div>
           <p className="mb-6 text-xs font-bold uppercase tracking-[0.24em] text-[#596052]">
-            Economic operations · private pilot
+            Adaptive operating memory
           </p>
-          <h1 className="max-w-4xl text-5xl font-black leading-[0.98] tracking-[-0.045em] sm:text-6xl md:text-7xl">
-            Nova turns a goal into a verified next action—and tracks it until the result is real.
+          <h1 className="max-w-4xl text-5xl font-black leading-[0.96] tracking-[-0.05em] sm:text-6xl md:text-7xl">
+            The world keeps inventing problems. Nova helps you keep solving them.
           </h1>
-          <Link
-            href="/world"
-            data-primary-action
-            className="mt-10 inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]"
-          >
-            Open Nova <span aria-hidden="true" className="ml-8">→</span>
-          </Link>
+          <p className="mt-8 max-w-2xl text-lg leading-8 text-[#4d5448]">
+            Nova holds the thread between a changing situation, the decision you make, the action someone owns,
+            and the evidence that tells you what to do next.
+          </p>
+          <div className="mt-10 flex flex-wrap items-center gap-6">
+            <Link
+              href="#method"
+              data-primary-action
+              className="inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]"
+            >
+              See the Nova loop <span aria-hidden="true" className="ml-8">↓</span>
+            </Link>
+            <Link href="/services/back-office-os" className="text-sm font-bold underline underline-offset-4">
+              Start with one real workflow →
+            </Link>
+          </div>
         </div>
-        <aside className="self-end border-t-2 border-[#141713] pt-4 text-sm leading-6 text-[#4d5448]">
-          Nova does not report revenue, completion, or execution until the underlying record and receipt exist.
+        <aside className="self-end border-t-2 border-[#141713] pt-5 text-sm leading-6 text-[#4d5448]">
+          <p className="font-bold text-[#141713]">One operating rule</p>
+          <p className="mt-2">If an action leaves no evidence, Nova does not pretend it happened.</p>
         </aside>
       </section>
 
-      <section
-        aria-labelledby="trade-example-title"
-        className="border-y border-[#1d211b] bg-[#141713] text-[#f2f0e9]"
-      >
-        <div className="mx-auto max-w-6xl px-5 py-20 md:px-8 md:py-24">
-          <div className="mb-12 flex flex-col justify-between gap-4 border-b border-[#777d70] pb-5 md:flex-row md:items-end">
-            <div>
-              <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#b9ef9a]">Implemented lifecycle</p>
-              <h2 id="trade-example-title" className="mt-3 text-3xl font-black tracking-[-0.03em] md:text-4xl">
-                Trade #0001
-              </h2>
-            </div>
-            <p className="max-w-md text-sm leading-6 text-[#b8bdb2]">
-              A real system record used to expose what is known, what is missing, and what a person must do next.
+      <section id="product" aria-labelledby="product-title" className="border-y border-[#1d211b] bg-[#141713] text-[#f2f0e9]">
+        <div className="mx-auto grid max-w-6xl gap-14 px-5 py-20 md:px-8 md:py-24 lg:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#b9ef9a]">What Nova is</p>
+            <h2 id="product-title" className="mt-4 max-w-xl text-4xl font-black leading-tight tracking-[-0.04em] md:text-5xl">
+              Not another place to store work. A memory for why the work exists.
+            </h2>
+            <p className="mt-7 max-w-xl text-base leading-7 text-[#c8ccc3]">
+              Documents remember words. Task lists remember assignments. Nova remembers the reasoning chain: the signal,
+              the decision, the commitment, the proof, and what the outcome changed.
             </p>
           </div>
-
-          <dl>
-            {lifecycle.map((item, index) => (
-              <div
-                key={item.label}
-                className="grid gap-3 border-b border-[#454a41] py-6 md:grid-cols-[10rem_2rem_minmax(0,1fr)] md:items-start"
-              >
-                <dt className="text-xs font-bold uppercase tracking-[0.18em] text-[#b9ef9a]">{item.label}</dt>
-                <dd aria-hidden="true" className="hidden text-[#777d70] md:block">{index < lifecycle.length - 1 ? '↓' : '·'}</dd>
-                <dd className="max-w-3xl text-lg leading-7">{item.value}</dd>
+          <dl className="border-t border-[#777d70]">
+            {operatingQuestions.map((question, index) => (
+              <div key={question} className="grid grid-cols-[3rem_minmax(0,1fr)] border-b border-[#454a41] py-6">
+                <dt className="text-xs font-bold text-[#b9ef9a]">0{index + 1}</dt>
+                <dd className="text-xl font-semibold tracking-[-0.02em]">{question}</dd>
               </div>
             ))}
           </dl>
-
-          <p className="mt-8 max-w-3xl border-l-2 border-[#b9ef9a] pl-5 text-sm leading-6 text-[#c8ccc3]">
-            Creating the field task persists an action and a <code>FIELD_MEASUREMENT_TASK_CREATED</code> event. It explicitly records that no external side effect was performed.
-          </p>
         </div>
       </section>
 
-      <section aria-labelledby="capabilities-title" className="mx-auto max-w-6xl border-x border-[#1d211b] px-5 py-20 md:px-8 md:py-24">
-        <div className="grid gap-12 lg:grid-cols-[17rem_minmax(0,1fr)]">
-          <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#596052]">Product truth</p>
-            <h2 id="capabilities-title" className="mt-3 text-3xl font-black tracking-[-0.03em]">
-              Available now
-            </h2>
-          </div>
-          <dl className="border-t-2 border-[#141713]">
-            {availableCapabilities.map((capability) => (
-              <div key={capability.name} className="grid gap-2 border-b border-[#777d70] py-6 md:grid-cols-[12rem_minmax(0,1fr)] md:gap-8">
-                <dt className="font-bold">{capability.name}</dt>
-                <dd className="leading-6 text-[#4d5448]">{capability.detail}</dd>
-              </div>
-            ))}
-          </dl>
+      <section id="method" aria-labelledby="method-title" className="mx-auto max-w-6xl border-x border-[#1d211b] px-5 py-20 md:px-8 md:py-24">
+        <div className="max-w-3xl">
+          <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#596052]">The method</p>
+          <h2 id="method-title" className="mt-4 text-4xl font-black tracking-[-0.04em] md:text-5xl">
+            Every unfamiliar problem becomes a loop Nova can hold.
+          </h2>
+          <p className="mt-6 text-lg leading-8 text-[#4d5448]">
+            A solved problem changes the conditions and creates the next problem. Nova preserves the learning between
+            loops so a person or team does not reset to zero every time reality moves.
+          </p>
         </div>
 
-        <div className="mt-20 grid border-t-2 border-[#141713] md:grid-cols-2">
-          <section id="markets" aria-labelledby="markets-title" className="border-b border-[#777d70] py-8 md:border-b-0 md:border-r md:pr-10">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#7a4a00]">Preview · not operational</p>
-            <h2 id="markets-title" className="mt-3 text-2xl font-black">Markets</h2>
-            <p className="mt-4 max-w-lg leading-7 text-[#4d5448]">
-              Research screens exist. Webull account sync, brokerage data, and live or paper order execution are not connected.
+        <ol className="mt-14 border-t-2 border-[#141713]">
+          {novaLoop.map((step) => (
+            <li key={step.name} className="grid gap-3 border-b border-[#777d70] py-7 md:grid-cols-[4rem_11rem_minmax(0,1fr)] md:items-start md:gap-8">
+              <span className="text-xs font-bold text-[#596052]">{step.number}</span>
+              <h3 className="text-xl font-black">{step.name}</h3>
+              <p className="max-w-2xl leading-7 text-[#4d5448]">{step.detail}</p>
+            </li>
+          ))}
+        </ol>
+      </section>
+
+      <section className="border-t border-[#1d211b] bg-[#dcefd0]">
+        <div className="mx-auto grid max-w-6xl gap-10 px-5 py-20 md:px-8 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#356b20]">Available now · guided pilot</p>
+            <h2 className="mt-4 max-w-3xl text-4xl font-black leading-tight tracking-[-0.04em] md:text-5xl">
+              Start with one workflow that keeps breaking.
+            </h2>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-[#3f493a]">
+              Bring one recurring handoff, follow-up, or operating bottleneck. The current $150 pilot turns it into a
+              client-owned workflow, practical tools, and a visible next-action loop. It is human delivered, one-time,
+              and not a software subscription.
             </p>
-          </section>
-          <section id="services" aria-labelledby="services-title" className="py-8 md:pl-10">
-            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#356b20]">Pilot · human delivered</p>
-            <h2 id="services-title" className="mt-3 text-2xl font-black">Services</h2>
-            <p className="mt-4 max-w-lg leading-7 text-[#4d5448]">
-              The $150 Back Office OS Starter Pilot has five bounded deliverables. A complete intake returns a durable receipt; scope acceptance, payment, and human delivery remain separate states.
-            </p>
-            <Link href="/services/back-office-os" className="mt-5 inline-block text-sm font-bold underline underline-offset-4">
-              Review the pilot and intake →
+          </div>
+          <div>
+            <Link
+              href="/services/back-office-os"
+              className="inline-flex min-h-12 w-full items-center justify-between border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713]"
+            >
+              Review the guided pilot <span aria-hidden="true">→</span>
             </Link>
-          </section>
+            <Link href="/login" className="mt-5 block text-center text-sm font-bold underline underline-offset-4">
+              Existing account sign in
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -165,7 +173,6 @@ export default function HomePage() {
           <div className="flex gap-5">
             <Link href="/privacy" className="underline-offset-4 hover:underline">Privacy</Link>
             <Link href="/terms" className="underline-offset-4 hover:underline">Terms</Link>
-            <Link href="/legal/risk-disclosure" className="underline-offset-4 hover:underline">Risk disclosure</Link>
           </div>
         </div>
       </footer>

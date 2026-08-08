@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-const FOUNDER_EMAIL = 'kibblewyatt@gmail.com';
+const CONTACT_EMAIL = 'hello@novanexus-ai.com';
 
 export default function StudioClient() {
   const [form, setForm] = useState({ name: '', business: '', need: '' });
@@ -25,7 +25,7 @@ export default function StudioClient() {
       `What I need:\n${form.need || '(describe what you want built)'}\n\n` +
       `— Sent from Nova Studio`
     );
-    window.location.href = `mailto:${FOUNDER_EMAIL}?subject=${subject}&body=${body}`;
+    window.location.href = `mailto:${CONTACT_EMAIL}?subject=${subject}&body=${body}`;
   };
 
   return (
@@ -152,7 +152,7 @@ export default function StudioClient() {
                 className="w-full py-3.5 rounded-xl bg-white text-black font-semibold hover:bg-gray-200 transition">
                 Send it →
               </button>
-              <p className="text-center text-xs text-gray-600">or email directly: <a href={`mailto:${FOUNDER_EMAIL}`} className="text-emerald-400 hover:text-emerald-300">{FOUNDER_EMAIL}</a></p>
+              <p className="text-center text-xs text-gray-600">or email directly: <a href={`mailto:${CONTACT_EMAIL}`} className="text-emerald-400 hover:text-emerald-300">{CONTACT_EMAIL}</a></p>
             </div>
           </div>
         </section>

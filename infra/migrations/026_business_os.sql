@@ -3,7 +3,7 @@
 -- Migration: 026_business_os
 --
 -- The productized "company-in-a-box": persistent CRM/pipeline for any
--- service business operator. This is what we built by hand for Apex,
+-- service business operator. This was generalized from early operator work,
 -- generalized for every NovaNexus user.
 --
 -- Doctrine: turn a messy small business into a working operating system —

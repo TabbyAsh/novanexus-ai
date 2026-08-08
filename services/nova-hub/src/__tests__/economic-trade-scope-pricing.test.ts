@@ -13,7 +13,7 @@ import type {
 
 const geometry: GeometryEvidenceSubmission = {
   measuredAt: '2026-08-08T01:00:00.000Z',
-  measuredBy: 'Wyatt Kirby',
+  measuredBy: 'Field Operator',
   measurementMethod: 'Laser distance meter and tape cross-check',
   allInScopeStructuresCaptured: true,
   attestedAccurate: true,
@@ -32,7 +32,7 @@ const geometry: GeometryEvidenceSubmission = {
 
 const condition: ConditionEvidenceSubmission = {
   observedAt: '2026-08-08T01:00:00.000Z',
-  observedBy: 'Wyatt Kirby',
+  observedBy: 'Field Operator',
   allInScopeFacesCaptured: true,
   attestedAccurate: true,
   waterAccess: 'CONFIRMED',

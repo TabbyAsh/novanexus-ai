@@ -162,7 +162,15 @@ export default function BackOfficeClient() {
               )}
             </div>
           ) : (
-            <form onSubmit={submit} className="border-2 border-[#141713] bg-white p-5 md:p-8" noValidate>
+            <form
+              onSubmit={submit}
+              className="border-2 border-[#141713] bg-white p-5 md:p-8"
+              noValidate
+              aria-describedby="pilot-intake-requirements"
+            >
+              <p id="pilot-intake-requirements" className="mb-5 border-l-4 border-[#777d70] bg-[#f8f7f2] px-4 py-3 text-sm leading-6 text-[#4d5448]">
+                All four fields are required. Use at least 2 characters for your name and business, a valid email address, and at least 20 characters for the workflow description. The inquiry button enables when those requirements are met.
+              </p>
               <div className="grid gap-5 sm:grid-cols-2">
                 <label className="text-sm font-bold">
                   Your name
@@ -197,7 +205,7 @@ export default function BackOfficeClient() {
                   minLength={2}
                   maxLength={160}
                   required
-                  placeholder="Example: Apex Exterior Cleaning — local service business"
+                  placeholder="Example: local service business with recurring customer follow-up"
                   className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
                 />
               </label>
@@ -212,11 +220,15 @@ export default function BackOfficeClient() {
                   required
                   className="mt-2 w-full resize-y border border-[#777d70] bg-[#f8f7f2] px-3 py-3 font-normal leading-6 outline-none focus:border-[#141713]"
                 />
-                <span className="mt-1 block text-right text-xs font-normal text-[#596052]">{form.challenge.length}/2000</span>
+                <span className="mt-1 flex justify-between gap-4 text-xs font-normal text-[#596052]">
+                  <span>Minimum 20 characters</span>
+                  <span>{form.challenge.length}/2000</span>
+                </span>
               </label>
               <button
                 type="submit"
                 disabled={!complete || status === 'submitting'}
+                aria-describedby="pilot-intake-requirements"
                 className="mt-6 flex min-h-12 w-full items-center justify-center bg-[#141713] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
               >
                 <Send aria-hidden="true" className="mr-3 h-4 w-4" />

@@ -7,7 +7,7 @@ describe('economic Trade deterministic routing', () => {
   test.each([
     'What is blocking Trade #0001?',
     'Show me trade 1',
-    'How do we close Greencastle Storage?',
+    'How do we close the commercial site opportunity?',
     'Create the field measurement task',
   ])('recognizes Trade #0001 intent: %s', message => {
     expect(targetsTrade0001(message)).toBe(true);
@@ -23,7 +23,7 @@ describe('economic Trade deterministic routing', () => {
 
   test.each([
     'Create the field measurement task for Trade #0001.',
-    'Start a site measurement checklist for Greencastle Storage.',
+    'Start a site measurement checklist for the commercial site.',
     'Field-measurement task: create it.',
   ])('recognizes a durable field-task command: %s', message => {
     expect(requestsFieldMeasurementTask(message)).toBe(true);

@@ -5,39 +5,37 @@ import HomePage from '../page';
 describe('public doorway', () => {
   const markup = renderToStaticMarkup(<HomePage />);
 
-  it('keeps the primary navigation small and sends users to real destinations', () => {
-    expect(markup).toContain('href="/"');
-    expect(markup).toContain('href="#markets"');
-    expect(markup).toContain('href="#services"');
+  it('sends visitors only to clear, real destinations', () => {
+    expect(markup).toContain('href="#product"');
+    expect(markup).toContain('href="#method"');
+    expect(markup).toContain('href="/services/back-office-os"');
     expect(markup).toContain('href="/login"');
 
-    expect(markup).not.toContain('href="/radar"');
-    expect(markup).not.toContain('href="/pricing"');
-    expect(markup).not.toContain('href="/decision-cards"');
+    expect(markup).not.toContain('href="/world"');
+    expect(markup).not.toContain('href="#markets"');
     expect(markup).not.toContain('href="/dashboard');
   });
 
-  it('contains one primary action and the implemented Trade #0001 lifecycle', () => {
+  it('explains one coherent Nova product and method', () => {
     expect(markup.match(/data-primary-action/g)).toHaveLength(1);
-    expect(markup).toContain('href="/world"');
-    expect(markup).toContain('Open Nova');
-    expect(markup).toContain('Apex Washing');
-    expect(markup).toContain('Greencastle Storage and Parking');
-    expect(markup).toContain('Verified parcel and building geometry');
-    expect(markup).toContain('FIELD_MEASUREMENT_TASK_CREATED');
-    expect(markup).toContain('no external side effect was performed');
+    expect(markup).toContain('Adaptive operating memory');
+    expect(markup).toContain('The world keeps inventing problems');
+    expect(markup).toContain('See the Nova loop');
+    expect(markup).toContain('Notice');
+    expect(markup).toContain('Frame');
+    expect(markup).toContain('Commit');
+    expect(markup).toContain('Verify');
+    expect(markup).toContain('Adapt');
   });
 
-  it('labels unfinished revenue surfaces without unsupported execution claims', () => {
-    expect(markup).toContain('Preview · not operational');
-    expect(markup).toContain('Webull account sync, brokerage data, and live or paper order execution are not connected');
-    expect(markup).toContain('Pilot · human delivered');
-    expect(markup).toContain('A complete intake returns a durable receipt');
-    expect(markup).toContain('href="/services/back-office-os"');
+  it('contains no private case study or unsupported product claims', () => {
+    expect(markup).not.toMatch(/\bTrade\s+#\d+\b/i);
+    expect(markup).not.toContain('Webull');
+    expect(markup).not.toContain('live trading');
+    expect(markup).not.toContain('subscription plans');
 
-    expect(markup).not.toContain('Live demand radar');
-    expect(markup).not.toContain('See the live radar');
-    expect(markup).not.toContain('Open the screener');
-    expect(markup).not.toContain('Most popular');
+    expect(markup).toContain('$150 pilot');
+    expect(markup).toContain('human delivered');
+    expect(markup).toContain('not a software subscription');
   });
 });

@@ -12920,7 +12920,7 @@ app.get('/v1/trends/public', async (_req: Request, res: Response) => {
 // ============================================================================
 // BUSINESS OS — the productized company-in-a-box
 // Persistent CRM/pipeline for service business operators.
-// What we built by hand for Apex, generalized for every user.
+// Generalized from early operator work for every authorized user.
 // ============================================================================
 
 // Ensure tables exist (idempotent — survives if migration didn't run)

@@ -26,4 +26,16 @@ describe('Back Office OS Starter Pilot page', () => {
     expect(markup).not.toContain('buy.stripe.com');
     expect(markup).not.toContain('Continue to hosted payment');
   });
+
+  it('explains every minimum before the inquiry button can be enabled', () => {
+    const markup = renderToStaticMarkup(<BackOfficeClient />);
+    expect(markup).toContain('All four fields are required');
+    expect(markup).toContain('at least 2 characters for your name and business');
+    expect(markup).toContain('a valid email address');
+    expect(markup).toContain('at least 20 characters for the workflow description');
+    expect(markup).toContain('The inquiry button enables when those requirements are met');
+    expect(markup).toContain('Minimum 20 characters');
+    expect(markup).toContain('aria-describedby="pilot-intake-requirements"');
+    expect(markup).toContain('disabled=""');
+  });
 });

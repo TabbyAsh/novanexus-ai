@@ -26,7 +26,7 @@
 ```
 npm run deploy:railway
 
-✔ Logged in as: kibblewyatt@gmail.com
+✔ Logged in as: [redacted founder account]
 ✔ Linked to project: novanexus-backend
 ✔ Postgres database added
 ✔ Redis database added

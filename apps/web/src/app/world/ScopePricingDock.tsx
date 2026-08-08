@@ -164,7 +164,7 @@ export default function ScopePricingDock({ onChanged }: { onChanged: () => void 
   const refresh = useCallback(async () => {
     setBusy('Reading measured scope and price state');
     try {
-      await callNexus('Trade #0001\nSCOPE_STATE');
+      await callNexus('SCOPE_STATE');
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Scope/pricing state is unavailable.');
     } finally {
@@ -179,7 +179,7 @@ export default function ScopePricingDock({ onChanged }: { onChanged: () => void 
   const composeScope = useCallback(async () => {
     setBusy('Composing measured scope from accepted evidence');
     try {
-      await callNexus('Trade #0001\nCOMPOSE_SCOPE');
+      await callNexus('COMPOSE_SCOPE');
       onChanged();
       setTab('pricing');
     } catch (error) {
@@ -206,7 +206,7 @@ export default function ScopePricingDock({ onChanged }: { onChanged: () => void 
     };
     setBusy('Calculating and persisting one exact fixed bid');
     try {
-      await callNexus(`Trade #0001\nPRICING_EVIDENCE:${JSON.stringify(payload)}`);
+      await callNexus(`PRICING_EVIDENCE:${JSON.stringify(payload)}`);
       onChanged();
     } catch (error) {
       setNotice(error instanceof Error ? error.message : 'Fixed-bid calculation failed.');

@@ -322,7 +322,7 @@ export default function WorldClient() {
     setOperation('Reading durable Trade state');
     stage.current.mode = 'thinking';
     try {
-      const interaction = await callNexus('What is blocking Trade #0001, and how do we close it?', null);
+      const interaction = await callNexus('What is blocking the current field-measurement case, and how do we close it?', null);
       applyInteraction(interaction, true);
       stage.current.mode = 'found';
       setTimeout(() => { stage.current.mode = 'idle'; }, 900);
@@ -373,7 +373,7 @@ export default function WorldClient() {
   }, [applyInteraction, callNexus, conversationId, input, thinking]);
 
   const createFieldMeasurementTask = useCallback(() => {
-    void send('Create the field measurement task for Trade #0001.');
+    void send('Create the field measurement task for the private operating case.');
   }, [send]);
 
   const onBeat = useCallback((nextBeat: Beat) => setBeat(nextBeat), []);
@@ -562,8 +562,8 @@ function TradeOrb({
     >
       <div className="flex items-start justify-between gap-3">
         <div>
-          <div className="text-[9px] uppercase tracking-[.32em] text-cyan-100/45">Trade #{trade?.reference || '0001'}</div>
-          <div className="mt-2 text-sm font-semibold text-white/90">Apex → Greencastle</div>
+          <div className="text-[9px] uppercase tracking-[.32em] text-cyan-100/45">Private operating case</div>
+          <div className="mt-2 text-sm font-semibold text-white/90">Durable verification workspace</div>
           <div className="mt-1 text-[10px] text-white/35">{trade?.stage || 'reading durable state…'}</div>
         </div>
         <div className="relative h-12 w-12 shrink-0 rounded-full border border-cyan-200/20 bg-cyan-200/5">
