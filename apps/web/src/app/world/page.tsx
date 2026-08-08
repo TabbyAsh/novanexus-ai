@@ -1,12 +1,13 @@
 import type { Metadata } from 'next';
-import WorldClient from './WorldClient';
+import FunctionalWorldShell from './FunctionalWorldShell';
 
 export const metadata: Metadata = {
-  title: 'The World — Nexus',
+  title: 'Nova OS — Private World',
   description:
-    'A spatial Nexus interface where Nova capabilities, real memory, active work, and human authority become visible.',
+    'The founder-only spatial operating surface for durable Trades, evidence, capabilities, authority, and outcomes.',
+  robots: { index: false, follow: false },
 };
 
 export default function WorldPage() {
-  return <WorldClient />;
+  return <FunctionalWorldShell />;
 }
