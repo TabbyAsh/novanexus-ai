@@ -51,56 +51,85 @@ export interface ProviderHealth {
   lastFailureAt: string | null;
   lastFailureReason: string | null;
   quotaExhaustedUntil: string | null;
+  lastLatencyMs: number | null;
+  emaLatencyMs: number | null;
+  successCount: number;
+  failureCount: number;
 }
 
 const QUOTA_COOLDOWN_MS = 30 * 60 * 1000; // a quota-dark provider rests 30 min before retry
+const DEFAULT_CHAIN_TIMEOUT_MS = 30_000;
+const DEFAULT_ATTEMPT_TIMEOUT_MS = 10_000;
+
+function blankHealth(name: ProviderName): ProviderHealth {
+  return {
+    name,
+    configured: false,
+    available: false,
+    lastSuccessAt: null,
+    lastFailureAt: null,
+    lastFailureReason: null,
+    quotaExhaustedUntil: null,
+    lastLatencyMs: null,
+    emaLatencyMs: null,
+    successCount: 0,
+    failureCount: 0,
+  };
+}
 
 const health: Record<ProviderName, ProviderHealth> = Object.fromEntries(
-  (Object.keys(PROVIDER_CAPS) as ProviderName[]).map((n) => [
-    n, { name: n, configured: false, available: false, lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null, quotaExhaustedUntil: null },
-  ])
+  (Object.keys(PROVIDER_CAPS) as ProviderName[]).map(name => [name, blankHealth(name)]),
 ) as Record<ProviderName, ProviderHealth>;
 
 export function setConfigured(name: ProviderName, configured: boolean): void {
   health[name].configured = configured;
 }
 
-export function markSuccess(name: ProviderName): void {
-  const h = health[name];
-  h.configured = true;
-  h.lastSuccessAt = new Date().toISOString();
-  h.quotaExhaustedUntil = null;
-  h.available = true;
+export function markSuccess(name: ProviderName, latencyMs?: number): void {
+  const provider = health[name];
+  provider.configured = true;
+  provider.lastSuccessAt = new Date().toISOString();
+  provider.quotaExhaustedUntil = null;
+  provider.available = true;
+  provider.successCount += 1;
+  if (typeof latencyMs === 'number' && Number.isFinite(latencyMs) && latencyMs >= 0) {
+    provider.lastLatencyMs = Math.round(latencyMs);
+    provider.emaLatencyMs = provider.emaLatencyMs == null
+      ? provider.lastLatencyMs
+      : Math.round(provider.emaLatencyMs * 0.8 + provider.lastLatencyMs * 0.2);
+  }
 }
 
 export function markQuota(name: ProviderName): void {
-  const h = health[name];
-  h.configured = true;
-  h.lastFailureAt = new Date().toISOString();
-  h.lastFailureReason = 'quota_exhausted';
-  h.quotaExhaustedUntil = new Date(Date.now() + QUOTA_COOLDOWN_MS).toISOString();
-  h.available = false;
+  const provider = health[name];
+  provider.configured = true;
+  provider.lastFailureAt = new Date().toISOString();
+  provider.lastFailureReason = 'quota_exhausted';
+  provider.quotaExhaustedUntil = new Date(Date.now() + QUOTA_COOLDOWN_MS).toISOString();
+  provider.available = false;
+  provider.failureCount += 1;
 }
 
 export function markFailure(name: ProviderName, reason: string): void {
-  const h = health[name];
-  h.configured = true;
-  h.lastFailureAt = new Date().toISOString();
-  h.lastFailureReason = reason.slice(0, 200);
-  h.available = false;
+  const provider = health[name];
+  provider.configured = true;
+  provider.lastFailureAt = new Date().toISOString();
+  provider.lastFailureReason = reason.slice(0, 200);
+  provider.available = false;
+  provider.failureCount += 1;
 }
 
 export function isEligible(name: ProviderName): boolean {
-  const h = health[name];
-  if (!h.configured) return false;
-  if (h.quotaExhaustedUntil && new Date(h.quotaExhaustedUntil).getTime() > Date.now()) return false;
+  const provider = health[name];
+  if (!provider.configured) return false;
+  if (provider.quotaExhaustedUntil && new Date(provider.quotaExhaustedUntil).getTime() > Date.now()) return false;
   return true;
 }
 
 // test seam
 export function _resetHealth(): void {
-  for (const n of Object.keys(health) as ProviderName[]) {
-    health[n] = { name: n, configured: false, available: false, lastSuccessAt: null, lastFailureAt: null, lastFailureReason: null, quotaExhaustedUntil: null };
+  for (const name of Object.keys(health) as ProviderName[]) {
+    health[name] = blankHealth(name);
   }
 }
 
@@ -120,41 +149,117 @@ export interface ChainResult {
   content: string | null;
   provider: ProviderName | null;
   providerUnavailable: boolean;
-  attempts: Array<{ name: ProviderName; outcome: ProviderOutcome['status'] }>;
+  attempts: Array<{ name: ProviderName; outcome: ProviderOutcome['status']; latencyMs?: number }>;
+  elapsedMs: number;
+  deadlineExceeded: boolean;
+}
+
+export interface ProviderChainOptions {
+  totalTimeoutMs?: number;
+  maxAttemptMs?: number;
+}
+
+async function callWithBudget(call: () => Promise<ProviderOutcome>, timeoutMs: number): Promise<ProviderOutcome> {
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  try {
+    return await Promise.race([
+      call(),
+      new Promise<ProviderOutcome>(resolve => {
+        timer = setTimeout(
+          () => resolve({ status: 'error', reason: 'provider_attempt_timeout' }),
+          Math.max(1, timeoutMs),
+        );
+      }),
+    ]);
+  } finally {
+    if (timer) clearTimeout(timer);
+  }
 }
 
 /**
- * Run providers in order until one reasons. Quota → mark + cooldown + next.
- * Error → mark + next. Absent → skip. None succeed → providerUnavailable
- * with NO content. The caller must halt honestly; it must never fabricate.
+ * Run providers in order until one reasons. The chain has a hard wall-clock
+ * deadline and each provider has a smaller attempt budget, so a slow local
+ * model or dead endpoint cannot consume every fallback window serially.
+ *
+ * Quota → mark + cooldown + next. Error/timeout → mark + next. Absent → skip.
+ * None succeed → providerUnavailable with NO content. The caller must halt
+ * honestly; it must never fabricate.
  */
-export async function runProviderChain(callers: ProviderCall[]): Promise<ChainResult> {
+export async function runProviderChain(
+  callers: ProviderCall[],
+  options: ProviderChainOptions = {},
+): Promise<ChainResult> {
   const attempts: ChainResult['attempts'] = [];
-  for (const c of callers) {
-    if (!health[c.name].configured && !(await peekConfigured(c))) {
-      attempts.push({ name: c.name, outcome: 'absent' });
-      continue;
-    }
-    if (!isEligible(c.name)) {
-      attempts.push({ name: c.name, outcome: 'quota' }); // in cooldown
-      continue;
-    }
-    let outcome: ProviderOutcome;
-    try { outcome = await c.call(); }
-    catch (e) { outcome = { status: 'error', reason: (e as Error).message }; }
+  const startedAt = Date.now();
+  const totalTimeoutMs = Math.max(1, options.totalTimeoutMs ?? DEFAULT_CHAIN_TIMEOUT_MS);
+  const maxAttemptMs = Math.max(1, options.maxAttemptMs ?? DEFAULT_ATTEMPT_TIMEOUT_MS);
+  let deadlineExceeded = false;
 
-    attempts.push({ name: c.name, outcome: outcome.status });
-    if (outcome.status === 'ok') { markSuccess(c.name); return { content: outcome.content, provider: c.name, providerUnavailable: false, attempts }; }
-    if (outcome.status === 'quota') { markQuota(c.name); continue; }
-    if (outcome.status === 'error') { markFailure(c.name, outcome.reason); continue; }
-    // absent
+  for (const caller of callers) {
+    const elapsedBefore = Date.now() - startedAt;
+    const remainingMs = totalTimeoutMs - elapsedBefore;
+    if (remainingMs <= 0) {
+      deadlineExceeded = true;
+      break;
+    }
+
+    if (!health[caller.name].configured && !(await peekConfigured(caller))) {
+      attempts.push({ name: caller.name, outcome: 'absent', latencyMs: 0 });
+      continue;
+    }
+    if (!isEligible(caller.name)) {
+      attempts.push({ name: caller.name, outcome: 'quota', latencyMs: 0 });
+      continue;
+    }
+
+    const attemptStartedAt = Date.now();
+    let outcome: ProviderOutcome;
+    try {
+      outcome = await callWithBudget(caller.call, Math.min(maxAttemptMs, remainingMs));
+    } catch (error) {
+      outcome = { status: 'error', reason: (error as Error).message };
+    }
+    const latencyMs = Date.now() - attemptStartedAt;
+    attempts.push({ name: caller.name, outcome: outcome.status, latencyMs });
+
+    if (outcome.status === 'ok') {
+      markSuccess(caller.name, latencyMs);
+      return {
+        content: outcome.content,
+        provider: caller.name,
+        providerUnavailable: false,
+        attempts,
+        elapsedMs: Date.now() - startedAt,
+        deadlineExceeded: false,
+      };
+    }
+    if (outcome.status === 'quota') {
+      markQuota(caller.name);
+      continue;
+    }
+    if (outcome.status === 'error') {
+      markFailure(caller.name, outcome.reason);
+      if (outcome.reason === 'provider_attempt_timeout' && Date.now() - startedAt >= totalTimeoutMs) {
+        deadlineExceeded = true;
+        break;
+      }
+    }
   }
-  return { content: null, provider: null, providerUnavailable: true, attempts };
+
+  if (Date.now() - startedAt >= totalTimeoutMs) deadlineExceeded = true;
+  return {
+    content: null,
+    provider: null,
+    providerUnavailable: true,
+    attempts,
+    elapsedMs: Date.now() - startedAt,
+    deadlineExceeded,
+  };
 }
 
 // A caller can self-report absence by returning 'absent' on its first call;
 // we treat configured=false personas as absent without calling.
-async function peekConfigured(_c: ProviderCall): Promise<boolean> {
+async function peekConfigured(_call: ProviderCall): Promise<boolean> {
   return true; // callers report 'absent' themselves; this keeps runChain simple
 }
 
@@ -165,7 +270,7 @@ export function orderFor(tier: TaskTier, opts: { prefer?: ProviderName; envOrder
   const all = Object.keys(PROVIDER_CAPS) as ProviderName[];
   // base: providers whose bestFor includes the tier, local first, then by capability
   const capKey: keyof ProviderCaps = tier === 'reasoning' ? 'reasoning' : tier === 'coding' ? 'coding' : 'reasoning';
-  let candidates = all.filter((n) => PROVIDER_CAPS[n].bestFor.includes(tier));
+  let candidates = all.filter(name => PROVIDER_CAPS[name].bestFor.includes(tier));
   if (candidates.length === 0) candidates = [...all];
 
   candidates.sort((a, b) => {
@@ -177,10 +282,10 @@ export function orderFor(tier: TaskTier, opts: { prefer?: ProviderName; envOrder
   // env fallback order wins if provided (explicit operator control)
   if (opts.envOrder && opts.envOrder.length) {
     const set = new Set(opts.envOrder);
-    candidates = [...opts.envOrder.filter((n) => all.includes(n)), ...candidates.filter((n) => !set.has(n))];
+    candidates = [...opts.envOrder.filter(name => all.includes(name)), ...candidates.filter(name => !set.has(name))];
   }
   // per-agent preference floats to the front
-  if (opts.prefer) candidates = [opts.prefer, ...candidates.filter((n) => n !== opts.prefer)];
+  if (opts.prefer) candidates = [opts.prefer, ...candidates.filter(name => name !== opts.prefer)];
   return candidates;
 }
 
@@ -196,7 +301,7 @@ export interface Sovereignty {
 export function sovereignty(): Sovereignty {
   const localUp = health.local.configured;
   const externalConfigured = (Object.keys(PROVIDER_CAPS) as ProviderName[])
-    .filter((n) => !PROVIDER_CAPS[n].local && health[n].configured).length;
+    .filter(name => !PROVIDER_CAPS[name].local && health[name].configured).length;
 
   // Deterministic workflows ALWAYS survive (templates, rules, policy) → 25% floor.
   let score = 25;
@@ -216,7 +321,7 @@ export function healthSnapshot(): {
   sovereignty: Sovereignty;
   fallbackOrder: ProviderName[];
 } {
-  const providers = (Object.keys(health) as ProviderName[]).map((n) => ({ ...health[n] }));
-  const capableOfLLM = providers.some((p) => p.configured && isEligible(p.name));
+  const providers = (Object.keys(health) as ProviderName[]).map(name => ({ ...health[name] }));
+  const capableOfLLM = providers.some(provider => provider.configured && isEligible(provider.name));
   return { providers, capableOfLLM, sovereignty: sovereignty(), fallbackOrder: orderFor('coding') };
 }

@@ -4,7 +4,9 @@ on:
   push:
     branches: [master]
   pull_request:
-    branches: [master]
+    branches:
+      - master
+      - agent/realize-nova-interaction-engine
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -69,6 +71,11 @@ jobs:
         env:
           PGPASSWORD: nova_ci_password
 
+      - name: Verify economic Trade migration strictly
+        run: psql "$DATABASE_URL" -v ON_ERROR_STOP=1 -f infra/migrations/034_economic_trade_operating_spine.sql
+        env:
+          PGPASSWORD: nova_ci_password
+
       - name: Build all packages
         run: npx turbo run build --no-cache
 
@@ -77,13 +84,16 @@ jobs:
         # All other services must pass strict typecheck
         run: npx turbo run typecheck --filter='!@nova/tradebot'
 
+      - name: Economic Trade tests
+        run: npm test --workspace @nova/nova-hub -- --runInBand economic-trade
+
       - name: Lint
         run: npx turbo run lint
-        continue-on-error: true  # Don't block on lint initially — fix incrementally
+        continue-on-error: true  # Don't block on legacy lint debt; focused code still typechecks/builds.
 
       - name: Test
         run: npx turbo run test
-        continue-on-error: true  # Don't block on tests initially — add coverage incrementally
+        continue-on-error: true  # Legacy suites remain non-blocking; economic Trade tests above are blocking.
 
       - name: Verify production bundles (esbuild)
         run: |
