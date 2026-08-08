@@ -9,6 +9,7 @@
 import {
   generateId,
   query,
+  queryOne,
   transaction,
   type NexusAuthorityMode,
   type NexusCapabilityDescriptor,
@@ -19,6 +20,11 @@ import { novaChat } from './nova-core';
 import { listExecutorCapabilities } from './executor';
 import { codexSpecialistAvailable } from './codex-specialist';
 import { writeArtifact } from './substrate';
+import {
+  handleEconomicTradeCommand,
+  targetsTrade0001,
+  type EconomicTradeCommandResult,
+} from './economic-trade-state';
 
 const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
   {
@@ -42,6 +48,28 @@ const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
     entrypoint: '/start',
     sideEffects: ['persists a decision record after submission'],
     requires: ['situation context'],
+  },
+  {
+    id: 'economic.trade.inspect',
+    name: 'Economic Trade State',
+    sector: 'business',
+    description: 'Read a durable Trade, its blocking gaps, evidence requirements, actions, events, and next action without invoking an LLM.',
+    status: 'available',
+    authority: 'observe',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: [],
+    requires: ['authenticated Nexus session', 'durable economic Trade state'],
+  },
+  {
+    id: 'economic.trade.field_measurement_task',
+    name: 'Field Measurement Task',
+    sector: 'business',
+    description: 'Create an idempotent, durable human task to collect structure measurements and current-condition evidence for a blocked Trade.',
+    status: 'available',
+    authority: 'assist',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: ['creates an internal task and append-only Trade event', 'does not contact the buyer or perform a site visit'],
+    requires: ['authenticated Nexus session', 'open geometry gap'],
   },
   {
     id: 'commerce.flip_appraise',
@@ -168,10 +196,152 @@ function conversationRef(conversationId: string): string {
 }
 
 function authorityFor(capabilities: string[]): NexusAuthorityMode {
-  if (capabilities.length > 0 && capabilities.every(id => id === 'market.quote' || id === 'business.pipeline' || id === 'executor.market_quote' || id === 'executor.trend_scan' || id === 'executor.substrate_search')) {
+  if (capabilities.includes('economic.trade.field_measurement_task')) return 'assist';
+  if (
+    capabilities.length > 0
+    && capabilities.every(id => [
+      'economic.trade.inspect',
+      'market.quote',
+      'business.pipeline',
+      'executor.market_quote',
+      'executor.trend_scan',
+      'executor.substrate_search',
+    ].includes(id))
+  ) {
     return 'observe';
   }
   return 'recommend';
+}
+
+async function persistDeterministicTurn(
+  userId: string,
+  conversationId: string | null,
+  message: string,
+  reply: string,
+): Promise<string> {
+  await query(`
+    CREATE TABLE IF NOT EXISTS nova_conversations (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      user_id UUID NOT NULL,
+      title VARCHAR(200) DEFAULT 'New conversation',
+      created_at TIMESTAMPTZ DEFAULT NOW(),
+      updated_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, []);
+  await query(`
+    CREATE TABLE IF NOT EXISTS nova_messages (
+      id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+      conversation_id UUID NOT NULL,
+      user_id UUID NOT NULL,
+      role VARCHAR(20) NOT NULL,
+      content TEXT NOT NULL,
+      intent VARCHAR(40),
+      created_at TIMESTAMPTZ DEFAULT NOW()
+    )
+  `, []);
+  await query('CREATE INDEX IF NOT EXISTS idx_nova_msgs_conv ON nova_messages(conversation_id, created_at)', []);
+
+  let resolvedConversationId = conversationId;
+  if (resolvedConversationId) {
+    const owned = await queryOne<{ id: string }>(
+      'SELECT id FROM nova_conversations WHERE id = $1 AND user_id = $2',
+      [resolvedConversationId, userId],
+    );
+    if (!owned?.id) throw new Error('Conversation not found.');
+  } else {
+    const created = await queryOne<{ id: string }>(
+      'INSERT INTO nova_conversations (user_id, title) VALUES ($1, $2) RETURNING id',
+      [userId, message.slice(0, 60)],
+    );
+    if (!created?.id) throw new Error('Conversation could not be created.');
+    resolvedConversationId = created.id;
+  }
+
+  await query(
+    `INSERT INTO nova_messages (conversation_id, user_id, role, content, intent)
+     VALUES ($1, $2, 'user', $3, 'economic_trade')`,
+    [resolvedConversationId, userId, message],
+  );
+  await query(
+    `INSERT INTO nova_messages (conversation_id, user_id, role, content, intent)
+     VALUES ($1, $2, 'nova', $3, 'economic_trade')`,
+    [resolvedConversationId, userId, reply],
+  );
+  await query('UPDATE nova_conversations SET updated_at = NOW() WHERE id = $1', [resolvedConversationId]);
+
+  return resolvedConversationId;
+}
+
+interface NexusTurn {
+  conversationId: string;
+  reply: string;
+  branch: null | { intent: string; label: string; href: string; description: string };
+  provider: string;
+  action: unknown | null;
+  execution: NexusInteractionEnvelope['execution'];
+}
+
+async function economicTradeTurn(
+  userId: string,
+  conversationId: string | null,
+  message: string,
+): Promise<NexusTurn | null> {
+  if (!targetsTrade0001(message)) return null;
+
+  let result: EconomicTradeCommandResult;
+  try {
+    const handled = await handleEconomicTradeCommand(userId, message);
+    if (!handled) return null;
+    result = handled;
+  } catch (error) {
+    const reason = error instanceof Error ? error.message : 'Trade state unavailable.';
+    const reply = `Trade #0001 could not be read from durable state. ${reason}`;
+    const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, reply)
+      .catch(() => conversationId || generateId());
+    return {
+      conversationId: resolvedConversationId,
+      reply,
+      branch: null,
+      provider: 'deterministic:trade-state-unavailable',
+      action: { type: 'economic_trade_unavailable', deterministic: true },
+      execution: {
+        mode: 'direct',
+        capabilities: ['economic.trade.inspect'],
+        evidence: [],
+        gaps: ['Durable economic Trade state is unavailable.'],
+        cost: { aiCalls: 0, toolCalls: 1 },
+      },
+    };
+  }
+
+  const openGaps = result.trade.gaps
+    .filter(gap => gap.blocking && gap.status !== 'RESOLVED' && gap.status !== 'WAIVED')
+    .map(gap => `${gap.id}:${gap.code}`);
+  const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, result.reply);
+
+  return {
+    conversationId: resolvedConversationId,
+    reply: result.reply,
+    branch: null,
+    provider: 'deterministic:trade-state',
+    action: {
+      type: 'economic_trade',
+      deterministic: true,
+      command: result.command,
+      trade: result.trade,
+    },
+    execution: {
+      mode: 'direct',
+      capabilities: [result.capabilityId],
+      evidence: [{
+        capabilityId: result.capabilityId,
+        summary: `Read Trade #${result.trade.reference}: ${openGaps.length} blocking gap(s), ${result.trade.actions.length} durable action(s).`,
+        source: result.source,
+      }],
+      gaps: openGaps,
+      cost: { aiCalls: 0, toolCalls: result.command === 'inspect' ? 1 : 2 },
+    },
+  };
 }
 
 export async function nexusInteract(
@@ -181,14 +351,18 @@ export async function nexusInteract(
 ): Promise<NexusInteractionEnvelope> {
   const interactionId = generateId();
   const createdAt = new Date().toISOString();
-  const turn = await novaChat(userId, conversationId, message);
-  const primaryIntent = turn.execution.mode === 'composed'
-    ? 'capability_composition'
-    : turn.branch?.intent || 'conversation';
+  const deterministicTurn = await economicTradeTurn(userId, conversationId, message);
+  const turn: NexusTurn = deterministicTurn || await novaChat(userId, conversationId, message);
+  const primaryIntent = deterministicTurn
+    ? 'economic_trade'
+    : turn.execution.mode === 'composed'
+      ? 'capability_composition'
+      : turn.branch?.intent || 'conversation';
+  const authorityMode = authorityFor(turn.execution.capabilities);
 
   const artifactId = await writeArtifact({
     kind: 'mission_report',
-    regime: 'EXPLORATION',
+    regime: deterministicTurn ? 'EXPLOITATION' : 'EXPLORATION',
     authorType: 'system',
     authorId: 'nexus-interaction',
     payload: {
@@ -207,7 +381,7 @@ export async function nexusInteract(
         cost: turn.execution.cost,
       },
       authority: {
-        mode: authorityFor(turn.execution.capabilities),
+        mode: authorityMode,
         externalSideEffectsPerformed: false,
         humanApprovalRequiredForSideEffects: true,
       },
@@ -230,7 +404,7 @@ export async function nexusInteract(
     },
     execution: turn.execution,
     authority: {
-      mode: authorityFor(turn.execution.capabilities),
+      mode: authorityMode,
       externalSideEffectsPerformed: false,
       humanApprovalRequiredForSideEffects: true,
     },
