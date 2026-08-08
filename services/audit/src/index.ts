@@ -9,6 +9,7 @@ import {
   verifyToken,
 } from '@nova/shared';
 import { getEventStore } from '@nova/eventing';
+import { hasCrossOrgAuditAuthority } from './platform-authority';
 
 const app = express();
 const logger = createLogger('audit-service');
@@ -36,7 +37,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
   const token = authHeader.substring(7);
   const payload = verifyToken(token);
 
-  if (!payload) {
+  if (!payload || payload.type !== 'access') {
     return res.status(HTTP_STATUS.UNAUTHORIZED).json({
       success: false,
       error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Invalid token' },
@@ -229,11 +230,10 @@ app.get('/admin/audit/summary', requireAuth, requireAuditScope, async (req: Requ
   try {
     const user = (req as any).user;
 
-    // Only OWNER role can see all orgs
-    if (user.role !== 'OWNER') {
+    if (!hasCrossOrgAuditAuthority(user)) {
       return res.status(HTTP_STATUS.FORBIDDEN).json({
         success: false,
-        error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Requires OWNER role' },
+        error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Requires ops.admin scope' },
       });
     }
 

@@ -30,6 +30,7 @@ import { query, transaction } from '@nova/shared';
 import { novaChat } from '../nova-core';
 import { writeArtifact } from '../substrate';
 import {
+  hasEconomicOwnerAuthority,
   listNexusCapabilities,
   listNexusInteractions,
   nexusInteract,
@@ -105,6 +106,18 @@ describe('Nexus Interaction Engine', () => {
     expect(capabilities.find(item => item.id === 'forge.capability_proposal')?.status).toBe('gated');
     expect(capabilities.find(item => item.id === 'research.sourced_synthesis')?.status).toBe('reserved');
     expect(capabilities.find(item => item.id === 'world.presence')?.status).toBe('degraded');
+  });
+
+  it('rejects an ordinary tenant owner while preserving founder and ops.admin authority', () => {
+    const owners = new Set(['founder@example.com']);
+    expect(hasEconomicOwnerAuthority('founder@example.com', [], owners)).toBe(true);
+    expect(hasEconomicOwnerAuthority('tenant@example.com', ['ops.admin'], owners)).toBe(true);
+    expect(hasEconomicOwnerAuthority(
+      'tenant@example.com',
+      ['cards.read', 'cards.write', 'trade.read', 'store.read'],
+      owners,
+    )).toBe(false);
+    expect(hasEconomicOwnerAuthority('tenant@example.com', ['forge.approve'], owners)).toBe(false);
   });
 
   it('lists only receipts selected through the caller ownership hash', async () => {

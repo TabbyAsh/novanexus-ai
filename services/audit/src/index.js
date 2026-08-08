@@ -29,7 +29,7 @@ async function requireAuth(req, res, next) {
     }
     const token = authHeader.substring(7);
     const payload = (0, shared_1.verifyToken)(token);
-    if (!payload) {
+    if (!payload || payload.type !== 'access') {
         return res.status(shared_1.HTTP_STATUS.UNAUTHORIZED).json({
             success: false,
             error: { code: shared_1.ERROR_CODES.TOKEN_EXPIRED, message: 'Invalid token' },
@@ -201,11 +201,10 @@ app.get('/admin/audit/verify', requireAuth, requireAuditScope, async (req, res) 
 app.get('/admin/audit/summary', requireAuth, requireAuditScope, async (req, res) => {
     try {
         const user = req.user;
-        // Only OWNER role can see all orgs
-        if (user.role !== 'OWNER') {
+        if (!user.scopes.includes('ops.admin')) {
             return res.status(shared_1.HTTP_STATUS.FORBIDDEN).json({
                 success: false,
-                error: { code: shared_1.ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Requires OWNER role' },
+                error: { code: shared_1.ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'Requires ops.admin scope' },
             });
         }
         // Get summary stats

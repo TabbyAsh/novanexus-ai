@@ -53,7 +53,7 @@ export class PolicyEngine {
     const applicablePolicies = this.policies.filter(
       (p) =>
         p.orgId === context.orgId &&
-        (p.subjectRole === context.userRole || p.subjectRole === 'OWNER')
+        p.subjectRole === context.userRole
     );
 
     // Find matching policies for the action and resource

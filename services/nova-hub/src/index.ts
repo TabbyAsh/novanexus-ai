@@ -43,6 +43,16 @@ import {
 } from './decision-infrastructure';
 import { ingestFlipOpportunityInput } from './nexus-ingestion';
 import { automationAllowed } from './automation-authority';
+import {
+  SERVICE_INQUIRY_NAME,
+  SERVICE_INQUIRY_SUPPORT_EMAIL,
+  buildConfirmationInquiryEmail,
+  buildOperatorInquiryEmail,
+  canReadServiceInquiryQueue,
+  receiveServiceInquiry,
+  type EmailDeliveryOutcome,
+  type NormalizedServiceInquiry,
+} from './service-inquiries';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -6788,9 +6798,18 @@ app.post('/v1/flip/appraise', async (req: Request, res: Response) => {
     if (isNumber(maxBuyPrice)) {
       reasons.push(`Safe buy ceiling is ${fmtMoney(maxBuyPrice)} based on fast-sale economics.`);
     }
-    reasons.push(flipCard.rationale_summary);
+    // The engine narrative is category-model math — quoting it under a
+    // comps-based verdict mixes two bases in one card (Trust Law: one basis
+    // per set of numbers shown).
+    if (estimateBasis === 'CATEGORY_MODEL') {
+      reasons.push(flipCard.rationale_summary);
+    }
 
-    const warnings = [...flipCard.risk_flags];
+    // "Low comparable data" is the engine's view before manual comps — with
+    // 3+ user comps it's no longer true.
+    const warnings = hasStrongComparableData
+      ? flipCard.risk_flags.filter((flag) => !/low comparable data/i.test(flag))
+      : [...flipCard.risk_flags];
     if (compCount > 0 && compCount < 3) {
       warnings.push('Add at least 3 sold comps for tighter valuation confidence.');
     }
@@ -12692,14 +12711,14 @@ Keep it short, specific, real. No generic advice.`,
 // ============================================================================
 
 app.post('/v1/nexus/interact', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  const { userId } = req.user!;
+  const { userId, scopes } = req.user!;
   const { message, conversationId } = req.body || {};
   if (typeof message !== 'string' || message.trim().length < 1) {
     return res.status(400).json({ success: false, error: { code: 'EMPTY_MESSAGE', message: 'Tell Nexus what you want to realize.' } });
   }
   try {
     const { nexusInteract } = await import('./nexus-interaction');
-    const result = await nexusInteract(userId, conversationId || null, message.trim());
+    const result = await nexusInteract(userId, conversationId || null, message.trim(), scopes);
     res.json({ success: true, data: result });
   } catch (err) {
     const messageText = err instanceof Error ? err.message : '';
@@ -12800,14 +12819,14 @@ app.get('/v1/nexus/conversations/:id', authMiddleware, async (req: Authenticated
 // Nexus receipt. New clients should call /v1/nexus/interact directly.
 
 app.post('/v1/nova/chat', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
-  const { userId } = req.user!;
+  const { userId, scopes } = req.user!;
   const { message, conversationId } = req.body || {};
   if (typeof message !== 'string' || message.trim().length < 1) {
     return res.status(400).json({ success: false, error: { code: 'EMPTY_MESSAGE' } });
   }
   try {
     const { nexusInteract } = await import('./nexus-interaction');
-    const nexus = await nexusInteract(userId, conversationId || null, message.trim());
+    const nexus = await nexusInteract(userId, conversationId || null, message.trim(), scopes);
     res.json({
       success: true,
       data: {
@@ -13273,176 +13292,176 @@ app.post('/v1/admin/cleanup-test-accounts', authMiddleware, async (req: Authenti
   }
 });
 
-// ── POST /v1/bootstrap/admin ─────────────────────────────────────────
-// ONE-TIME endpoint: elevates wyatt@novanexus-ai.com to FOUNDING/OWNER/ADMIN.
-// Protected by BOOTSTRAP_SECRET env var. Remove after use.
-app.post('/v1/bootstrap/admin', async (req: Request, res: Response) => {
-  const BOOTSTRAP_SECRET = process.env.BOOTSTRAP_SECRET;
-  const { secret, email } = req.body || {};
-
-  if (!BOOTSTRAP_SECRET || secret !== BOOTSTRAP_SECRET) {
-    return res.status(403).json({ success: false, error: { code: 'FORBIDDEN' } });
+// ── Service inquiry receipts ──────────────────────────────────────────
+// The database record is the receipt authority. Email is a separately
+// verified delivery channel and never substitutes for durable persistence.
+async function deliverInquiryEmail(input: {
+  to: string;
+  subject: string;
+  html: string;
+  replyTo?: string;
+}): Promise<EmailDeliveryOutcome> {
+  const resendKey = process.env.RESEND_API_KEY;
+  if (!resendKey || resendKey === 'disabled' || resendKey.length < 10) {
+    return { status: 'NOT_CONFIGURED' };
   }
 
-  const targetEmail = email || 'wyatt@novanexus-ai.com';
+  try {
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${resendKey}`, 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        from: 'Nova Enterprises <hello@novanexus-ai.com>',
+        to: [input.to],
+        subject: input.subject,
+        html: input.html,
+        ...(input.replyTo ? { reply_to: input.replyTo } : {}),
+      }),
+    });
+    const payload = await response.json().catch(() => null) as { id?: unknown } | null;
+    if (!response.ok || typeof payload?.id !== 'string' || !payload.id) {
+      logger.warn('Service inquiry email was not verified by provider', { status: response.status });
+      return { status: 'FAILED' };
+    }
+    return { status: 'PROVIDER_ACCEPTED', providerId: payload.id };
+  } catch (error) {
+    logger.warn('Service inquiry email provider unavailable', { error: (error as Error).message });
+    return { status: 'FAILED' };
+  }
+}
 
-  const ALL_FEATURES = [
-    'scanner', 'watchlists', 'alerts', 'basic_scanner', 'watchlist_1', 'paper_trading',
-    'thesis_cards', 'decisions', 'reports', 'csv_export', 'decision_replay',
-    'pdf_export', 'api_access', 'priority_support', 'founding_badge',
-    'concierge_onboarding', 'early_access', 'flip_pipeline', 'deal_cards',
-    'mode_control', 'advanced_analytics', 'admin_access', 'unlimited_usage',
-    'rate_limit_bypass',
-  ];
+app.get('/v1/admin/service-inquiries', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
+  if (!req.user || !canReadServiceInquiryQueue(req.user.scopes)) {
+    return res.status(HTTP_STATUS.FORBIDDEN).json({
+      success: false,
+      error: { code: ERROR_CODES.INSUFFICIENT_PERMISSIONS, message: 'ops.admin scope is required.' },
+    });
+  }
+
+  const allowedStatuses = new Set(['RECEIVED', 'IN_REVIEW', 'SCOPE_ACCEPTED', 'IN_PROGRESS', 'DELIVERED', 'CANCELLED']);
+  const requestedStatus = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : '';
+  if (requestedStatus && !allowedStatuses.has(requestedStatus)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Unknown inquiry status.' },
+    });
+  }
+  const requestedLimit = Number(req.query.limit || 50);
+  const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.floor(requestedLimit))) : 50;
 
   try {
-    const userResult = await query<{ id: string; email: string }>(
-      'SELECT id, email FROM users WHERE email = $1', [targetEmail]
+    const result = await query<{
+      receipt_id: string;
+      service_code: string;
+      name: string;
+      email: string;
+      business: string;
+      challenge: string;
+      status: string;
+      operator_email_status: string;
+      confirmation_email_status: string;
+      payment_status: string;
+      paid_at: string | null;
+      created_at: string;
+      updated_at: string;
+    }>(
+      `SELECT receipt_id, service_code, name, email, business, challenge, status,
+              operator_email_status, confirmation_email_status, payment_status,
+              paid_at, created_at, updated_at
+       FROM service_inquiries
+       WHERE ($1::text = '' OR status = $1)
+       ORDER BY created_at DESC
+       LIMIT $2`,
+      [requestedStatus, limit],
     );
-    if (!userResult.rows.length) {
-      return res.status(404).json({ success: false, error: { code: 'USER_NOT_FOUND', message: `${targetEmail} not found. Register first.` } });
-    }
-    const user = userResult.rows[0];
-
-    // Activate user
-    await query(`UPDATE users SET status = 'ACTIVE', updated_at = NOW() WHERE id = $1`, [user.id]);
-
-    // Find or create org
-    const orgResult = await query<{ org_id: string }>(`SELECT org_id FROM org_members WHERE user_id = $1 ORDER BY joined_at ASC LIMIT 1`, [user.id]);
-    let orgId: string;
-    if (!orgResult.rows.length) {
-      const newOrg = await queryOne<{ id: string }>(`INSERT INTO orgs (name, created_at) VALUES ($1, NOW()) RETURNING id`, ['Nova Admin Org']);
-      orgId = newOrg!.id;
-      await query(`INSERT INTO org_members (org_id, user_id, role, joined_at) VALUES ($1, $2, 'OWNER', NOW())`, [orgId, user.id]);
-    } else {
-      orgId = orgResult.rows[0].org_id;
-      await query(`UPDATE org_members SET role = 'OWNER' WHERE user_id = $1 AND org_id = $2`, [user.id, orgId]);
-    }
-
-    // Upsert FOUNDING entitlement — expires year 2099
-    const entResult = await query<{ id: string }>('SELECT id FROM entitlements WHERE user_id = $1', [user.id]);
-    if (!entResult.rows.length) {
-      await query(
-        `INSERT INTO entitlements (user_id, org_id, plan, status, features_json, current_period_end)
-         VALUES ($1, $2, 'FOUNDING', 'ACTIVE', $3, '2099-12-31T00:00:00Z')`,
-        [user.id, orgId, JSON.stringify(ALL_FEATURES)]
-      );
-    } else {
-      await query(
-        `UPDATE entitlements SET plan='FOUNDING', status='ACTIVE', features_json=$2, current_period_end='2099-12-31T00:00:00Z', updated_at=NOW() WHERE user_id=$1`,
-        [user.id, JSON.stringify(ALL_FEATURES)]
-      );
-    }
-
-    // Unlimited UDM wallet
-    await query(
-      `INSERT INTO udm_wallets (user_id, balance_clarity, balance_foresight, balance_autonomy)
-       VALUES ($1, 99999, 99999, 99999)
-       ON CONFLICT (user_id) DO UPDATE SET balance_clarity=99999, balance_foresight=99999, balance_autonomy=99999, updated_at=NOW()`,
-      [user.id]
-    ).catch(() => {});
-
-    // AUTOMATE on all sectors
-    for (const sector of ['stocks', 'marketplace', 'flipper', 'dropship', 'social']) {
-      await query(
-        `INSERT INTO system_modes (user_id, sector, mode, updated_at) VALUES ($1, $2, 'AUTOMATE', NOW())
-         ON CONFLICT (user_id, sector) DO UPDATE SET mode='AUTOMATE', updated_at=NOW()`,
-        [user.id, sector]
-      ).catch(() => {});
-    }
-
-    // Admin policies
-    for (const action of ['admin.users', 'ops.admin', 'ops.read', 'admin.killswitch', 'admin.audit', 'admin.billing']) {
-      await query(
-        `INSERT INTO policies (org_id, subject_role, action, resource, effect) VALUES ($1, 'OWNER', $2, '*', 'ALLOW') ON CONFLICT DO NOTHING`,
-        [orgId, action]
-      ).catch(() => {});
-    }
-
-    logger.info('Bootstrap admin completed', { email: targetEmail, userId: user.id });
-    res.json({
-      success: true,
-      data: {
-        email: targetEmail,
-        userId: user.id,
-        orgId,
-        plan: 'FOUNDING',
-        role: 'OWNER',
-        status: 'ACTIVE',
-        expires: '2099-12-31',
-        features: ALL_FEATURES.length,
-        governanceMode: 'AUTOMATE',
-        message: 'Account configured. Remove BOOTSTRAP_SECRET from Railway env when done.',
-      },
+    return res.json({ success: true, data: { inquiries: result.rows, count: result.rows.length } });
+  } catch (error) {
+    logger.error('Service inquiry queue unavailable', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'INQUIRY_QUEUE_UNAVAILABLE', message: 'The inquiry queue could not be read.' },
     });
-  } catch (err) {
-    logger.error('Bootstrap admin failed', err as Error);
-    res.status(500).json({ success: false, error: { code: 'BOOTSTRAP_FAILED', message: (err as Error).message } });
   }
 });
 
-// ── POST /v1/contact — service inquiry form ──────────────────────────
-// Receives form submissions from service pages and forwards via Resend.
 app.post('/v1/contact', async (req: Request, res: Response) => {
-  const { name, email, business, challenge, service } = req.body || {};
-  if (!name || !email) {
-    return res.status(400).json({ success: false, error: { code: 'MISSING_FIELDS' } });
-  }
-
-  const RESEND_KEY = process.env.RESEND_API_KEY;
-  if (!RESEND_KEY || RESEND_KEY === 'disabled') {
-    // Still accept the form, just log it
-    logger.info('Contact form received (Resend not configured)', { name, email, service });
-    return res.json({ success: true, data: { received: true } });
-  }
-
-  const html = `<div style="font-family:system-ui;background:#0a0a0f;color:#fff;padding:24px;max-width:500px">
-    <h2 style="color:#10b981;margin-bottom:16px">New Service Inquiry — ${service || 'Nova'}</h2>
-    <p><strong>Name:</strong> ${name}</p>
-    <p><strong>Email:</strong> ${email}</p>
-    ${business ? `<p><strong>Business:</strong> ${business}</p>` : ''}
-    ${challenge ? `<p><strong>Challenge:</strong> ${challenge}</p>` : ''}
-    <p style="margin-top:16px;color:#6b7280;font-size:12px">Reply directly to this email to respond to ${name}.</p>
-  </div>`;
-
-  try {
-    const r = await fetch('https://api.resend.com/emails', {
-      method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        from: 'Nexus Contact <hello@novanexus-ai.com>',
-        to: ['hello@novanexus-ai.com'],
-        reply_to: email,
-        subject: `New inquiry: ${service || 'Nova'} — ${name}`,
-        html,
-      }),
-    });
-    if (r.ok) {
-      // Send confirmation to the inquirer
-      await fetch('https://api.resend.com/emails', {
-        method: 'POST',
-        headers: { 'Authorization': `Bearer ${RESEND_KEY}`, 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          from: 'Nexus <hello@novanexus-ai.com>',
-          to: [email],
-          subject: `Got it, ${name.split(' ')[0]} — I'll follow up within 24 hours`,
-          html: `<div style="font-family:system-ui;background:#0a0a0f;color:#fff;padding:24px;max-width:500px">
-            <h2 style="color:#10b981">Thanks for reaching out.</h2>
-            <p style="color:#9ca3af">I received your inquiry about ${service || 'Nova services'} and will follow up within 24 hours to schedule a setup call.</p>
-            <p style="color:#9ca3af">If you need to reach me sooner: <a href="mailto:hello@novanexus-ai.com" style="color:#10b981">hello@novanexus-ai.com</a></p>
-            <p style="color:#374151;font-size:11px;margin-top:16px">Nexus · the interaction company for Nova · novanexus-ai.com</p>
-          </div>`,
-        }),
+  const result = await receiveServiceInquiry(req.body, {
+    createReceiptId: () => `svc_${randomBytes(18).toString('base64url')}`,
+    persistInquiry: async (inquiry: NormalizedServiceInquiry, receiptId: string) => {
+      const inserted = await query(
+        `INSERT INTO service_inquiries
+          (receipt_id, service_code, name, email, business, challenge)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [receiptId, inquiry.serviceCode, inquiry.name, inquiry.email, inquiry.business, inquiry.challenge],
+      );
+      if (inserted.rowCount !== 1) throw new Error('Inquiry insert did not persist one row.');
+    },
+    deliverOperator: async (inquiry: NormalizedServiceInquiry, receiptId: string) => deliverInquiryEmail({
+      to: process.env.SERVICE_INQUIRY_OPERATOR_EMAIL || SERVICE_INQUIRY_SUPPORT_EMAIL,
+      replyTo: inquiry.email,
+      subject: `New ${SERVICE_INQUIRY_NAME} inquiry — ${receiptId}`,
+      html: buildOperatorInquiryEmail(inquiry, receiptId),
+    }),
+    deliverConfirmation: async (inquiry: NormalizedServiceInquiry, receiptId: string) => {
+      if (process.env.SERVICE_INQUIRY_SEND_CONFIRMATION === 'false') return { status: 'SKIPPED' };
+      return deliverInquiryEmail({
+        to: inquiry.email,
+        subject: `Nova pilot inquiry receipt ${receiptId}`,
+        html: buildConfirmationInquiryEmail(inquiry, receiptId),
       });
-      res.json({ success: true, data: { received: true } });
-    } else {
-      logger.warn('Contact form Resend failed', { status: r.status });
-      res.json({ success: true, data: { received: true } }); // still accept
-    }
-  } catch (err) {
-    logger.error('Contact form failed', err as Error);
-    res.json({ success: true, data: { received: true } }); // still accept
+    },
+    persistDelivery: async (receiptId, operator, confirmation) => {
+      const updated = await query(
+        `UPDATE service_inquiries
+         SET operator_email_status = $2,
+             operator_email_provider_id = $3,
+             confirmation_email_status = $4,
+             confirmation_email_provider_id = $5,
+             delivery_updated_at = NOW(),
+             updated_at = NOW()
+         WHERE receipt_id = $1`,
+        [receiptId, operator.status, operator.providerId || null, confirmation.status, confirmation.providerId || null],
+      );
+      if (updated.rowCount !== 1) throw new Error('Inquiry delivery outcome was not persisted.');
+    },
+  });
+
+  if (result.kind === 'invalid') {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Complete every intake field within its stated limit.', fields: result.errors },
+    });
   }
+  if (result.kind === 'persistence_failed') {
+    logger.error('Service inquiry was not durably recorded');
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: {
+        code: 'INQUIRY_NOT_RECORDED',
+        message: `We could not record this inquiry. Please retry or email ${SERVICE_INQUIRY_SUPPORT_EMAIL}.`,
+      },
+    });
+  }
+  if (result.kind === 'delivery_persistence_failed') {
+    logger.error('Service inquiry delivery outcomes were not durably recorded', undefined, { receiptId: result.receiptId });
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      data: {
+        received: true,
+        receiptId: result.receiptId,
+        inquiryStatus: 'RECEIVED',
+        delivery: result.delivery,
+        recovery: {
+          supportEmail: SERVICE_INQUIRY_SUPPORT_EMAIL,
+          message: `Your inquiry record exists, but delivery status is uncertain. Email ${SERVICE_INQUIRY_SUPPORT_EMAIL} with this receipt.`,
+        },
+      },
+      error: { code: 'INQUIRY_DELIVERY_STATE_NOT_RECORDED', message: 'Delivery status could not be recorded.' },
+    });
+  }
+
+  logger.info('Service inquiry durably recorded', { receiptId: result.receiptId, deliveryState: result.delivery.state });
+  return res.status(HTTP_STATUS.ACCEPTED).json({ success: true, data: result });
 });
 
 // Start Server

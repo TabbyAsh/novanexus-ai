@@ -18,12 +18,40 @@ export function configuredPlatformOwnerEmails(): Set<string> {
   );
 }
 
+export function isConfiguredPlatformOwnerEmail(
+  email: string,
+  platformOwnerEmails = configuredPlatformOwnerEmails(),
+): boolean {
+  return platformOwnerEmails.has(email.trim().toLowerCase());
+}
+
+export function registrationRoleForNewOrganization(): UserRole {
+  return 'OWNER';
+}
+
+export function unverifiedPlatformOwnerRegistrationAllowed(
+  configuredValue = process.env.ALLOW_UNVERIFIED_FOUNDER_REGISTRATION,
+): boolean {
+  return configuredValue?.trim().toLowerCase() === 'true';
+}
+
 export function scopesForIdentity(
   role: UserRole,
   email: string,
   platformOwnerEmails = configuredPlatformOwnerEmails(),
 ): Scope[] {
   const defaults = getDefaultScopes(role);
-  if (platformOwnerEmails.has(email.trim().toLowerCase())) return defaults;
+  if (isConfiguredPlatformOwnerEmail(email, platformOwnerEmails)) return defaults;
   return defaults.filter(scope => !PLATFORM_SCOPES.has(scope));
+}
+
+export function refreshedAuthorizationForIdentity(
+  currentRole: UserRole,
+  currentEmail: string,
+  platformOwnerEmails = configuredPlatformOwnerEmails(),
+): { role: UserRole; scopes: Scope[] } {
+  return {
+    role: currentRole,
+    scopes: scopesForIdentity(currentRole, currentEmail, platformOwnerEmails),
+  };
 }

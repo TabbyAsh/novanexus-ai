@@ -2,6 +2,16 @@ import express, { Request, Response, NextFunction } from 'express';
 import Stripe from 'stripe';
 import { createLogger } from '@nova/telemetry';
 import { SERVICE_PORTS, HTTP_STATUS, ERROR_CODES, query, queryOne } from '@nova/shared';
+import {
+  checkoutMetadataMatchesAccount,
+  entitlementPlanFromPriceId,
+  fullyRefundedPaymentIntentFromCharge,
+  productionWebhookConfigurationError,
+  resolveCheckoutSelection,
+  servicePaymentReferenceFromCheckout,
+  stripeStatusToEntitlementStatus,
+  type CheckoutPriceMap,
+} from './billing-contract';
 
 const app = express();
 const logger = createLogger('billing-service');
@@ -12,26 +22,27 @@ const STRIPE_SECRET_KEY = process.env.STRIPE_SECRET_KEY || '';
 const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const APP_URL = process.env.APP_URL || 'http://localhost:8080';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
-const EMAIL_FROM = process.env.EMAIL_FROM || 'Nova Trader Intelligence <brief@novanexus-ai.com>';
+const EMAIL_FROM = process.env.EMAIL_FROM || 'Nova <hello@novanexus-ai.com>';
+
+const webhookConfigurationError = productionWebhookConfigurationError(
+  process.env.NODE_ENV,
+  STRIPE_WEBHOOK_SECRET,
+);
+if (webhookConfigurationError) {
+  throw new Error(webhookConfigurationError);
+}
 
 // Initialize Stripe (will be null if no key provided)
 const stripe = STRIPE_SECRET_KEY ? new Stripe(STRIPE_SECRET_KEY, { apiVersion: '2023-10-16' }) : null;
 
-// Price IDs (configure in Stripe Dashboard)
-const PRICE_IDS = {
-  NOVA_HUB_LITE_MONTHLY: process.env.STRIPE_PRICE_MONTHLY || 'price_nova_lite_monthly',
-  NOVA_HUB_LITE_YEARLY: process.env.STRIPE_PRICE_YEARLY || 'price_nova_lite_yearly',
-  FOUNDING_MONTHLY: process.env.STRIPE_PRICE_FOUNDING || 'price_nova_founding_monthly',
-  FLIP_CARD_PRO: process.env.STRIPE_PRICE_FLIP_PRO || 'price_1TG1jXIRGET1dbqS9zFdeE5b',
+// Stripe IDs never cross the public checkout contract. A logical plan and
+// interval are resolved against this explicit server-side allowlist.
+const CHECKOUT_PRICES: CheckoutPriceMap = {
+  'LITE:monthly': process.env.STRIPE_PRICE_MONTHLY || undefined,
+  'LITE:yearly': process.env.STRIPE_PRICE_YEARLY || undefined,
+  'FOUNDING:monthly': process.env.STRIPE_PRICE_FOUNDING || undefined,
+  'FLIP_PRO:monthly': process.env.STRIPE_PRICE_FLIP_PRO || undefined,
 };
-
-// Map Stripe price IDs to plan names
-function planFromPriceId(priceId: string): Entitlement['plan'] {
-  if (priceId === PRICE_IDS.FOUNDING_MONTHLY) return 'FOUNDING';
-  if (priceId === PRICE_IDS.FLIP_CARD_PRO) return 'LITE';
-  if (priceId === PRICE_IDS.NOVA_HUB_LITE_MONTHLY || priceId === PRICE_IDS.NOVA_HUB_LITE_YEARLY) return 'LITE';
-  return 'LITE'; // default fallback
-}
 
 // ============================================
 // Types
@@ -83,152 +94,55 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
 // ============================================
 
 // ============================================
-// Welcome Email (best-effort, non-blocking)
+// Entitlement confirmation email (best-effort, non-blocking)
 // ============================================
 
-async function sendWelcomeEmail(email: string, userId: string): Promise<void> {
+async function sendEntitlementConfirmationEmail(
+  email: string,
+  userId: string,
+  plan: Entitlement['plan'],
+): Promise<void> {
   if (!RESEND_API_KEY) {
-    logger.warn('Welcome email skipped: RESEND_API_KEY not set', { userId });
-    await logOnboardingAction(userId, 'welcome-email', 'skipped', { reason: 'RESEND_API_KEY not configured' });
+    logger.warn('Entitlement email skipped: RESEND_API_KEY not set', { userId });
+    await logOnboardingAction(userId, 'entitlement-confirmation-email', 'skipped', {
+      reason: 'RESEND_API_KEY not configured',
+    });
     return;
   }
 
   try {
-    const fs = await import('fs');
-    const path = await import('path');
-    const templatePath = path.resolve(__dirname, '..', '..', '..', 'templates', 'welcome-email.html');
-    let html = '';
-    try {
-      html = fs.readFileSync(templatePath, 'utf-8');
-    } catch {
-      // Fallback: simple text if template not found
-      html = '<h1>Welcome to Nova</h1><p>Your Trader Intelligence subscription is active. Daily Briefs are sent weekdays before 9 AM ET.</p><p>Log in at novanexus-ai.com/dashboard</p>';
-      logger.warn('Welcome email template not found, using fallback', { templatePath });
-    }
-
-    const https = await import('https');
-    const body = JSON.stringify({
-      from: EMAIL_FROM,
-      to: [email],
-      subject: 'Welcome to Nova Trader Intelligence',
-      html,
-    });
-
-    await new Promise<void>((resolve, reject) => {
-      const req = https.request({
-        hostname: 'api.resend.com',
-        path: '/emails',
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${RESEND_API_KEY}`,
-          'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(body),
-        },
-      }, (res) => {
-        let data = '';
-        res.on('data', (chunk: Buffer) => data += chunk);
-        res.on('end', () => {
-          if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
-            resolve();
-          } else {
-            reject(new Error(`Resend API ${res.statusCode}: ${data}`));
-          }
-        });
-      });
-      req.on('error', reject);
-      req.write(body);
-      req.end();
-    });
-
-    logger.info('Welcome email sent', { userId, email });
-    await logOnboardingAction(userId, 'welcome-email', 'success', { email });
-  } catch (err) {
-    logger.error('Welcome email failed', err as Error, { userId });
-    await logOnboardingAction(userId, 'welcome-email', 'failure', { error: (err as Error).message, email });
-  }
-}
-
-async function sendFoundingMemberConciergeEmail(email: string, userId: string): Promise<void> {
-  if (!RESEND_API_KEY) {
-    logger.warn('Concierge email skipped: RESEND_API_KEY not set', { userId });
-    return;
-  }
-  const html = `<div style="font-family:system-ui,sans-serif;background:#0a0a0f;color:#fff;padding:32px;max-width:600px;margin:0 auto">
-    <div style="display:flex;align-items:center;gap:12px;margin-bottom:24px">
-      <div style="width:40px;height:40px;background:linear-gradient(135deg,#f59e0b,#d97706);border-radius:10px;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:20px">N</div>
-      <div>
-        <div style="font-size:18px;font-weight:700">You're a Founding Member</div>
-        <div style="font-size:12px;color:#f59e0b">⭐ ${email}</div>
-      </div>
-    </div>
-
-    <p style="color:#9ca3af;font-size:15px;line-height:1.6">
-      Welcome. Your founding membership is active. Here's how to start making money with Nova today.
-    </p>
-
-    <div style="background:#111827;border:1px solid #1f2937;border-radius:12px;padding:20px;margin:20px 0">
-      <div style="font-size:13px;font-weight:600;color:#f59e0b;margin-bottom:16px">Your 3-step onboarding</div>
-
-      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px">
-        <div style="width:24px;height:24px;background:#10b981;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;flex-shrink:0">1</div>
-        <div>
-          <div style="font-weight:600;font-size:14px;color:#fff">Run the Flip Finder</div>
-          <div style="color:#9ca3af;font-size:13px;margin-top:2px">Scan your local Craigslist for free items worth flipping. Nova evaluates each one against real eBay pricing and gives you a buy/pass verdict with a negotiation script.</div>
-          <a href="https://novanexus-ai.com/dashboard/scanner" style="color:#10b981;font-size:12px;text-decoration:none">→ novanexus-ai.com/dashboard/scanner</a>
-        </div>
-      </div>
-
-      <div style="display:flex;align-items:flex-start;gap:12px;margin-bottom:16px">
-        <div style="width:24px;height:24px;background:#8b5cf6;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;flex-shrink:0">2</div>
-        <div>
-          <div style="font-weight:600;font-size:14px;color:#fff">Check this morning's stock setups</div>
-          <div style="color:#9ca3af;font-size:13px;margin-top:2px">The screener runs momentum patterns across 500+ tickers. Use it to find setups for paper trading. Daily email alerts start tomorrow morning.</div>
-          <a href="https://novanexus-ai.com/dashboard/screener" style="color:#8b5cf6;font-size:12px;text-decoration:none">→ novanexus-ai.com/dashboard/screener</a>
-        </div>
-      </div>
-
-      <div style="display:flex;align-items:flex-start;gap:12px">
-        <div style="width:24px;height:24px;background:#f59e0b;border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:bold;font-size:12px;flex-shrink:0">3</div>
-        <div>
-          <div style="font-weight:600;font-size:14px;color:#fff">Log your first outcome</div>
-          <div style="color:#9ca3af;font-size:13px;margin-top:2px">When you buy an item or place a trade — log the result. Nova learns from every outcome and adjusts future recommendations specifically for your market.</div>
-          <a href="https://novanexus-ai.com/dashboard/outcomes" style="color:#f59e0b;font-size:12px;text-decoration:none">→ novanexus-ai.com/dashboard/outcomes</a>
-        </div>
-      </div>
-    </div>
-
-    <p style="color:#6b7280;font-size:13px;line-height:1.5">
-      You're one of 50 founding members. Your subscription directly funds the AI infrastructure that makes these tools work. Expect improvements weekly. Reply to this email if you need anything — I read every one.
-    </p>
-
-    <a href="https://novanexus-ai.com/dashboard" style="display:inline-block;background:linear-gradient(135deg,#f59e0b,#d97706);color:#000;padding:12px 24px;border-radius:8px;text-decoration:none;font-weight:700;font-size:14px;margin-top:16px">
-      Open Nova Dashboard →
-    </a>
-
-    <div style="margin-top:24px;padding-top:16px;border-top:1px solid #1f2937;font-size:11px;color:#374151">
-      Powered by Nova · <a href="https://novanexus-ai.com" style="color:#6b7280">novanexus-ai.com</a>
-    </div>
-  </div>`;
-
-  try {
-    await fetch('https://api.resend.com/emails', {
+    const response = await fetch('https://api.resend.com/emails', {
       method: 'POST',
-      headers: { 'Authorization': `Bearer ${RESEND_API_KEY}`, 'Content-Type': 'application/json' },
+      headers: {
+        Authorization: `Bearer ${RESEND_API_KEY}`,
+        'Content-Type': 'application/json',
+      },
       body: JSON.stringify({
-        from: 'Nova <hello@novanexus-ai.com>',
+        from: EMAIL_FROM,
         to: [email],
-        subject: '⭐ You\'re a Nova Founding Member — here\'s how to start',
-        html,
+        subject: 'Nova account access updated',
+        html: `<div style="font-family:system-ui,sans-serif;max-width:600px;margin:0 auto;padding:32px">
+          <h1 style="font-size:22px">Account access updated</h1>
+          <p>Stripe checkout was recorded for your Nova account, and the current entitlement is <strong>${plan}</strong>.</p>
+          <p>Sign in to see the capabilities that are currently available. This message does not promise market alerts, automated income, or investment results.</p>
+          <p><a href="${APP_URL}/login">Sign in to Nova</a></p>
+        </div>`,
       }),
     });
-    logger.info('Founding member concierge email sent', { userId, email });
-    await logOnboardingAction(userId, 'concierge-email', 'success', { email });
-  } catch (err) {
-    logger.error('Concierge email failed', err as Error, { userId });
-    await logOnboardingAction(userId, 'concierge-email', 'failure', { error: (err as Error).message });
+
+    if (!response.ok) {
+      throw new Error(`Resend API returned HTTP ${response.status}`);
+    }
+
+    logger.info('Entitlement confirmation email sent', { userId });
+    await logOnboardingAction(userId, 'entitlement-confirmation-email', 'success');
+  } catch (error) {
+    logger.error('Entitlement confirmation email failed', error as Error, { userId });
+    await logOnboardingAction(userId, 'entitlement-confirmation-email', 'failure', {
+      error: (error as Error).message,
+    });
   }
 }
-
 async function logOnboardingAction(userId: string, actionType: string, result: string, details: Record<string, any> = {}): Promise<void> {
   try {
     await query(
@@ -466,18 +380,12 @@ app.post('/v1/billing/checkout-session', async (req: Request, res: Response) => 
   }
 
   try {
-    const { priceId, interval = 'monthly', plan } = req.body;
-    let selectedPriceId = priceId;
-    if (!selectedPriceId) {
-      if (plan === 'FOUNDING' || plan === 'founding') {
-        selectedPriceId = PRICE_IDS.FOUNDING_MONTHLY;
-      } else if (plan === 'FLIP_PRO' || plan === 'LITE') {
-        selectedPriceId = PRICE_IDS.FLIP_CARD_PRO;
-      } else if (interval === 'yearly') {
-        selectedPriceId = PRICE_IDS.NOVA_HUB_LITE_YEARLY;
-      } else {
-        selectedPriceId = PRICE_IDS.FLIP_CARD_PRO;
-      }
+    const selection = resolveCheckoutSelection(req.body, CHECKOUT_PRICES);
+    if (selection.ok === false) {
+      return res.status(selection.status).json({
+        success: false,
+        error: { code: selection.code, message: selection.message },
+      });
     }
 
     // Get or create entitlement to get Stripe customer ID
@@ -498,21 +406,35 @@ app.post('/v1/billing/checkout-session', async (req: Request, res: Response) => 
     const session = await stripe.checkout.sessions.create({
       customer: customerId,
       payment_method_types: ['card'],
-      line_items: [{ price: selectedPriceId, quantity: 1 }],
+      line_items: [{ price: selection.priceId, quantity: 1 }],
       mode: 'subscription',
       success_url: `${APP_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
       cancel_url: `${APP_URL}/billing/cancel`,
       subscription_data: {
-        metadata: { userId, orgId },
+        metadata: {
+          userId,
+          orgId,
+          checkoutPlan: selection.plan,
+          checkoutInterval: selection.interval,
+        },
       },
-      metadata: { userId, orgId },
+      metadata: {
+        userId,
+        orgId,
+        checkoutPlan: selection.plan,
+        checkoutInterval: selection.interval,
+      },
     });
 
     await auditLog({
       userId,
       action: 'CHECKOUT_SESSION_CREATED',
       resource: 'billing',
-      details: { sessionId: session.id, priceId: selectedPriceId },
+      details: {
+        sessionId: session.id,
+        plan: selection.plan,
+        interval: selection.interval,
+      },
       ip: req.ip,
       timestamp: new Date().toISOString(),
     });
@@ -531,6 +453,83 @@ app.post('/v1/billing/checkout-session', async (req: Request, res: Response) => 
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
       success: false,
       error: { code: 'CHECKOUT_FAILED', message: 'Failed to create checkout session' },
+    });
+  }
+});
+
+// A browser return URL is not proof of payment. This authenticated endpoint
+// binds the Stripe session to the current Nova user and organization before it
+// returns a deliberately small verification result.
+app.get('/v1/billing/checkout-session/status', async (req: Request, res: Response) => {
+  const requestId = req.headers['x-request-id'] as string;
+  const userId = req.headers['x-user-id'] as string;
+  const orgId = req.headers['x-org-id'] as string;
+  const sessionId = typeof req.query.session_id === 'string' ? req.query.session_id : '';
+
+  if (!userId || !orgId) {
+    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Authentication required' },
+    });
+  }
+
+  if (!/^cs_[A-Za-z0-9_]{8,255}$/.test(sessionId)) {
+    return res.status(HTTP_STATUS.BAD_REQUEST).json({
+      success: false,
+      error: { code: 'INVALID_CHECKOUT_SESSION', message: 'A valid checkout session is required.' },
+    });
+  }
+
+  if (!stripe) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'STRIPE_NOT_CONFIGURED', message: 'Billing verification is unavailable.' },
+    });
+  }
+
+  try {
+    const session = await stripe.checkout.sessions.retrieve(sessionId);
+
+    if (session.mode !== 'subscription') {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: 'NOT_SUBSCRIPTION_CHECKOUT', message: 'This is not a subscription checkout.' },
+      });
+    }
+
+    if (!checkoutMetadataMatchesAccount(session.metadata, userId, orgId)) {
+      logger.warn('Checkout verification account mismatch', { requestId, userId });
+      return res.status(HTTP_STATUS.FORBIDDEN).json({
+        success: false,
+        error: { code: 'CHECKOUT_ACCOUNT_MISMATCH', message: 'Checkout does not belong to this account.' },
+      });
+    }
+
+    const entitlement = await getEntitlement(userId);
+    const entitlementMatchesOrganization = entitlement?.orgId === orgId;
+
+    return res.json({
+      success: true,
+      data: {
+        verified: true,
+        checkout: {
+          status: session.status === 'complete' ? 'complete' : 'processing',
+          payment: session.payment_status === 'paid' ? 'paid' : 'unpaid',
+        },
+        entitlement: entitlement && entitlementMatchesOrganization
+          ? {
+              plan: entitlement.plan,
+              status: entitlement.status,
+              active: entitlement.status === 'ACTIVE' || entitlement.status === 'TRIALING',
+            }
+          : null,
+      },
+    });
+  } catch (error) {
+    logger.error('Checkout verification failed', error as Error, { requestId, userId });
+    return res.status(HTTP_STATUS.NOT_FOUND).json({
+      success: false,
+      error: { code: 'CHECKOUT_NOT_VERIFIED', message: 'Checkout could not be verified.' },
     });
   }
 });
@@ -631,6 +630,56 @@ app.get('/v1/billing/entitlement', async (req: Request, res: Response) => {
 // Webhook Endpoint
 // ============================================
 
+async function recordPaidServiceInquiry(session: Stripe.Checkout.Session): Promise<boolean> {
+  const payment = servicePaymentReferenceFromCheckout(session);
+  if (!payment) return false;
+
+  const updated = await queryOne<{ receipt_id: string }>(
+    `UPDATE service_inquiries
+     SET payment_status = 'PAID',
+         stripe_checkout_session_id = $1,
+         stripe_payment_intent_id = $2,
+         paid_at = NOW()
+     WHERE receipt_id = $3
+       AND payment_status = 'NOT_STARTED'
+     RETURNING receipt_id`,
+    [payment.checkoutSessionId, payment.paymentIntentId, payment.receiptId],
+  );
+
+  logger.info('Service payment receipt processed', {
+    checkoutSessionId: payment.checkoutSessionId,
+    updated: !!updated,
+  });
+  return !!updated;
+}
+
+async function recordRefundedServiceInquiry(charge: Stripe.Charge): Promise<boolean> {
+  const paymentIntentId = fullyRefundedPaymentIntentFromCharge(charge);
+  if (!paymentIntentId) return false;
+
+  const updated = await queryOne<{ receipt_id: string }>(
+    `UPDATE service_inquiries
+     SET payment_status = 'REFUNDED'
+     WHERE stripe_payment_intent_id = $1
+       AND payment_status = 'PAID'
+       AND NOT EXISTS (
+         SELECT 1
+         FROM service_inquiries AS duplicate
+         WHERE duplicate.stripe_payment_intent_id = $1
+           AND duplicate.payment_status = 'PAID'
+           AND duplicate.id <> service_inquiries.id
+       )
+     RETURNING receipt_id`,
+    [paymentIntentId],
+  );
+
+  logger.info('Service refund receipt processed', {
+    paymentIntentId,
+    updated: !!updated,
+  });
+  return !!updated;
+}
+
 app.post('/webhook', async (req: Request, res: Response) => {
   if (!stripe) {
     return res.status(400).send('Stripe not configured');
@@ -640,7 +689,11 @@ app.post('/webhook', async (req: Request, res: Response) => {
   let event: Stripe.Event;
 
   try {
+    if (!Buffer.isBuffer(req.body)) {
+      throw new Error('Webhook body must be the original bytes');
+    }
     if (STRIPE_WEBHOOK_SECRET) {
+      if (!sig) throw new Error('Missing stripe-signature header');
       event = stripe.webhooks.constructEvent(req.body, sig, STRIPE_WEBHOOK_SECRET);
     } else {
       // Development mode - no signature verification
@@ -658,51 +711,84 @@ app.post('/webhook', async (req: Request, res: Response) => {
     switch (event.type) {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
+        if (session.mode === 'payment') {
+          const paymentRecorded = await recordPaidServiceInquiry(session);
+          if (!paymentRecorded) {
+            logger.warn('Paid service checkout did not match a pending receipt', {
+              checkoutSessionId: session.id,
+            });
+          }
+          break;
+        }
+
+        if (session.mode !== 'subscription') {
+          logger.info('Checkout completion ignored for unsupported mode', { mode: session.mode });
+          break;
+        }
+
         const userId = session.metadata?.userId;
-        
-        if (userId && session.subscription) {
-          const subscription = await stripe.subscriptions.retrieve(session.subscription as string);
-          
-          // Detect plan from the price ID on the subscription
-          const subPriceId = subscription.items?.data?.[0]?.price?.id || '';
-          const detectedPlan = planFromPriceId(subPriceId);
+        const orgId = session.metadata?.orgId;
+        const subscriptionId = typeof session.subscription === 'string'
+          ? session.subscription
+          : session.subscription?.id;
+        const customerId = typeof session.customer === 'string' ? session.customer : session.customer?.id;
 
-          await updateEntitlement(userId, {
-            plan: detectedPlan,
-            status: 'ACTIVE',
-            stripeSubscriptionId: subscription.id,
-            currentPeriodEnd: new Date(subscription.current_period_end * 1000).toISOString(),
-            features: getDefaultFeatures(detectedPlan),
-          });
+        if (!userId || !orgId || !subscriptionId) {
+          throw new Error('Subscription checkout is missing server-owned identity metadata');
+        }
 
-          await auditLog({
-            userId,
-            action: 'SUBSCRIPTION_CREATED',
-            resource: 'billing',
-            details: { subscriptionId: subscription.id, plan: 'LITE' },
-            timestamp: new Date().toISOString(),
-          });
+        const existingEntitlement = await getEntitlement(userId);
+        if (
+          !existingEntitlement
+          || existingEntitlement.orgId !== orgId
+          || !existingEntitlement.stripeCustomerId
+          || existingEntitlement.stripeCustomerId !== customerId
+        ) {
+          throw new Error('Subscription checkout identity does not match the stored entitlement');
+        }
 
-          // Log onboarding event for command layer visibility
-          try {
-            await query(
-              `INSERT INTO command_actions (actor_id, action_type, target, result, details) VALUES ($1, $2, $3, $4, $5)`,
-              [userId, 'subscriber-onboarded', 'billing', 'success', JSON.stringify({ plan: 'LITE', subscriptionId: subscription.id })]
-            );
-          } catch { /* best effort — command_actions table may not exist yet */ }
+        const subscription = await stripe.subscriptions.retrieve(subscriptionId);
+        if (!checkoutMetadataMatchesAccount(subscription.metadata, userId, orgId)) {
+          throw new Error('Subscription identity metadata does not match checkout');
+        }
 
-          logger.info('Subscription activated', { userId, subscriptionId: subscription.id });
+        const subPriceId = subscription.items?.data?.[0]?.price?.id || '';
+        const detectedPlan = entitlementPlanFromPriceId(subPriceId, CHECKOUT_PRICES);
+        if (!detectedPlan) throw new Error('Subscription price is not in the checkout allowlist');
 
-          // Send welcome email (best-effort, non-blocking)
+        const status = stripeStatusToEntitlementStatus(subscription.status);
+        await updateEntitlement(userId, {
+          plan: detectedPlan,
+          status,
+          stripeSubscriptionId: subscription.id,
+          currentPeriodEnd: new Date(subscription.current_period_end * 1000).toISOString(),
+          features: getDefaultFeatures(detectedPlan),
+        });
+
+        await auditLog({
+          userId,
+          action: 'SUBSCRIPTION_CREATED',
+          resource: 'billing',
+          details: { subscriptionId: subscription.id, plan: detectedPlan, status },
+          timestamp: new Date().toISOString(),
+        });
+
+        try {
+          await query(
+            `INSERT INTO command_actions (actor_id, action_type, target, result, details) VALUES ($1, $2, $3, $4, $5)`,
+            [userId, 'subscriber-onboarded', 'billing', 'success', JSON.stringify({ plan: detectedPlan, subscriptionId: subscription.id })],
+          );
+        } catch { /* best effort — command_actions table may not exist yet */ }
+
+        logger.info('Subscription checkout processed', { userId, subscriptionId: subscription.id, status });
+
+        if (status === 'ACTIVE' || status === 'TRIALING') {
           const userRow = await queryOne<{ email: string }>(
-            `SELECT email FROM users WHERE id = $1`, [userId]
+            `SELECT email FROM users WHERE id = $1`, [userId],
           );
           if (userRow?.email) {
-            const emailFn = detectedPlan === 'FOUNDING'
-              ? sendFoundingMemberConciergeEmail(userRow.email, userId)
-              : sendWelcomeEmail(userRow.email, userId);
-            emailFn.catch(err => {
-              logger.error('Welcome/concierge email fire-and-forget failed', err as Error);
+            sendEntitlementConfirmationEmail(userRow.email, userId, detectedPlan).catch(error => {
+              logger.error('Entitlement email fire-and-forget failed', error as Error);
             });
           }
         }
@@ -712,28 +798,56 @@ app.post('/webhook', async (req: Request, res: Response) => {
       case 'customer.subscription.updated': {
         const subscription = event.data.object as Stripe.Subscription;
         const userId = subscription.metadata?.userId;
-        
-        if (userId) {
-          const status = subscription.status === 'active' ? 'ACTIVE' 
-            : subscription.status === 'past_due' ? 'PAST_DUE'
-            : subscription.status === 'canceled' ? 'CANCELED'
-            : subscription.status === 'trialing' ? 'TRIALING'
-            : 'ACTIVE';
+        const orgId = subscription.metadata?.orgId;
+
+        if (userId && orgId) {
+          const entitlement = await getEntitlement(userId);
+          if (
+            !entitlement
+            || entitlement.orgId !== orgId
+            || (entitlement.stripeSubscriptionId && entitlement.stripeSubscriptionId !== subscription.id)
+          ) {
+            throw new Error('Updated subscription does not match the stored entitlement');
+          }
+
+          const subPriceId = subscription.items?.data?.[0]?.price?.id || '';
+          const detectedPlan = entitlementPlanFromPriceId(subPriceId, CHECKOUT_PRICES);
+          if (!detectedPlan) {
+            await updateEntitlement(userId, { status: 'PAST_DUE' });
+            throw new Error('Updated subscription price is not in the checkout allowlist');
+          }
+
+          const status = stripeStatusToEntitlementStatus(subscription.status);
 
           await updateEntitlement(userId, {
+            plan: detectedPlan,
             status,
+            stripeSubscriptionId: subscription.id,
             currentPeriodEnd: new Date(subscription.current_period_end * 1000).toISOString(),
+            features: getDefaultFeatures(detectedPlan),
           });
 
           await auditLog({
             userId,
             action: 'SUBSCRIPTION_UPDATED',
             resource: 'billing',
-            details: { subscriptionId: subscription.id, status },
+            details: { subscriptionId: subscription.id, status, plan: detectedPlan },
             timestamp: new Date().toISOString(),
           });
 
-          logger.info('Subscription updated', { userId, status });
+          logger.info('Subscription updated', { userId, status, plan: detectedPlan });
+        } else {
+          logger.warn('Subscription update ignored: identity metadata is missing', {
+            subscriptionId: subscription.id,
+          });
+        }
+        break;
+      }
+
+      case 'charge.refunded': {
+        const refundRecorded = await recordRefundedServiceInquiry(event.data.object as Stripe.Charge);
+        if (!refundRecorded) {
+          logger.info('Refund event did not change a paid service receipt', { eventId: event.id });
         }
         break;
       }
@@ -809,83 +923,28 @@ app.get('/v1/billing/pricing', async (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: {
-      plans: [
-        {
-          id: 'FREE',
-          name: 'Free',
-          price: 0,
-          interval: null,
-          features: ['3 Flip Card analyses per day', 'Real eBay sold comps', 'Full cost breakdown', 'Buy/negotiate/pass verdict'],
-        },
-        {
-          id: 'LITE',
-          name: 'Flip Card Pro',
-          priceMonthly: 9,
-          priceYearly: 90,
-          interval: 'month',
-          features: [
-            'Unlimited Flip Card analyses',
-            'Saved analysis history',
-            'Daily Flip Alert emails',
-            'Priority comp data',
-            'All trading tools included',
-          ],
-        },
-        {
-          id: 'FOUNDING',
-          name: 'Founding Member',
-          priceMonthly: 99,
-          priceYearly: 990,
-          interval: 'month',
-          founding: true,
-          features: [
-            'Everything in Lite — unlimited',
-            'Founding Member badge',
-            'Concierge onboarding (ASSIST mode)',
-            'Flip pipeline + deal cards',
-            'Weekly improvement reports',
-            'Priority support + early access',
-            'API access',
-            'Advanced analytics',
-            'Limited to 50 seats',
-          ],
-        },
-        {
-          id: 'PRO',
-          name: 'Nova Hub Pro',
-          priceMonthly: 149,
-          priceYearly: 1490,
-          interval: 'month',
-          comingSoon: true,
-          features: [
-            'Everything in Founding',
-            'Full automation gates',
-            'Custom indicators',
-            'Real-time alerts',
-            'Team collaboration',
-          ],
-        },
-      ],
+      selfServeAvailable: false,
+      plans: [],
+      privatePilot: {
+        status: 'INVITATION_ONLY',
+        forSale: false,
+        message: 'Nova subscriptions are not available for public self-serve purchase. Private pilots use a written scope and an operator-issued checkout.',
+      },
     },
   });
 });
-
-// Founding Member seat count (public)
+// Legacy route retained for old clients without advertising inventory for sale.
 app.get('/v1/billing/founding-seats', async (_req: Request, res: Response) => {
-  try {
-    const seatConfig = await queryOne<{ max_seats: number }>('SELECT max_seats FROM founding_seats LIMIT 1');
-    const taken = await queryOne<{ count: string }>(
-      `SELECT COUNT(*) as count FROM entitlements WHERE plan = 'FOUNDING' AND status = 'ACTIVE'`
-    );
-    const maxSeats = seatConfig?.max_seats || 50;
-    const takenCount = parseInt(taken?.count || '0', 10);
-    res.json({
-      success: true,
-      data: { maxSeats, taken: takenCount, remaining: Math.max(0, maxSeats - takenCount) },
-    });
-  } catch (error) {
-    res.json({ success: true, data: { maxSeats: 50, taken: 0, remaining: 50 } });
-  }
+  res.json({
+    success: true,
+    data: {
+      available: false,
+      maxSeats: null,
+      taken: null,
+      remaining: null,
+      message: 'Public founding-seat sales are closed.',
+    },
+  });
 });
 
 // ============================================

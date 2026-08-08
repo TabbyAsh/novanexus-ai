@@ -24,6 +24,17 @@ import type {
   NovaCardRow,
 } from '@nova/shared';
 import { requiredScopesForRoute } from './route-authority';
+import {
+  buildStripeWebhookForward,
+  StripeWebhookForwardingError,
+} from './stripe-webhook-forward';
+import {
+  CONTACT_RATE_LIMIT_MAX,
+  CONTACT_RATE_LIMIT_WINDOW_SECONDS,
+  checkLocalContactRateLimit,
+  contactRateLimitKey,
+  isPublicContactPath,
+} from './contact-rate-limit';
 
 const app = express();
 const logger = createLogger('gateway-service');
@@ -67,7 +78,6 @@ const PLATFORM_OWNER_EMAILS = new Set(
 
 // Public routes that don't require authentication
 const PUBLIC_ROUTES = [
-  '/v1/bootstrap/',   // one-time admin setup — remove after use
   '/v1/cards/intake', // situation intake — public (3 free/month)
   '/v1/cards/outcome', // Phase 1: mark what happened (visitor-scoped)
   '/v1/cards/calibration', // Phase 1: Nova's real track record (honest 0-state)
@@ -154,6 +164,9 @@ declare global {
   }
 }
 
+// Stripe signs the exact request bytes. Capture them before the global JSON
+// parser so the gateway can forward the original payload unchanged.
+app.use('/billing/webhook', express.raw({ type: 'application/json', limit: '1mb' }));
 app.use(express.json({ limit: '1mb' })); // Limit payload size
 
 // ==========================================================================
@@ -277,7 +290,8 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
 // Authentication middleware
 app.use(async (req: Request, res: Response, next: NextFunction) => {
-  const isPublic = PUBLIC_ROUTES.some((r) => req.path === r || req.path.startsWith(r));
+  const isPublic = isPublicContactPath(req.path)
+    || PUBLIC_ROUTES.some((r) => req.path === r || req.path.startsWith(r));
   const authHeader = req.headers.authorization;
   if (!authHeader?.startsWith('Bearer ')) {
     if (isPublic) return next();
@@ -312,7 +326,8 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 // broad read scope (for example /v1/trade) from shadowing a narrower execution
 // scope (/v1/trade/live). Public routes retain their explicit public contract.
 app.use((req: Request, res: Response, next: NextFunction) => {
-  if (PUBLIC_ROUTES.some((route) => req.path === route || req.path.startsWith(route))) {
+  if (isPublicContactPath(req.path)
+    || PUBLIC_ROUTES.some((route) => req.path === route || req.path.startsWith(route))) {
     return next();
   }
   const required = requiredScopesForRoute(req.method, req.path);
@@ -703,6 +718,46 @@ async function proxyRequestRewrite(targetUrl: string, targetPath: string, req: R
     res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
       error: { code: 'SERVICE_UNAVAILABLE', message: 'Upstream service unavailable' },
+    });
+  }
+}
+
+async function proxyStripeWebhook(req: Request, res: Response): Promise<void> {
+  try {
+    const forwarded = buildStripeWebhookForward(
+      req.body,
+      req.headers['stripe-signature'],
+      req.headers['content-type'],
+      req.headers['x-request-id'],
+      sanitizedClientIp(req),
+    );
+    const response = await fetch(`${SERVICE_URLS.billing}/webhook`, {
+      method: 'POST',
+      headers: forwarded.headers,
+      body: forwarded.body,
+    });
+
+    const contentType = response.headers.get('content-type');
+    if (contentType) res.setHeader('Content-Type', contentType);
+
+    if (contentType?.includes('application/json')) {
+      const data = await response.json();
+      res.status(response.status).json(data);
+    } else {
+      res.status(response.status).send(await response.text());
+    }
+  } catch (error) {
+    if (error instanceof StripeWebhookForwardingError) {
+      return void res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: 'INVALID_STRIPE_WEBHOOK', message: error.message },
+      });
+    }
+
+    logger.error('Stripe webhook proxy failed', error as Error);
+    res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: { code: 'SERVICE_UNAVAILABLE', message: 'Billing webhook service unavailable' },
     });
   }
 }
@@ -1206,11 +1261,6 @@ app.all('/v1/ops/modes*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
-// Bootstrap (one-time admin setup, public, secret-protected internally)
-app.all('/v1/bootstrap/*', (req: Request, res: Response) => {
-  proxyRequest(SERVICE_URLS.novaHub, req, res);
-});
-
 // Public Decision Card loop. Generation without a return path is a faucet;
 // these four routes are one product contract: decide -> act -> report -> learn.
 app.all([
@@ -1227,8 +1277,35 @@ app.all('/v1/cards/generate*', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
-// Contact form -> Nova Hub (public — no auth)
-app.all('/v1/contact*', (req: Request, res: Response) => {
+// Service inquiry intake -> Nova Hub. This exact POST path is public, while a
+// dedicated low-volume limit sits in front of the general API limit. If the
+// shared limiter is unavailable, the process-local limiter still fails safe.
+const contactRateLimit = async (req: Request, res: Response, next: NextFunction) => {
+  const key = `contact:${contactRateLimitKey(req)}`;
+  let result: { allowed: boolean; remaining: number; resetAt: number };
+  try {
+    result = await checkRateLimit(key, CONTACT_RATE_LIMIT_MAX, CONTACT_RATE_LIMIT_WINDOW_SECONDS);
+  } catch (error) {
+    logger.warn('Shared contact limiter unavailable; using local fail-safe', { error: (error as Error).message });
+    result = checkLocalContactRateLimit(key);
+  }
+
+  res.setHeader('X-Contact-RateLimit-Limit', CONTACT_RATE_LIMIT_MAX.toString());
+  res.setHeader('X-Contact-RateLimit-Remaining', result.remaining.toString());
+  res.setHeader('X-Contact-RateLimit-Reset', result.resetAt.toString());
+  if (!result.allowed) {
+    return res.status(HTTP_STATUS.TOO_MANY_REQUESTS).json({
+      success: false,
+      error: {
+        code: ERROR_CODES.RATE_LIMITED,
+        message: 'Too many inquiry attempts. Wait for the intake window to reset or email support.',
+      },
+    });
+  }
+  next();
+};
+
+app.post('/v1/contact', contactRateLimit, (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });
 
@@ -1255,6 +1332,10 @@ app.get('/v1/billing/entitlement', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.billing, req, res);
 });
 
+app.get('/v1/billing/checkout-session/status', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.billing, req, res);
+});
+
 app.post('/v1/billing/checkout-session', (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.billing, req, res);
 });
@@ -1269,7 +1350,7 @@ app.get('/v1/billing/founding-seats', (req: Request, res: Response) => {
 
 // Stripe webhook - needs raw body, passthrough to billing
 app.post('/billing/webhook', (req: Request, res: Response) => {
-  proxyRequestRewrite(SERVICE_URLS.billing, '/webhook', req, res);
+  proxyStripeWebhook(req, res);
 });
 
 // ============================================

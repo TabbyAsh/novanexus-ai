@@ -28,7 +28,7 @@ class PolicyEngine {
     evaluate(context) {
         // Filter policies for this org and role
         const applicablePolicies = this.policies.filter((p) => p.orgId === context.orgId &&
-            (p.subjectRole === context.userRole || p.subjectRole === 'OWNER'));
+            p.subjectRole === context.userRole);
         // Find matching policies for the action and resource
         const matchingPolicies = applicablePolicies.filter((p) => {
             const actionMatch = this.matchAction(p.action, context.action);

@@ -8,7 +8,7 @@
  * unattended.
  *
  * THE WALLS (non-negotiable, per rails 1–5 and v0.1 §6):
- *  - Execution happens in an ISOLATED temp workspace, never the repo.
+ *  - Execution happens in an ISOLATED ephemeral workspace, never the repo.
  *  - The child process runs with a CLEARED environment — no secrets, no
  *    DATABASE_URL, no keys reach generated code.
  *  - Hard wall-clock timeout + output cap; the process is killed on overrun.

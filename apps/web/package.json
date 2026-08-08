@@ -6,7 +6,7 @@
     "dev": "next dev -p 4000",
     "build": "next build",
     "start": "next start -p 4000",
-    "lint": "next lint",
+    "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
     "test": "jest --config jest.config.js",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui"
@@ -18,7 +18,7 @@
     "framer-motion": "^12.31.0",
     "gsap": "^3.14.2",
     "lucide-react": "^0.303.0",
-    "next": "14.0.4",
+    "next": "16.3.0",
     "nova-enterprises": "file:../..",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",

@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -55,7 +55,7 @@ function calculatePasswordStrength(password: string): { score: number; label: st
   return { score, label: 'Strong', color: 'bg-green-500' };
 }
 
-export default function RegisterPage() {
+function RegisterPageContent() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const register = useAuthStore((s) => s.register);
@@ -70,9 +70,6 @@ export default function RegisterPage() {
   const [isLoading, setIsLoading] = useState(false);
   const [agreedToTerms, setAgreedToTerms] = useState(false);
 
-  // Founding member detection from URL
-  const planParam = searchParams?.get('plan') || '';
-  const isFoundingFlow = planParam.toLowerCase() === 'founding';
   const referralCode = searchParams?.get('ref') || '';
 
   // Redirect if already authenticated
@@ -149,12 +146,8 @@ export default function RegisterPage() {
           } catch { /* referral is bonus, not critical path */ }
         }
 
-        // If founding flow, redirect to checkout after registration
-        if (isFoundingFlow) {
-          router.push('/pricing?plan=founding');
-        } else {
-          router.push('/dashboard');
-        }
+        // Registration creates an account only. It never starts checkout.
+        router.push('/dashboard');
       } else {
         setError(result.error || 'Registration failed. Please try again.');
       }
@@ -192,49 +185,35 @@ export default function RegisterPage() {
             </span>
           </Link>
           <h1 className="mt-8 text-3xl font-bold text-white">
-            {isFoundingFlow ? 'Claim Your Founding Seat' : 'Create your account'}
+            Create your account
           </h1>
           <p className="mt-2 text-gray-400">
-            {isFoundingFlow
-              ? 'Full platform access. Priority support. Locked rate for life.'
-              : 'Get started with NovaNexus — free.'}
+            Registration creates an account. It does not start a paid plan.
           </p>
         </div>
 
-        {/* Founding member badge */}
-        {isFoundingFlow && (
-          <motion.div
-            initial={{ opacity: 0, y: -10 }}
-            animate={{ opacity: 1, y: 0 }}
-            className="mb-6 mx-auto max-w-md px-4 py-3 rounded-xl bg-amber-500/10 border border-amber-500/30 text-center"
-          >
-            <div className="text-amber-400 font-semibold text-sm">⭐ Founding Member — $29/mo locked for life</div>
-            <div className="text-amber-400/60 text-xs mt-1">Full platform access + priority support + early features</div>
-          </motion.div>
-        )}
-
-        {/* Referral bonus notice */}
-        {referralCode && !isFoundingFlow && (
+        {/* Referral receipt notice */}
+        {referralCode && (
           <motion.div
             initial={{ opacity: 0, y: -10 }}
             animate={{ opacity: 1, y: 0 }}
             className="mb-6 mx-auto max-w-md px-4 py-3 rounded-xl bg-green-500/10 border border-green-500/30 text-center"
           >
-            <div className="text-green-400 font-semibold text-sm">Referred by a friend — $10 credit on signup</div>
-            <div className="text-green-400/60 text-xs mt-1">Credit applied automatically after registration</div>
+            <div className="text-green-400 font-semibold text-sm">Referral code detected</div>
+            <div className="text-green-400/60 text-xs mt-1">Nova will record it after registration if the code is valid.</div>
           </motion.div>
         )}
 
         {/* Features highlight */}
         <div className="flex justify-center gap-6 mb-6 text-xs text-gray-400">
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Full platform access' : 'Free to start'}
+            <span className="text-green-400">✓</span> Account only
           </span>
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> {isFoundingFlow ? 'Priority support' : 'No credit card'}
+            <span className="text-green-400">✓</span> No credit card
           </span>
           <span className="flex items-center gap-1">
-            <span className="text-green-400">✓</span> Cancel anytime
+            <span className="text-green-400">✓</span> No subscription
           </span>
         </div>
 
@@ -448,13 +427,27 @@ export default function RegisterPage() {
           </Link>
         </p>
 
-        {/* Footer security info */}
+        {/* Registration boundary */}
         <div className="mt-8 text-center text-gray-600 text-xs">
-          Your data is protected with 256-bit encryption.
+          Use a unique password that you do not reuse elsewhere.
           <br />
-          We never share your information with third parties.
+          Creating an account does not authorize a charge.
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={(
+        <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4 text-gray-400">
+          Loading registration…
+        </div>
+      )}
+    >
+      <RegisterPageContent />
+    </Suspense>
   );
 }

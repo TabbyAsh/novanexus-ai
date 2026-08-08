@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import Link from 'next/link';
 import { useAuthStore } from '../../lib/store';
+import { hasWorldAuthority } from '../../lib/world-authority';
 import WorldClient from './WorldClient';
 
 type GapStatus = 'OPEN' | 'IN_PROGRESS' | 'RESOLVED' | 'WAIVED';
@@ -138,7 +139,7 @@ function tone(status: string): string {
 }
 
 export default function FunctionalWorldShell() {
-  const { user, scopes, isAuthenticated, isLoading, loadUser } = useAuthStore();
+  const { scopes, isAuthenticated, isLoading, loadUser } = useAuthStore();
   const [checked, setChecked] = useState(false);
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'state' | 'geometry' | 'condition' | 'receipts'>('state');
@@ -153,8 +154,7 @@ export default function FunctionalWorldShell() {
     loadUser().finally(() => setChecked(true));
   }, [loadUser]);
 
-  const role = (user as { role?: string } | null)?.role;
-  const isFounder = scopes.includes('ops.admin') || role === 'OWNER' || role === 'ADMIN';
+  const isFounder = hasWorldAuthority(scopes);
 
   const callNexus = useCallback(async (message: string): Promise<NexusInteraction> => {
     const token = localStorage.getItem('nova_access_token') || '';

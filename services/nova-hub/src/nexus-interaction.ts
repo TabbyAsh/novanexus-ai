@@ -49,6 +49,16 @@ const ECONOMIC_OWNER_EMAILS = new Set(
     .map(value => value.trim().toLowerCase())
     .filter(Boolean),
 );
+const WORLD_CONTROL_SCOPE = 'ops.admin';
+
+export function hasEconomicOwnerAuthority(
+  email: string | null | undefined,
+  scopes: readonly string[],
+  ownerEmails = ECONOMIC_OWNER_EMAILS,
+): boolean {
+  if (scopes.includes(WORLD_CONTROL_SCOPE)) return true;
+  return Boolean(email && ownerEmails.has(email.trim().toLowerCase()));
+}
 
 const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
   {
@@ -301,21 +311,14 @@ function authorityFor(capabilities: string[]): NexusAuthorityMode {
   return 'recommend';
 }
 
-async function economicOwnerAllowed(userId: string): Promise<boolean> {
-  const row = await queryOne<{ email: string; platform_role: string | null }>(
-    `SELECT u.email,
-            (SELECT om.role
-             FROM org_members om
-             WHERE om.user_id = u.id AND om.role IN ('OWNER', 'ADMIN')
-             ORDER BY CASE om.role WHEN 'OWNER' THEN 0 ELSE 1 END
-             LIMIT 1) AS platform_role
-     FROM users u WHERE u.id = $1`,
+async function economicOwnerAllowed(userId: string, scopes: readonly string[]): Promise<boolean> {
+  if (hasEconomicOwnerAuthority(null, scopes)) return true;
+  const row = await queryOne<{ email: string }>(
+    'SELECT email FROM users WHERE id = $1',
     [userId],
   ).catch(() => null);
 
-  if (row?.email && ECONOMIC_OWNER_EMAILS.has(row.email.trim().toLowerCase())) return true;
-  if (row?.platform_role === 'OWNER' || row?.platform_role === 'ADMIN') return true;
-  return ECONOMIC_OWNER_EMAILS.size === 0 && process.env.NODE_ENV !== 'production';
+  return hasEconomicOwnerAuthority(row?.email, scopes);
 }
 
 async function persistDeterministicTurn(
@@ -424,11 +427,12 @@ async function economicTradeTurn(
   userId: string,
   conversationId: string | null,
   message: string,
+  scopes: readonly string[],
 ): Promise<NexusTurn | null> {
   const evidenceRequest = targetsGeometryEvidenceSubmission(message) || targetsConditionEvidenceSubmission(message);
   const scopePricingRequest = targetsScopePricingCommand(message);
   if (!targetsTrade0001(message) && !evidenceRequest && !scopePricingRequest) return null;
-  if (!(await economicOwnerAllowed(userId))) return forbiddenEconomicTurn(userId, conversationId, message);
+  if (!(await economicOwnerAllowed(userId, scopes))) return forbiddenEconomicTurn(userId, conversationId, message);
 
   let result: EconomicCommandResult;
   try {
@@ -545,10 +549,11 @@ export async function nexusInteract(
   userId: string,
   conversationId: string | null,
   message: string,
+  scopes: readonly string[] = [],
 ): Promise<NexusInteractionEnvelope> {
   const interactionId = generateId();
   const createdAt = new Date().toISOString();
-  const deterministicTurn = await economicTradeTurn(userId, conversationId, message);
+  const deterministicTurn = await economicTradeTurn(userId, conversationId, message, scopes);
   const turn: NexusTurn = deterministicTurn || await novaChat(userId, conversationId, message);
   const primaryIntent = deterministicTurn
     ? 'economic_trade'

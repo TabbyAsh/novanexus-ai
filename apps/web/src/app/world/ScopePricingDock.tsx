@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../../lib/store';
+import { hasWorldAuthority } from '../../lib/world-authority';
 
 interface EconomicGapView {
   code: string;
@@ -128,7 +129,7 @@ function money(value: number | null, currency = 'USD', digits = 0): string {
 }
 
 export default function ScopePricingDock({ onChanged }: { onChanged: () => void }) {
-  const { user, scopes, isAuthenticated } = useAuthStore();
+  const { scopes, isAuthenticated } = useAuthStore();
   const [open, setOpen] = useState(false);
   const [tab, setTab] = useState<'scope' | 'pricing'>('scope');
   const [busy, setBusy] = useState<string | null>(null);
@@ -138,8 +139,7 @@ export default function ScopePricingDock({ onChanged }: { onChanged: () => void 
   const [summary, setSummary] = useState<ScopePricingSummary>({ scope: null, price: null });
   const [draft, setDraft] = useState<PricingDraft>(initialDraft);
 
-  const role = (user as { role?: string } | null)?.role;
-  const isFounder = isAuthenticated && (scopes.includes('ops.admin') || role === 'OWNER' || role === 'ADMIN');
+  const isFounder = isAuthenticated && hasWorldAuthority(scopes);
 
   const callNexus = useCallback(async (message: string): Promise<NexusInteraction> => {
     const token = localStorage.getItem('nova_access_token') || '';

@@ -602,8 +602,8 @@ export default function DecisionCardsClient() {
   const [selected, setSelected] = useState<typeof CARDS[0] | null>(null);
   const [filter, setFilter] = useState<string>('All');
   const tags = ['All', ...Array.from(new Set(CARDS.map(c => c.tag)))];
-  const isPaid = false; // TODO: read from auth store
-  const freeUsed = 0;   // TODO: read from server
+  const isPaid = false; // Planned: read from auth store
+  const freeUsed = 0;   // Planned: read from server
 
   const visible = filter === 'All' ? CARDS : CARDS.filter(c => c.tag === filter);
 

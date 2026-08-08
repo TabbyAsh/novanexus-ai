@@ -41,6 +41,10 @@ function run(cmd, opts = {}) {
     return false;
   }
 }
+
+function wait(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
 function setEnvFileValues(envPath, values) {
   const fs = require('fs');
   const lines = fs.existsSync(envPath) ? fs.readFileSync(envPath, 'utf8').split(/\r?\n/) : [];
@@ -145,7 +149,14 @@ async function main() {
 
     // Step 3: Start services
     console.log('\n[3/5] Starting services...');
-    if (!run(`docker-compose --env-file \"${ENV_FILE}\" -f \"${COMPOSE_FILE}\" up -d --build`)) {
+    const composeBase = `docker-compose --env-file \"${ENV_FILE}\" -f \"${COMPOSE_FILE}\"`;
+    let servicesStarted = run(`${composeBase} up -d --build`);
+    for (let attempt = 1; !servicesStarted && attempt <= 3; attempt += 1) {
+      console.log(`\nService health gates were slow; retrying without rebuilding images (${attempt}/3)...`);
+      wait(15_000);
+      servicesStarted = run(`${composeBase} up -d --no-build`);
+    }
+    if (!servicesStarted) {
       console.error('\n✗ Failed to start services.');
       process.exit(1);
     }

@@ -18,9 +18,9 @@ const SECTIONS = [
   {
     title: '2. Description of Service',
     items: [
-      'Nova Enterprises provides decision intelligence tools, business operating systems, resale analysis, market research, and related services through the NovaNexus platform.',
-      'The Platform includes AI-generated decision cards, flip market analysis, stock pattern research, income tracking, and back-office services.',
-      'Some features require a paid subscription. Features may change over time. We will provide reasonable notice of material changes.',
+      'Nova Enterprises provides a private operator workspace, limited research and paper-workflow tools, and separately scoped human-delivered business services.',
+      'Capabilities labeled Preview, unavailable, paper, or sandbox are not represented as complete, live, or able to affect real funds.',
+      'The public Back Office OS Starter Pilot is a one-time human-delivered service. It does not include a software subscription or automated business administration.',
     ],
   },
   {
@@ -43,14 +43,15 @@ const SECTIONS = [
     ],
   },
   {
-    title: '5. Subscriptions and Billing',
+    title: '5. Billing, Pilot Scope, and Refunds',
     items: [
-      'Paid subscriptions are billed monthly or annually as selected at purchase.',
-      'Subscriptions automatically renew unless cancelled before the renewal date.',
-      'You may cancel your subscription at any time through the Settings page or by contacting hello@novanexus-ai.com.',
-      'Refunds are provided at our discretion. Contact us within 7 days of a charge if you believe there has been an error.',
-      'Founding Member pricing is locked for the duration of your active subscription. If you cancel and resubscribe, current pricing applies.',
-      'We reserve the right to change pricing with 30 days\' notice to active subscribers.',
+      'The public Back Office OS Starter Pilot costs $150 as a one-time payment. It does not renew and does not create a subscription.',
+      'Submitting an intake or making payment does not by itself mean that scope has been accepted or that work has begun.',
+      'Before work begins, we will confirm the accepted scope and the access or information required from you in writing.',
+      'You may request a full refund of the Starter Pilot payment at any time before work begins by emailing hello@novanexus-ai.com with your service receipt.',
+      'Once work begins, any cancellation, refund, or change is handled under the written scope agreed with you and applicable law.',
+      'The seven-business-day delivery target begins only after written scope acceptance and receipt of the required access and information. It is a target, not a guarantee, and pauses while required client input is missing.',
+      'Nova subscriptions are not currently offered for public self-serve purchase. Any future or privately offered recurring plan will disclose its price, renewal, cancellation, and refund terms before purchase.',
     ],
   },
   {
@@ -68,6 +69,7 @@ const SECTIONS = [
     items: [
       'The Platform, its code, design, content, and branding are the property of Nova Enterprises.',
       'Decision Cards you generate using the Platform based on your own input are yours. Generic template content remains our property.',
+      'You retain ownership of your business data. For an accepted Starter Pilot, you own the client-specific records and workspace we create for you; our pre-existing methods and generic templates remain ours, with a perpetual right for you to use the delivered copies in your business.',
       'You grant us a license to use data you log (outcomes, decisions) in anonymized, aggregated form to improve the Platform.',
       'You may not copy, modify, distribute, or create derivative works of the Platform without written permission.',
     ],
@@ -75,10 +77,10 @@ const SECTIONS = [
   {
     title: '8. Third-Party Integrations',
     items: [
-      'The Platform integrates with third-party services including Alpaca Markets, Stripe, and data providers.',
+      'The Platform uses third-party services including Stripe, Resend, hosting providers, and selected data or AI providers where a capability is enabled.',
       'Your use of third-party services is subject to those services\' own terms and policies.',
       'We are not responsible for the availability, accuracy, or actions of third-party services.',
-      'Connecting a broker account does not transfer responsibility for your trading activity to Nova Enterprises.',
+      'Nova does not currently offer public live-broker execution. Any future broker connection will require separate authorization and does not transfer responsibility for trading decisions to Nova Enterprises.',
     ],
   },
   {
@@ -131,7 +133,7 @@ export default function TermsPage() {
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Terms of Service</h1>
-          <p className="text-gray-500 text-sm">Last updated: June 4, 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: August 8, 2026</p>
           <p className="text-gray-400 text-sm mt-4 leading-relaxed">
             These Terms of Service (&quot;Terms&quot;) govern your access to and use of the services provided by Nova Enterprises,
             including the NovaNexus platform and all associated tools and products (collectively, the &quot;Platform&quot;).

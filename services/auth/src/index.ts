@@ -15,7 +15,14 @@ import {
   nowTimestamp,
 } from '@nova/shared';
 import type { ApiResponse, User, UserRole, Policy } from '@nova/shared';
-import { scopesForIdentity } from './platform-scopes';
+import {
+  configuredPlatformOwnerEmails,
+  isConfiguredPlatformOwnerEmail,
+  refreshedAuthorizationForIdentity,
+  registrationRoleForNewOrganization,
+  scopesForIdentity,
+  unverifiedPlatformOwnerRegistrationAllowed,
+} from './platform-scopes';
 
 const app = express();
 const logger = createLogger('auth-service');
@@ -132,6 +139,19 @@ async function handleRegister(req: Request, res: Response) {
       });
     }
 
+    const platformOwnerEmails = configuredPlatformOwnerEmails();
+    const isPlatformOwner = isConfiguredPlatformOwnerEmail(email, platformOwnerEmails);
+    const role = registrationRoleForNewOrganization();
+    if (isPlatformOwner && !unverifiedPlatformOwnerRegistrationAllowed()) {
+      return res.status(HTTP_STATUS.FORBIDDEN).json({
+        success: false,
+        error: {
+          code: 'FOUNDER_REGISTRATION_REQUIRES_TRUSTED_BOOTSTRAP',
+          message: 'Platform-owner registration is disabled on this deployment.',
+        },
+      });
+    }
+
     const existingUser = await queryOne<{ id: string }>(
       'SELECT id FROM users WHERE LOWER(email) = LOWER($1)',
       [email]
@@ -162,8 +182,8 @@ async function handleRegister(req: Request, res: Response) {
       const org = orgResult.rows[0];
 
       await client.query(
-        `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, 'OWNER')`,
-        [org.id, user.id]
+        `INSERT INTO org_members (org_id, user_id, role) VALUES ($1, $2, $3)`,
+        [org.id, user.id, role]
       );
 
       const defaultPolicies = [
@@ -186,8 +206,7 @@ async function handleRegister(req: Request, res: Response) {
       return { user, org };
     });
 
-    const role: UserRole = 'OWNER';
-    const scopes = scopesForIdentity(role, result.user.email);
+    const scopes = scopesForIdentity(role, result.user.email, platformOwnerEmails);
     const tokens = generateTokenPair({ userId: result.user.id, orgId: result.org.id, role, scopes });
 
     emitEvent(result.org.id, 'USER', result.user.id, EVENT_TYPES.USER_CREATED, {
@@ -381,9 +400,13 @@ app.post('/v1/auth/refresh', async (req: Request, res: Response) => {
       });
     }
 
-    const user = await queryOne<{ status: string; email: string }>(
-      'SELECT status, email FROM users WHERE id = $1',
-      [payload.userId]
+    const user = await queryOne<{ status: string; email: string; role: string }>(
+      `SELECT u.status, u.email, om.role
+         FROM users u
+         JOIN org_members om ON om.user_id = u.id AND om.org_id = $2
+        WHERE u.id = $1
+        LIMIT 1`,
+      [payload.userId, payload.orgId]
     );
 
     if (!user || user.status !== 'ACTIVE') {
@@ -393,11 +416,14 @@ app.post('/v1/auth/refresh', async (req: Request, res: Response) => {
       });
     }
 
+    const refreshedAuthorization = refreshedAuthorizationForIdentity(
+      user.role as UserRole,
+      user.email,
+    );
     const tokens = generateTokenPair({
       userId: payload.userId,
       orgId: payload.orgId,
-      role: payload.role,
-      scopes: scopesForIdentity(payload.role, user.email),
+      ...refreshedAuthorization,
     });
 
     res.json({

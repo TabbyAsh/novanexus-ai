@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import { useAuthStore } from '../../lib/store';
+import { hasWorldAuthority } from '../../lib/world-authority';
 
 type ProviderName = 'local' | 'gemini' | 'groq' | 'grok' | 'claude' | 'openai';
 
@@ -55,14 +56,13 @@ function timeLabel(value: string | null): string {
 }
 
 export default function RuntimeCoreDock() {
-  const { user, scopes, isAuthenticated } = useAuthStore();
+  const { scopes, isAuthenticated } = useAuthStore();
   const [open, setOpen] = useState(false);
   const [health, setHealth] = useState<RuntimeHealth | null>(null);
   const [dark, setDark] = useState(false);
   const [updatedAt, setUpdatedAt] = useState<string | null>(null);
 
-  const role = (user as { role?: string } | null)?.role;
-  const isFounder = isAuthenticated && (scopes.includes('ops.admin') || role === 'OWNER' || role === 'ADMIN');
+  const isFounder = isAuthenticated && hasWorldAuthority(scopes);
 
   const fetchHealth = useCallback(async () => {
     try {

@@ -10,13 +10,13 @@ export default function RiskDisclosurePage() {
         <div className="mb-12">
           <Link href="/" className="inline-flex items-center gap-2 mb-6">
             <div className="w-10 h-10 bg-gradient-to-br from-blue-500 to-purple-600 rounded-lg" />
-            <span className="text-2xl font-bold text-white">Nova Hub Lite</span>
+            <span className="text-2xl font-bold text-white">Nova Markets</span>
           </Link>
           <h1 className="text-4xl font-bold text-white mb-4">
             Risk Disclosure Statement
           </h1>
           <p className="text-gray-400">
-            Last updated: January 2026
+            Last updated: August 8, 2026
           </p>
         </div>
 
@@ -33,13 +33,13 @@ export default function RiskDisclosurePage() {
 
           <h2 className="text-white text-2xl font-bold mt-8 mb-4">1. No Financial Advice</h2>
           <p className="text-gray-300">
-            Nova Hub Lite is an <strong>educational and analytical tool</strong> designed to help users 
+            Nova Markets is a <strong>research and paper-workflow preview</strong> designed to help users
             research and analyze market data. The information, analysis, thesis cards, scanner results, 
             and any other content provided through our service are for <strong>informational and 
             educational purposes only</strong>.
           </p>
           <p className="text-gray-300">
-            Nothing on Nova Hub Lite constitutes:
+            Nothing in Nova Markets constitutes:
           </p>
           <ul className="text-gray-300 space-y-2">
             <li>Financial advice or recommendations</li>
@@ -97,7 +97,7 @@ export default function RiskDisclosurePage() {
 
           <h2 className="text-white text-2xl font-bold mt-8 mb-4">6. Your Responsibilities</h2>
           <p className="text-gray-300">
-            By using Nova Hub Lite, you acknowledge and agree that:
+            By using Nova Markets, you acknowledge and agree that:
           </p>
           <ul className="text-gray-300 space-y-2">
             <li>You are solely responsible for your own trading decisions</li>
@@ -109,7 +109,7 @@ export default function RiskDisclosurePage() {
 
           <h2 className="text-white text-2xl font-bold mt-8 mb-4">7. Limitation of Liability</h2>
           <p className="text-gray-300">
-            Nova Enterprises and Nova Hub Lite shall not be liable for any losses, damages, or 
+            Nova Enterprises and Nova Markets shall not be liable for any losses, damages, or
             expenses arising from:
           </p>
           <ul className="text-gray-300 space-y-2">
@@ -122,7 +122,7 @@ export default function RiskDisclosurePage() {
           <div className="bg-yellow-900/20 border border-yellow-700/50 rounded-lg p-6 mt-8">
             <h3 className="text-yellow-400 text-lg font-bold mt-0">Acknowledgment</h3>
             <p className="text-gray-300 mb-0">
-              By subscribing to or using Nova Hub Lite, you acknowledge that you have read, 
+              By using the Nova Markets preview, you acknowledge that you have read,
               understood, and agree to this Risk Disclosure Statement. If you do not agree 
               with any part of this disclosure, please do not use our services.
             </p>
@@ -132,8 +132,8 @@ export default function RiskDisclosurePage() {
           <p className="text-gray-300">
             If you have questions about this Risk Disclosure Statement or our services, 
             please contact us at{' '}
-            <a href="mailto:legal@nova-enterprises.dev" className="text-blue-400 hover:underline">
-              legal@nova-enterprises.dev
+            <a href="mailto:hello@novanexus-ai.com" className="text-blue-400 hover:underline">
+              hello@novanexus-ai.com
             </a>
           </p>
         </div>

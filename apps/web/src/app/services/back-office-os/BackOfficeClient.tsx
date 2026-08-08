@@ -2,273 +2,248 @@
 
 import { useState } from 'react';
 import Link from 'next/link';
-import { CheckCircle, ArrowRight, Send } from 'lucide-react';
+import { ArrowRight, CheckCircle, Send } from 'lucide-react';
+import {
+  buildHostedPaymentUrl,
+  isCompletePilotIntake,
+  parseFailedPilotReceipt,
+  parseSuccessfulPilotReceipt,
+  type PilotInquiryReceipt,
+  type PilotIntakeForm,
+} from './intake-contract';
 
-const RESEND_API = 'https://api.resend.com/emails';
+const deliverables = [
+  'A written map of the accepted admin workflow and its handoff points.',
+  'A client-owned folder or workspace structure for that workflow.',
+  'One estimate template and one invoice template.',
+  'One customer-intake form and one follow-up script set.',
+  'One combined expense and open-work tracker.',
+];
+
+const initialForm: PilotIntakeForm = { name: '', email: '', business: '', challenge: '' };
+
+function deliveryMessage(receipt: PilotInquiryReceipt): string {
+  if (receipt.delivery.state === 'PROVIDER_ACCEPTED_BOTH') {
+    return 'The inquiry is in the durable queue. The email provider accepted both notification requests; inbox delivery is not guaranteed.';
+  }
+  if (receipt.delivery.state === 'OPERATOR_PROVIDER_ACCEPTED') {
+    return 'The inquiry is in the durable queue. The provider accepted the operator notification, but a confirmation request was not accepted. Inbox delivery is not guaranteed.';
+  }
+  return 'The inquiry is in the durable queue, but email delivery was not verified. Save the receipt for recovery.';
+}
 
 export default function BackOfficeClient() {
-  const [form, setForm] = useState({ name: '', email: '', business: '', challenge: '' });
-  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle');
+  const [form, setForm] = useState<PilotIntakeForm>(initialForm);
+  const [status, setStatus] = useState<'idle' | 'submitting' | 'received' | 'error'>('idle');
+  const [receipt, setReceipt] = useState<PilotInquiryReceipt | null>(null);
+  const [failureReceipt, setFailureReceipt] = useState<PilotInquiryReceipt | null>(null);
+  const complete = isCompletePilotIntake(form);
+  const hostedPaymentUrl = receipt
+    ? buildHostedPaymentUrl(process.env.NEXT_PUBLIC_BACK_OFFICE_STARTER_PAYMENT_URL || '', receipt.receiptId)
+    : null;
 
-  const submit = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!form.name || !form.email) return;
-    setStatus('sending');
+  const submit = async (event: React.FormEvent) => {
+    event.preventDefault();
+    if (!complete || status === 'submitting') return;
+    setStatus('submitting');
+    setFailureReceipt(null);
     try {
-      // Send via the nova-hub contact endpoint
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/v1/contact`, {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/v1/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, service: 'Back Office OS' }),
+        body: JSON.stringify({ ...form, service: 'Back Office OS Starter Pilot' }),
       });
-      if (res.ok) { setStatus('sent'); }
-      else { setStatus('error'); }
-    } catch { setStatus('error'); }
+      const payload = await response.json().catch(() => null);
+      const acceptedReceipt = parseSuccessfulPilotReceipt(payload);
+      if (response.ok && acceptedReceipt) {
+        setReceipt(acceptedReceipt);
+        setStatus('received');
+        return;
+      }
+      setFailureReceipt(parseFailedPilotReceipt(payload));
+      setStatus('error');
+    } catch {
+      setStatus('error');
+    }
   };
 
-  // Stripe Payment Links — set these in Vercel as NEXT_PUBLIC_PAY_* and the
-  // buttons below become a live storefront that takes recurring payments 24/7.
-  // (Create them at dashboard.stripe.com/payment-links — recurring, 2 min each.)
-  const tiers = [
-    {
-      name: 'Starter',
-      price: '$150',
-      period: '/month',
-      desc: 'Core admin system, built and maintained.',
-      items: [
-        'Estimate template',
-        'Invoice template',
-        'Expense tracker',
-        'Customer intake form',
-        'Basic task tracker',
-        'Monthly admin cleanup',
-      ],
-      cta: 'Get Starter',
-      payUrl: process.env.NEXT_PUBLIC_PAY_STARTER || '',
-      highlight: false,
-    },
-    {
-      name: 'Operator',
-      price: '$300',
-      period: '/month',
-      desc: 'Full system plus weekly visibility and customer scripts.',
-      items: [
-        'Everything in Starter',
-        'Customer follow-up scripts',
-        'Weekly profit/loss sheet',
-        'Weekly review call or report',
-        'Business dashboard (Google Sheets)',
-        'Priority response',
-      ],
-      cta: 'Get Operator',
-      payUrl: process.env.NEXT_PUBLIC_PAY_OPERATOR || '',
-      highlight: true,
-    },
-    {
-      name: 'Growth',
-      price: '$500',
-      period: '/month',
-      desc: 'For businesses ready to look and operate at a higher level.',
-      items: [
-        'Everything in Operator',
-        'Website updates (basic)',
-        'Google Business Profile maintenance',
-        'CRM tracking setup',
-        'Offer improvement support',
-        'Monthly strategy review',
-      ],
-      cta: 'Get Growth',
-      payUrl: process.env.NEXT_PUBLIC_PAY_GROWTH || '',
-      highlight: false,
-    },
-  ];
-
-  const forWho = [
-    'Contractors and tradespeople',
-    'Clothing brands and designers',
-    'Freelancers and consultants',
-    'Local service businesses',
-    'Coaches and service providers',
-    'Anyone running a real business from their phone',
-  ];
-
   return (
-    <div className="min-h-screen bg-[#0a0a0f] text-white">
-      {/* Nav */}
-      <nav className="border-b border-gray-800/60 px-6 py-4 flex items-center justify-between">
-        <Link href="/" className="flex items-center gap-2">
-          <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-xs font-bold">N</div>
-          <span className="font-semibold text-sm">Nova Enterprises</span>
-        </Link>
-        <div className="flex items-center gap-4">
-          <Link href="/decision-cards"     className="text-gray-500 text-sm hover:text-white transition">Decision Cards</Link>
-          <Link href="/services/local-admin" className="text-gray-500 text-sm hover:text-white transition">Local Admin</Link>
-        </div>
-      </nav>
-
-      <main className="max-w-4xl mx-auto px-6 py-16 space-y-20">
-
-        {/* Hero */}
-        <div className="text-center max-w-2xl mx-auto">
-          <div className="inline-flex items-center gap-2 text-xs text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-4 py-1.5 rounded-full mb-6">
-            Service · Done for you · Monthly
+    <div className="min-h-screen bg-[#f2f0e9] text-[#141713] selection:bg-[#b9ef9a]">
+      <header className="border-b border-[#1d211b]">
+        <nav aria-label="Primary navigation" className="mx-auto flex max-w-5xl items-center justify-between px-5 py-5 md:px-8">
+          <Link href="/" className="text-sm font-black uppercase tracking-[0.22em]">Nova</Link>
+          <div className="flex items-center gap-6 text-sm">
+            <Link href="/#services" className="underline-offset-4 hover:underline">Services</Link>
+            <Link href="/login" className="underline-offset-4 hover:underline">Sign In</Link>
           </div>
-          <h1 className="text-4xl md:text-5xl font-bold text-white mb-5 leading-tight">
-            Stop losing time to scattered paperwork.
-          </h1>
-          <p className="text-xl text-gray-400 leading-relaxed mb-3">
-            Nova Back Office OS gives your business a clean admin system — forms, invoices, scripts, expense tracking, and weekly visibility — built for you and maintained every month.
-          </p>
-          <p className="text-gray-600 text-sm">You run the business. We handle the paperwork.</p>
-          <div className="mt-8">
-            <a href="#contact"
-              className="inline-flex items-center gap-2 px-8 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition-all shadow-lg shadow-emerald-900/30">
-              Get Your Back Office Built <ArrowRight className="w-4 h-4" />
+        </nav>
+      </header>
+
+      <main className="mx-auto max-w-5xl border-x border-[#1d211b]">
+        <section className="grid gap-10 border-b border-[#1d211b] px-5 py-16 md:px-10 md:py-20 lg:grid-cols-[minmax(0,1fr)_17rem]">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#596052]">Human-delivered starter pilot</p>
+            <h1 className="mt-4 max-w-3xl text-4xl font-black leading-[1.02] tracking-[-0.04em] md:text-6xl">
+              Back Office OS Starter Pilot
+            </h1>
+            <p className="mt-5 max-w-2xl text-lg leading-8 text-[#4d5448]">
+              One bounded setup for a small operator who needs a clearer path from customer intake to open work, expenses, and follow-up.
+            </p>
+            <a href="#intake" className="mt-8 inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713]">
+              Complete the pilot intake <ArrowRight aria-hidden="true" className="ml-8 h-4 w-4" />
             </a>
           </div>
-        </div>
+          <aside className="self-end border-t-2 border-[#141713] pt-5">
+            <p className="text-4xl font-black">$150</p>
+            <p className="mt-1 text-sm font-bold">one-time</p>
+            <p className="mt-4 text-sm leading-6 text-[#596052]">No subscription. No software access is sold. Work is completed by a person inside the accepted scope.</p>
+          </aside>
+        </section>
 
-        {/* For who */}
-        <div className="grid md:grid-cols-2 gap-10 items-center">
+        <section className="grid gap-12 border-b border-[#1d211b] px-5 py-14 md:px-10 lg:grid-cols-[15rem_minmax(0,1fr)]">
           <div>
-            <h2 className="text-2xl font-bold text-white mb-3">Built for operators, not corporations.</h2>
-            <p className="text-gray-500 leading-relaxed mb-5">
-              If you are running a real business from your phone — taking jobs, sending invoices, chasing payments, tracking expenses — and your back office is a mess of notes, screenshots, and memory, this is for you.
-            </p>
-            <ul className="space-y-2">
-              {forWho.map(item => (
-                <li key={item} className="flex items-center gap-3 text-sm text-gray-300">
-                  <CheckCircle className="w-4 h-4 text-emerald-400 shrink-0" /> {item}
-                </li>
-              ))}
-            </ul>
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#596052]">Exact scope</p>
+            <h2 className="mt-3 text-3xl font-black tracking-[-0.03em]">Five deliverables</h2>
           </div>
-          <div className="rounded-2xl border border-emerald-500/20 bg-emerald-500/5 p-6 space-y-3">
-            <div className="text-sm font-semibold text-emerald-400 mb-2">Every client gets:</div>
-            {[
-              'Google Drive or Notion workspace, set up and organized',
-              'Estimate template — professional, itemized',
-              'Invoice template — with payment terms and follow-up triggers',
-              'Expense tracker — log it, see where the money goes',
-              'Customer intake form — capture the right info upfront',
-              'Customer follow-up scripts — what to say and when',
-              'Weekly profit/loss sheet — know your numbers',
-              'Basic task tracker — what’s open, what’s done',
-              'Monthly admin review — we clean it up every month',
-            ].map(item => (
-              <div key={item} className="flex items-start gap-2 text-sm text-gray-300">
-                <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /> {item}
-              </div>
+          <ol className="border-t-2 border-[#141713]">
+            {deliverables.map((deliverable, index) => (
+              <li key={deliverable} className="grid gap-3 border-b border-[#777d70] py-5 sm:grid-cols-[2.5rem_minmax(0,1fr)]">
+                <span className="font-black text-[#596052]">0{index + 1}</span>
+                <span className="leading-7">{deliverable}</span>
+              </li>
             ))}
-          </div>
-        </div>
+          </ol>
+        </section>
 
-        {/* Pricing */}
-        <div>
-          <h2 className="text-2xl font-bold text-white mb-2 text-center">Pricing</h2>
-          <p className="text-gray-500 text-center text-sm mb-8">Monthly. Cancel anytime. Setup included.</p>
-          <div className="grid md:grid-cols-3 gap-5">
-            {tiers.map(tier => (
-              <div key={tier.name}
-                className={`rounded-2xl border p-6 ${tier.highlight
-                  ? 'border-emerald-500/50 bg-emerald-500/5 ring-2 ring-emerald-500/20'
-                  : 'border-gray-800 bg-gray-900/40'}`}>
-                {tier.highlight && (
-                  <div className="text-xs font-bold text-emerald-400 mb-3">Most popular</div>
-                )}
-                <h3 className="text-lg font-bold text-white">{tier.name}</h3>
-                <div className="mt-2 mb-1">
-                  <span className="text-3xl font-bold text-white">{tier.price}</span>
-                  <span className="text-gray-500 text-sm">{tier.period}</span>
+        <section className="grid gap-10 border-b border-[#1d211b] bg-[#141713] px-5 py-14 text-[#f2f0e9] md:grid-cols-3 md:px-10">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#b9ef9a]">01 · Scope</p>
+            <p className="mt-3 leading-7 text-[#c8ccc3]">The intake starts a review. Both sides must accept the written scope before work begins.</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#b9ef9a]">02 · Access</p>
+            <p className="mt-3 leading-7 text-[#c8ccc3]">Required access is limited to the accepted work. Permissions are tested before setup and checked again at handoff.</p>
+          </div>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.2em] text-[#b9ef9a]">03 · Handoff</p>
+            <p className="mt-3 leading-7 text-[#c8ccc3]">The delivery target is seven business days after scope acceptance and receipt of required access. Handoff includes a walkthrough and client acceptance check.</p>
+          </div>
+        </section>
+
+        <section id="intake" className="grid gap-12 px-5 py-16 md:px-10 lg:grid-cols-[17rem_minmax(0,1fr)]">
+          <div>
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#596052]">Complete intake</p>
+            <h2 className="mt-3 text-3xl font-black tracking-[-0.03em]">Request a scope review</h2>
+            <p className="mt-4 text-sm leading-6 text-[#596052]">Submitting records an inquiry. It is not scope acceptance, a payment, or the start of work.</p>
+          </div>
+
+          {status === 'received' && receipt ? (
+            <div aria-live="polite" className="border-2 border-[#141713] bg-white p-6 md:p-8">
+              <CheckCircle className="h-9 w-9" aria-hidden="true" />
+              <h3 className="mt-5 text-2xl font-black">Inquiry recorded.</h3>
+              <p className="mt-3 leading-7 text-[#4d5448]">{deliveryMessage(receipt)}</p>
+              <div className="mt-6 border-y border-[#777d70] py-4">
+                <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#596052]">Receipt</p>
+                <p className="mt-2 break-all font-mono text-sm font-bold">{receipt.receiptId}</p>
+              </div>
+              <p className="mt-5 text-sm leading-6 text-[#596052]">{receipt.recovery.message}</p>
+              {hostedPaymentUrl ? (
+                <div className="mt-7 border-t border-[#777d70] pt-6">
+                  <p className="mb-4 text-sm leading-6 text-[#596052]">The hosted payment link is available because the complete intake now has a durable receipt. Work still begins only after written scope acceptance.</p>
+                  <a href={hostedPaymentUrl} rel="noopener noreferrer" className="inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white">
+                    Continue to hosted payment <ArrowRight aria-hidden="true" className="ml-8 h-4 w-4" />
+                  </a>
+                  <p className="mt-4 text-xs leading-5 text-[#596052]">
+                    By paying, you agree to the <Link className="font-bold underline" href="/terms">Terms</Link> and acknowledge the <Link className="font-bold underline" href="/privacy">Privacy Policy</Link>. The payment is fully refundable on request until work begins.
+                  </p>
                 </div>
-                <p className="text-xs text-gray-500 mb-5">{tier.desc}</p>
-                <ul className="space-y-2 mb-6">
-                  {tier.items.map(item => (
-                    <li key={item} className="flex items-start gap-2 text-sm text-gray-300">
-                      <CheckCircle className="w-3.5 h-3.5 text-emerald-400 shrink-0 mt-0.5" /> {item}
-                    </li>
-                  ))}
-                </ul>
-                {tier.payUrl ? (
-                  <a href={tier.payUrl} target="_blank" rel="noopener noreferrer"
-                    className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition ${
-                      tier.highlight
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                        : 'border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white'
-                    }`}>
-                    Pay &amp; Start →
-                  </a>
-                ) : (
-                  <a href="#contact"
-                    className={`block text-center py-2.5 rounded-xl text-sm font-semibold transition ${
-                      tier.highlight
-                        ? 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                        : 'border border-gray-700 hover:border-gray-500 text-gray-300 hover:text-white'
-                    }`}>
-                    {tier.cta}
-                  </a>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-
-        {/* Contact form */}
-        <div id="contact" className="max-w-lg mx-auto">
-          <h2 className="text-2xl font-bold text-white mb-2 text-center">Get your back office built</h2>
-          <p className="text-gray-500 text-center text-sm mb-8">
-            Tell me about your business. I'll follow up within 24 hours to schedule a setup call.
-          </p>
-
-          {status === 'sent' ? (
-            <div className="rounded-2xl border border-emerald-500/30 bg-emerald-500/10 p-8 text-center">
-              <CheckCircle className="w-10 h-10 text-emerald-400 mx-auto mb-3" />
-              <h3 className="text-lg font-semibold text-white mb-2">Got it. I'll be in touch within 24 hours.</h3>
-              <p className="text-gray-500 text-sm">Check your email for a confirmation.</p>
+              ) : (
+                <p className="mt-6 text-sm font-bold">No payment is requested on this page. Payment instructions are provided only if the scope is accepted.</p>
+              )}
             </div>
           ) : (
-            <form onSubmit={submit} className="rounded-2xl border border-gray-800 bg-gray-900/50 p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4">
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Your name *</label>
-                  <input value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))}
-                    required placeholder="First and last name"
-                    className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500/60" />
-                </div>
-                <div>
-                  <label className="text-xs text-gray-500 mb-1 block">Email *</label>
-                  <input value={form.email} onChange={e => setForm(p => ({ ...p, email: e.target.value }))}
-                    required type="email" placeholder="you@example.com"
-                    className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500/60" />
-                </div>
+            <form onSubmit={submit} className="border-2 border-[#141713] bg-white p-5 md:p-8" noValidate>
+              <div className="grid gap-5 sm:grid-cols-2">
+                <label className="text-sm font-bold">
+                  Your name
+                  <input
+                    value={form.name}
+                    onChange={event => setForm(previous => ({ ...previous, name: event.target.value }))}
+                    minLength={2}
+                    maxLength={100}
+                    autoComplete="name"
+                    required
+                    className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
+                  />
+                </label>
+                <label className="text-sm font-bold">
+                  Email
+                  <input
+                    value={form.email}
+                    onChange={event => setForm(previous => ({ ...previous, email: event.target.value }))}
+                    type="email"
+                    maxLength={254}
+                    autoComplete="email"
+                    required
+                    className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
+                  />
+                </label>
               </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">Business name or type</label>
-                <input value={form.business} onChange={e => setForm(p => ({ ...p, business: e.target.value }))}
-                  placeholder="e.g. pressure washing, freelance photography, lawn care, clothing brand"
-                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500/60" />
-              </div>
-              <div>
-                <label className="text-xs text-gray-500 mb-1 block">What's your biggest admin headache right now?</label>
-                <textarea value={form.challenge} onChange={e => setForm(p => ({ ...p, challenge: e.target.value }))}
-                  placeholder="Lost invoices, no expense tracking, customers not responding, scattered notes..."
-                  rows={4}
-                  className="w-full bg-gray-950 border border-gray-800 rounded-lg px-3 py-2.5 text-sm text-white outline-none focus:border-emerald-500/60 resize-none" />
-              </div>
-              <button type="submit" disabled={status === 'sending'}
-                className="w-full flex items-center justify-center gap-2 py-3 rounded-xl bg-emerald-600 hover:bg-emerald-500 disabled:opacity-60 text-white font-semibold text-sm transition">
-                <Send className="w-4 h-4" />
-                {status === 'sending' ? 'Sending…' : 'Book a Setup Call'}
+              <label className="mt-5 block text-sm font-bold">
+                Business name and type
+                <input
+                  value={form.business}
+                  onChange={event => setForm(previous => ({ ...previous, business: event.target.value }))}
+                  minLength={2}
+                  maxLength={160}
+                  required
+                  placeholder="Example: Apex Exterior Cleaning — local service business"
+                  className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
+                />
+              </label>
+              <label className="mt-5 block text-sm font-bold">
+                Describe the current workflow, the breakdown, and the one result you need
+                <textarea
+                  value={form.challenge}
+                  onChange={event => setForm(previous => ({ ...previous, challenge: event.target.value }))}
+                  minLength={20}
+                  maxLength={2000}
+                  rows={7}
+                  required
+                  className="mt-2 w-full resize-y border border-[#777d70] bg-[#f8f7f2] px-3 py-3 font-normal leading-6 outline-none focus:border-[#141713]"
+                />
+                <span className="mt-1 block text-right text-xs font-normal text-[#596052]">{form.challenge.length}/2000</span>
+              </label>
+              <button
+                type="submit"
+                disabled={!complete || status === 'submitting'}
+                className="mt-6 flex min-h-12 w-full items-center justify-center bg-[#141713] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+              >
+                <Send aria-hidden="true" className="mr-3 h-4 w-4" />
+                {status === 'submitting' ? 'Recording inquiry…' : 'Record my pilot inquiry'}
               </button>
               {status === 'error' && (
-                <p className="text-red-400 text-xs text-center">
-                  Something went wrong. Email us directly: <a href="mailto:hello@novanexus-ai.com" className="underline">hello@novanexus-ai.com</a>
-                </p>
+                <div role="alert" className="mt-5 border-l-4 border-[#9b2c2c] bg-[#fff5f5] p-4 text-sm leading-6">
+                  <p className="font-bold">The intake was not fully verified.</p>
+                  {failureReceipt ? (
+                    <p className="mt-1">A record exists as <span className="font-mono font-bold">{failureReceipt.receiptId}</span>, but its delivery status is uncertain. Email support with that receipt.</p>
+                  ) : (
+                    <p className="mt-1">Retry once, or email support directly. No payment has been requested.</p>
+                  )}
+                </div>
               )}
             </form>
           )}
-        </div>
+        </section>
       </main>
+
+      <footer className="border-t border-[#1d211b]">
+        <div className="mx-auto max-w-5xl px-5 py-8 text-sm leading-6 text-[#596052] md:px-8">
+          <p>Support: <a className="font-bold underline" href="mailto:hello@novanexus-ai.com">hello@novanexus-ai.com</a>.</p>
+          <p className="mt-2">If payment has been made, it is refundable on request until work begins. No broader refund promise is made here.</p>
+          <p className="mt-2"><Link className="font-bold underline" href="/terms">Terms</Link> · <Link className="font-bold underline" href="/privacy">Privacy</Link></p>
+        </div>
+      </footer>
     </div>
   );
 }

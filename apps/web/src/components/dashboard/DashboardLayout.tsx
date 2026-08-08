@@ -16,6 +16,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useState, ReactNode, useEffect } from 'react';
 import { api } from '@/lib/api';
 import { useAuthStore } from '@/lib/store';
+import { hasWorldAuthority } from '@/lib/world-authority';
 
 // ─────────────────────────────────────────────────────────────────────
 // USER NAV — what regular users see (clean, guided, no admin)
@@ -115,8 +116,8 @@ function Sidebar({ collapsed, onToggle, isMobile }: {
   collapsed: boolean; onToggle: () => void; isMobile: boolean;
 }) {
   const pathname = usePathname();
-  const { scopes, user } = useAuthStore();
-  const isAdmin = scopes.includes('ops.admin') || (user as any)?.role === 'OWNER' || (user as any)?.role === 'ADMIN';
+  const { scopes } = useAuthStore();
+  const isAdmin = hasWorldAuthority(scopes);
 
   const sidebarWidth = isMobile ? 260 : (collapsed ? 68 : 240);
   const translateX = isMobile && collapsed ? -260 : 0;

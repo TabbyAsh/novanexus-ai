@@ -11,9 +11,10 @@ const SECTIONS = [
     title: '1. Information We Collect',
     items: [
       'Account information: email address, hashed password (never stored in plaintext), and organization name when you register.',
+      'Service inquiry information: your name, email address, business name, current workflow description, service receipt, and inquiry status when you request the Back Office OS Starter Pilot.',
       'Usage data: features you use, cards you generate, outcomes you log, and actions you take. This powers the calibration and learning systems.',
-      'Financial data: if you connect a broker account (e.g., Alpaca), we store encrypted API credentials. We do not store balances or execute trades without your explicit action.',
-      'Payment data: processed by Stripe. We do not store credit card numbers. We receive payment confirmation and your subscription tier.',
+      'Connection data: if a private account connects an external provider, we store only the credentials and account data needed for that enabled connection. Public live-broker execution is not currently offered.',
+      'Payment data: processed by Stripe. We do not store card numbers. We receive identifiers and status needed to correlate a payment or refund with an account or service receipt.',
       'Communication data: if you contact us by email, we retain that correspondence.',
       'Device and access data: IP addresses, browser type, and timestamps for security and fraud prevention.',
     ],
@@ -23,7 +24,7 @@ const SECTIONS = [
     items: [
       'To provide, operate, and improve the Platform.',
       'To generate personalized Decision Cards and calibrate recommendations from your logged outcomes.',
-      'To send transactional emails: account confirmations, receipts, and alerts you have opted into.',
+      'To review service inquiries and request that our email provider send operator notices, confirmations, and other transactional messages. Provider acceptance does not guarantee inbox delivery.',
       'To detect and prevent fraud, abuse, and unauthorized access.',
       'To comply with applicable laws and respond to legal requests.',
       'We do not sell your personal information to third parties.',
@@ -44,8 +45,8 @@ const SECTIONS = [
       'Stripe: payment processing. Stripe\'s privacy policy governs data handled during payment.',
       'Resend: email delivery infrastructure.',
       'Railway and Vercel: cloud hosting and infrastructure.',
-      'Alpaca Markets: optional broker integration. Your Alpaca account is subject to Alpaca\'s own terms.',
-      'Google Gemini / Groq: AI card generation. Situation descriptions you enter are sent to generate responses. We do not retain prompts beyond the active request.',
+      'Selected market-data or broker providers: used only where an explicitly labeled private, paper, sandbox, or future authorized connection is enabled.',
+      'Selected AI providers: text you submit to an AI-enabled capability may be sent to the configured provider to generate a response. Retention is governed by our configuration and the provider\'s applicable terms.',
     ],
   },
   {
@@ -110,7 +111,7 @@ export default function PrivacyPage() {
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
-          <p className="text-gray-500 text-sm">Last updated: June 4, 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: August 8, 2026</p>
           <p className="text-gray-400 text-sm mt-4 leading-relaxed">
             Nova Enterprises operates NovaNexus and related services (the &quot;Platform&quot;). This policy explains what
             information we collect, how we use it, and your rights regarding that information. By using the Platform, you agree

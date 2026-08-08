@@ -5,8 +5,9 @@ import './globals.css';
 const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
-  title: 'NovaNexus — Market Intelligence & Operational Infrastructure',
-  description: 'Resale analytics, stock screening, deal scoring, and operational tools. Built on real data and transparent assumptions.',
+  metadataBase: new URL('https://novanexus-ai.com'),
+  title: 'Nova — Verified economic operations',
+  description: 'Nova turns a goal into a verified next action and tracks it until the result is real.',
 };
 
 export default function RootLayout({
