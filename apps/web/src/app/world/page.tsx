@@ -1,13 +1,13 @@
 import type { Metadata } from 'next';
-import FunctionalWorldShell from './FunctionalWorldShell';
+import WorldRuntime from './WorldRuntime';
 
 export const metadata: Metadata = {
   title: 'Nova OS — Private World',
   description:
-    'The founder-only spatial operating surface for durable Trades, evidence, capabilities, authority, and outcomes.',
+    'The founder-only spatial operating surface for durable Trades, evidence, capabilities, measured scope, fixed pricing, authority, and outcomes.',
   robots: { index: false, follow: false },
 };
 
 export default function WorldPage() {
-  return <FunctionalWorldShell />;
+  return <WorldRuntime />;
 }
