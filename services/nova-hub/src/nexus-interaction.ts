@@ -25,6 +25,22 @@ import {
   targetsTrade0001,
   type EconomicTradeCommandResult,
 } from './economic-trade-state';
+import {
+  getTradeEvidenceSummary,
+  handleEconomicEvidenceCommand,
+  targetsConditionEvidenceSubmission,
+  targetsGeometryEvidenceSubmission,
+  type EconomicEvidenceCommandResult,
+  type EvidenceSummary,
+} from './economic-trade-evidence';
+
+const ECONOMIC_OWNER_EMAILS = new Set(
+  [process.env.PLATFORM_OWNER_EMAILS, process.env.OWNER_EMAIL]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(','))
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
   {
@@ -58,7 +74,7 @@ const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
     authority: 'observe',
     entrypoint: '/v1/nexus/interact',
     sideEffects: [],
-    requires: ['authenticated Nexus session', 'durable economic Trade state'],
+    requires: ['founder authority', 'durable economic Trade state'],
   },
   {
     id: 'economic.trade.field_measurement_task',
@@ -69,7 +85,29 @@ const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
     authority: 'assist',
     entrypoint: '/v1/nexus/interact',
     sideEffects: ['creates an internal task and append-only Trade event', 'does not contact the buyer or perform a site visit'],
-    requires: ['authenticated Nexus session', 'open geometry gap'],
+    requires: ['founder authority', 'open geometry gap'],
+  },
+  {
+    id: 'economic.trade.geometry_evidence.submit',
+    name: 'Geometry Evidence Evaluation',
+    sector: 'business',
+    description: 'Persist submitted structure measurements, evaluate them against deterministic completeness and confidence rules, and close the geometry gap only when the rules pass.',
+    status: 'available',
+    authority: 'assist',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: ['persists evidence and evaluation records', 'may change a gap from IN_PROGRESS to RESOLVED'],
+    requires: ['founder authority', 'field measurements', 'parcel membership confirmation', 'evidence references', 'submitter attestation'],
+  },
+  {
+    id: 'economic.trade.condition_evidence.submit',
+    name: 'Surface Condition Evidence Evaluation',
+    sector: 'business',
+    description: 'Persist current surface observations, evaluate completeness and freshness, and close the condition gap only when the rules pass.',
+    status: 'available',
+    authority: 'assist',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: ['persists evidence and evaluation records', 'may change a gap from OPEN to RESOLVED'],
+    requires: ['founder authority', 'current structure-face photos', 'material and condition observations', 'water-access status', 'submitter attestation'],
   },
   {
     id: 'commerce.flip_appraise',
@@ -196,7 +234,13 @@ function conversationRef(conversationId: string): string {
 }
 
 function authorityFor(capabilities: string[]): NexusAuthorityMode {
-  if (capabilities.includes('economic.trade.field_measurement_task')) return 'assist';
+  if (capabilities.some(id => [
+    'economic.trade.field_measurement_task',
+    'economic.trade.geometry_evidence.submit',
+    'economic.trade.condition_evidence.submit',
+  ].includes(id))) {
+    return 'assist';
+  }
   if (
     capabilities.length > 0
     && capabilities.every(id => [
@@ -213,11 +257,18 @@ function authorityFor(capabilities: string[]): NexusAuthorityMode {
   return 'recommend';
 }
 
+async function economicOwnerAllowed(userId: string): Promise<boolean> {
+  if (ECONOMIC_OWNER_EMAILS.size === 0) return process.env.NODE_ENV !== 'production';
+  const row = await queryOne<{ email: string }>('SELECT email FROM users WHERE id = $1', [userId]);
+  return Boolean(row?.email && ECONOMIC_OWNER_EMAILS.has(row.email.trim().toLowerCase()));
+}
+
 async function persistDeterministicTurn(
   userId: string,
   conversationId: string | null,
   message: string,
   reply: string,
+  storedUserMessage = message,
 ): Promise<string> {
   await query(`
     CREATE TABLE IF NOT EXISTS nova_conversations (
@@ -260,7 +311,7 @@ async function persistDeterministicTurn(
   await query(
     `INSERT INTO nova_messages (conversation_id, user_id, role, content, intent)
      VALUES ($1, $2, 'user', $3, 'economic_trade')`,
-    [resolvedConversationId, userId, message],
+    [resolvedConversationId, userId, storedUserMessage],
   );
   await query(
     `INSERT INTO nova_messages (conversation_id, user_id, role, content, intent)
@@ -281,22 +332,59 @@ interface NexusTurn {
   execution: NexusInteractionEnvelope['execution'];
 }
 
+type EconomicCommandResult = EconomicTradeCommandResult | EconomicEvidenceCommandResult;
+
+function isEvidenceResult(result: EconomicCommandResult): result is EconomicEvidenceCommandResult {
+  return 'evidenceSummary' in result;
+}
+
+async function forbiddenEconomicTurn(
+  userId: string,
+  conversationId: string | null,
+  message: string,
+): Promise<NexusTurn> {
+  const reply = 'Trade #0001 belongs to the private founder workspace. This authenticated account does not have founder authority to read or mutate it.';
+  const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, reply);
+  return {
+    conversationId: resolvedConversationId,
+    reply,
+    branch: null,
+    provider: 'deterministic:authority-denied',
+    action: { type: 'economic_trade_forbidden', deterministic: true },
+    execution: {
+      mode: 'direct',
+      capabilities: [],
+      evidence: [],
+      gaps: ['Founder authority required for private economic Trade state.'],
+      cost: { aiCalls: 0, toolCalls: 1 },
+    },
+  };
+}
+
 async function economicTradeTurn(
   userId: string,
   conversationId: string | null,
   message: string,
 ): Promise<NexusTurn | null> {
-  if (!targetsTrade0001(message)) return null;
+  const evidenceRequest = targetsGeometryEvidenceSubmission(message) || targetsConditionEvidenceSubmission(message);
+  if (!targetsTrade0001(message) && !evidenceRequest) return null;
+  if (!(await economicOwnerAllowed(userId))) return forbiddenEconomicTurn(userId, conversationId, message);
 
-  let result: EconomicTradeCommandResult;
+  let result: EconomicCommandResult;
   try {
-    const handled = await handleEconomicTradeCommand(userId, message);
+    const evidenceHandled = evidenceRequest
+      ? await handleEconomicEvidenceCommand(userId, message)
+      : null;
+    const handled = evidenceHandled || await handleEconomicTradeCommand(userId, message);
     if (!handled) return null;
     result = handled;
   } catch (error) {
     const reason = error instanceof Error ? error.message : 'Trade state unavailable.';
-    const reply = `Trade #0001 could not be read from durable state. ${reason}`;
-    const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, reply)
+    const reply = `Trade #0001 could not complete the requested operation. ${reason}`;
+    const redacted = evidenceRequest
+      ? 'Submitted evidence for Trade #0001 (raw evidence stored only in the typed evidence path; chat copy redacted).'
+      : message;
+    const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, reply, redacted)
       .catch(() => conversationId || generateId());
     return {
       conversationId: resolvedConversationId,
@@ -308,7 +396,7 @@ async function economicTradeTurn(
         mode: 'direct',
         capabilities: ['economic.trade.inspect'],
         evidence: [],
-        gaps: ['Durable economic Trade state is unavailable.'],
+        gaps: [reason],
         cost: { aiCalls: 0, toolCalls: 1 },
       },
     };
@@ -317,29 +405,50 @@ async function economicTradeTurn(
   const openGaps = result.trade.gaps
     .filter(gap => gap.blocking && gap.status !== 'RESOLVED' && gap.status !== 'WAIVED')
     .map(gap => `${gap.id}:${gap.code}`);
-  const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, result.reply);
+  const evidenceSummary: EvidenceSummary = isEvidenceResult(result)
+    ? result.evidenceSummary
+    : await getTradeEvidenceSummary(userId, result.trade.id).catch(() => ({ evidence: [], evaluations: [] }));
+  const storedUserMessage = evidenceRequest
+    ? 'Submitted evidence for Trade #0001 (raw evidence stored only in the typed evidence path; chat copy redacted).'
+    : message;
+  const resolvedConversationId = await persistDeterministicTurn(
+    userId,
+    conversationId,
+    message,
+    result.reply,
+    storedUserMessage,
+  );
+
+  const toolCalls = isEvidenceResult(result)
+    ? 4
+    : result.command === 'inspect'
+      ? 1
+      : 2;
 
   return {
     conversationId: resolvedConversationId,
     reply: result.reply,
     branch: null,
-    provider: 'deterministic:trade-state',
+    provider: isEvidenceResult(result) ? 'deterministic:trade-evaluation' : 'deterministic:trade-state',
     action: {
       type: 'economic_trade',
       deterministic: true,
       command: result.command,
       trade: result.trade,
+      evidenceSummary,
     },
     execution: {
       mode: 'direct',
       capabilities: [result.capabilityId],
       evidence: [{
         capabilityId: result.capabilityId,
-        summary: `Read Trade #${result.trade.reference}: ${openGaps.length} blocking gap(s), ${result.trade.actions.length} durable action(s).`,
+        summary: isEvidenceResult(result)
+          ? `Persisted and evaluated Trade #${result.trade.reference} evidence. ${evidenceSummary.evaluations[0]?.passed ? 'Gap rule passed.' : 'Gap remains open.'}`
+          : `Read Trade #${result.trade.reference}: ${openGaps.length} blocking gap(s), ${result.trade.actions.length} durable action(s).`,
         source: result.source,
       }],
       gaps: openGaps,
-      cost: { aiCalls: 0, toolCalls: result.command === 'inspect' ? 1 : 2 },
+      cost: { aiCalls: 0, toolCalls },
     },
   };
 }
