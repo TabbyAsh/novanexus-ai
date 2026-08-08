@@ -38,12 +38,9 @@ CREATE TABLE IF NOT EXISTS economic_trade_gaps (
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   resolved_at TIMESTAMPTZ,
   UNIQUE(trade_id, code),
-  CONSTRAINT economic_trade_gaps_status_check
-    CHECK (status IN ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'WAIVED')),
-  CONSTRAINT economic_trade_gaps_severity_check
-    CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
-  CONSTRAINT economic_trade_gaps_confidence_check
-    CHECK (required_confidence IS NULL OR (required_confidence >= 0 AND required_confidence <= 1))
+  CONSTRAINT economic_trade_gaps_status_check CHECK (status IN ('OPEN', 'IN_PROGRESS', 'RESOLVED', 'WAIVED')),
+  CONSTRAINT economic_trade_gaps_severity_check CHECK (severity IN ('LOW', 'MEDIUM', 'HIGH', 'CRITICAL')),
+  CONSTRAINT economic_trade_gaps_confidence_check CHECK (required_confidence IS NULL OR (required_confidence >= 0 AND required_confidence <= 1))
 );
 
 CREATE TABLE IF NOT EXISTS economic_trade_actions (
@@ -59,12 +56,9 @@ CREATE TABLE IF NOT EXISTS economic_trade_actions (
   payload_json JSONB NOT NULL DEFAULT '{}'::jsonb,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-  CONSTRAINT economic_trade_actions_status_check
-    CHECK (status IN ('QUEUED', 'AWAITING_HUMAN', 'RUNNING', 'EVIDENCE_SUBMITTED', 'SUCCEEDED', 'FAILED', 'CANCELLED')),
-  CONSTRAINT economic_trade_actions_authority_check
-    CHECK (authority IN ('OBSERVE', 'RECOMMEND', 'ASSIST', 'AUTOMATE')),
-  CONSTRAINT economic_trade_actions_risk_check
-    CHECK (risk_tier IN ('R0', 'R1', 'R2', 'R3', 'R4'))
+  CONSTRAINT economic_trade_actions_status_check CHECK (status IN ('QUEUED', 'AWAITING_HUMAN', 'RUNNING', 'EVIDENCE_SUBMITTED', 'SUCCEEDED', 'FAILED', 'CANCELLED')),
+  CONSTRAINT economic_trade_actions_authority_check CHECK (authority IN ('OBSERVE', 'RECOMMEND', 'ASSIST', 'AUTOMATE')),
+  CONSTRAINT economic_trade_actions_risk_check CHECK (risk_tier IN ('R0', 'R1', 'R2', 'R3', 'R4'))
 );
 
 CREATE TABLE IF NOT EXISTS economic_trade_events (
@@ -87,10 +81,8 @@ CREATE TABLE IF NOT EXISTS economic_trade_evidence (
   content_json JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(trade_id, user_id, evidence_type, content_hash),
-  CONSTRAINT economic_trade_evidence_type_check
-    CHECK (evidence_type IN ('GEOMETRY_MEASUREMENT', 'SURFACE_CONDITION')),
-  CONSTRAINT economic_trade_evidence_confidence_check
-    CHECK (confidence >= 0 AND confidence <= 1)
+  CONSTRAINT economic_trade_evidence_type_check CHECK (evidence_type IN ('GEOMETRY_MEASUREMENT', 'SURFACE_CONDITION')),
+  CONSTRAINT economic_trade_evidence_confidence_check CHECK (confidence >= 0 AND confidence <= 1)
 );
 
 CREATE TABLE IF NOT EXISTS economic_trade_evaluations (
@@ -106,23 +98,66 @@ CREATE TABLE IF NOT EXISTS economic_trade_evaluations (
   findings_json JSONB NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
   UNIQUE(gap_id, evidence_id, criteria_version),
-  CONSTRAINT economic_trade_evaluations_type_check
-    CHECK (evaluator_type IN ('DETERMINISTIC', 'INDEPENDENT_SOURCE', 'HUMAN', 'MODEL_ASSISTED')),
-  CONSTRAINT economic_trade_evaluations_score_check
-    CHECK (score >= 0 AND score <= 1)
+  CONSTRAINT economic_trade_evaluations_type_check CHECK (evaluator_type IN ('DETERMINISTIC', 'INDEPENDENT_SOURCE', 'HUMAN', 'MODEL_ASSISTED')),
+  CONSTRAINT economic_trade_evaluations_score_check CHECK (score >= 0 AND score <= 1)
 );
 
-CREATE INDEX IF NOT EXISTS idx_economic_trades_user_ref
-  ON economic_trades(user_id, reference);
-CREATE INDEX IF NOT EXISTS idx_economic_trade_gaps_trade_status
-  ON economic_trade_gaps(trade_id, status);
-CREATE INDEX IF NOT EXISTS idx_economic_trade_actions_trade_created
-  ON economic_trade_actions(trade_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_economic_trade_events_trade_occurred
-  ON economic_trade_events(trade_id, occurred_at DESC);
-CREATE INDEX IF NOT EXISTS idx_trade_evidence_trade_created
-  ON economic_trade_evidence(trade_id, created_at DESC);
-CREATE INDEX IF NOT EXISTS idx_trade_evaluations_trade_created
-  ON economic_trade_evaluations(trade_id, created_at DESC);
+CREATE TABLE IF NOT EXISTS economic_trade_scopes (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  trade_id UUID NOT NULL REFERENCES economic_trades(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  version INTEGER NOT NULL,
+  total_washable_sqft NUMERIC NOT NULL,
+  structures_json JSONB NOT NULL,
+  surfaces_json JSONB NOT NULL,
+  inclusions_json JSONB NOT NULL,
+  exclusions_json JSONB NOT NULL,
+  evidence_ids JSONB NOT NULL,
+  content_hash VARCHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(trade_id, user_id, content_hash),
+  CONSTRAINT economic_trade_scopes_area_check CHECK (total_washable_sqft > 0),
+  CONSTRAINT economic_trade_scopes_version_check CHECK (version > 0)
+);
+
+CREATE TABLE IF NOT EXISTS economic_trade_prices (
+  id UUID PRIMARY KEY DEFAULT uuid_generate_v4(),
+  trade_id UUID NOT NULL REFERENCES economic_trades(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL,
+  scope_id UUID NOT NULL REFERENCES economic_trade_scopes(id) ON DELETE RESTRICT,
+  total_washable_sqft NUMERIC NOT NULL,
+  benchmark_rate_per_sqft NUMERIC NOT NULL,
+  market_base_price NUMERIC NOT NULL,
+  labor_cost NUMERIC NOT NULL,
+  direct_cost NUMERIC NOT NULL,
+  minimum_price_for_margin NUMERIC NOT NULL,
+  contingency_percent NUMERIC NOT NULL,
+  pre_rounded_price NUMERIC NOT NULL,
+  fixed_price NUMERIC NOT NULL,
+  expected_gross_profit NUMERIC NOT NULL,
+  expected_gross_margin NUMERIC NOT NULL,
+  benchmark_source_ref TEXT NOT NULL,
+  benchmark_observed_at TIMESTAMPTZ NOT NULL,
+  input_json JSONB NOT NULL,
+  content_hash VARCHAR(64) NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+  UNIQUE(trade_id, user_id, content_hash),
+  CONSTRAINT economic_trade_prices_nonnegative_check CHECK (
+    total_washable_sqft > 0 AND benchmark_rate_per_sqft > 0 AND market_base_price >= 0
+    AND labor_cost >= 0 AND direct_cost >= 0 AND minimum_price_for_margin >= 0
+    AND pre_rounded_price >= 0 AND fixed_price > 0
+  ),
+  CONSTRAINT economic_trade_prices_contingency_check CHECK (contingency_percent >= 0 AND contingency_percent <= 0.5),
+  CONSTRAINT economic_trade_prices_margin_check CHECK (expected_gross_margin >= -1 AND expected_gross_margin <= 1)
+);
+
+CREATE INDEX IF NOT EXISTS idx_economic_trades_user_ref ON economic_trades(user_id, reference);
+CREATE INDEX IF NOT EXISTS idx_economic_trade_gaps_trade_status ON economic_trade_gaps(trade_id, status);
+CREATE INDEX IF NOT EXISTS idx_economic_trade_actions_trade_created ON economic_trade_actions(trade_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_economic_trade_events_trade_occurred ON economic_trade_events(trade_id, occurred_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_evidence_trade_created ON economic_trade_evidence(trade_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_evaluations_trade_created ON economic_trade_evaluations(trade_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_scopes_trade_created ON economic_trade_scopes(trade_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_trade_prices_trade_created ON economic_trade_prices(trade_id, created_at DESC);
 
 COMMIT;
