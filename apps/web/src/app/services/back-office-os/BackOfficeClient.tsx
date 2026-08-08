@@ -73,7 +73,7 @@ export default function BackOfficeClient() {
         <nav aria-label="Primary navigation" className="mx-auto flex max-w-5xl items-center justify-between px-5 py-5 md:px-8">
           <Link href="/" className="text-sm font-black uppercase tracking-[0.22em]">Nova</Link>
           <div className="flex items-center gap-6 text-sm">
-            <Link href="/#services" className="underline-offset-4 hover:underline">Services</Link>
+            <Link href="/#method" className="underline-offset-4 hover:underline">How Nova works</Link>
             <Link href="/login" className="underline-offset-4 hover:underline">Sign In</Link>
           </div>
         </nav>
