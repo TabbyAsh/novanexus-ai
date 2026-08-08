@@ -24,7 +24,9 @@ try {
 const nextConfig = {
   reactStrictMode: true,
   transpilePackages: ['@nova/shared'],
-  output: 'standalone',
+  // Standalone output is for Docker/self-hosting. Vercel supplies its own
+  // tracing adapter and expects the native Next build layout.
+  output: process.env.VERCEL ? undefined : 'standalone',
   outputFileTracingRoot: path.join(__dirname, '../..'),
   // Type checking enforced on build — the app is clean, keep it that way.
   // (If a future type error blocks a ship, FIX it, don't flip this back to true.)
