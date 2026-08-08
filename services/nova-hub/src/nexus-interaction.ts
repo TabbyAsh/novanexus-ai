@@ -33,6 +33,14 @@ import {
   type EconomicEvidenceCommandResult,
   type EvidenceSummary,
 } from './economic-trade-evidence';
+import {
+  ensurePricingGap,
+  getScopePricingSummary,
+  handleScopePricingCommand,
+  targetsScopePricingCommand,
+  type ScopePricingCommandResult,
+  type ScopePricingSummary,
+} from './economic-trade-scope-pricing';
 
 const ECONOMIC_OWNER_EMAILS = new Set(
   [process.env.PLATFORM_OWNER_EMAILS, process.env.OWNER_EMAIL]
@@ -108,6 +116,39 @@ const DIRECT_CAPABILITIES: NexusCapabilityDescriptor[] = [
     entrypoint: '/v1/nexus/interact',
     sideEffects: ['persists evidence and evaluation records', 'may change a gap from OPEN to RESOLVED'],
     requires: ['founder authority', 'current structure-face photos', 'material and condition observations', 'water-access status', 'submitter attestation'],
+  },
+  {
+    id: 'economic.trade.scope.inspect',
+    name: 'Measured Scope State',
+    sector: 'business',
+    description: 'Read the accepted measured scope and latest fixed-bid state without invoking an LLM.',
+    status: 'available',
+    authority: 'observe',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: [],
+    requires: ['founder authority', 'durable Trade state'],
+  },
+  {
+    id: 'economic.trade.scope.compose',
+    name: 'Measured Scope Composition',
+    sector: 'business',
+    description: 'Convert accepted geometry and condition evidence into a versioned washable-surface takeoff with explicit inclusions and exclusions.',
+    status: 'available',
+    authority: 'assist',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: ['persists a measured scope artifact', 'advances the Trade to PRICING'],
+    requires: ['founder authority', 'accepted geometry evidence', 'accepted condition evidence'],
+  },
+  {
+    id: 'economic.trade.fixed_bid.calculate',
+    name: 'Fixed Bid Calculation',
+    sector: 'business',
+    description: 'Calculate and persist one exact fixed bid from measured scope, sourced market benchmark, operating costs, contingency, and target margin.',
+    status: 'available',
+    authority: 'assist',
+    entrypoint: '/v1/nexus/interact',
+    sideEffects: ['persists a price artifact', 'sets expected Trade revenue', 'advances the Trade to READY_TO_QUOTE'],
+    requires: ['founder authority', 'accepted measured scope', 'sourced benchmark rate', 'operating cost inputs'],
   },
   {
     id: 'commerce.flip_appraise',
@@ -238,6 +279,8 @@ function authorityFor(capabilities: string[]): NexusAuthorityMode {
     'economic.trade.field_measurement_task',
     'economic.trade.geometry_evidence.submit',
     'economic.trade.condition_evidence.submit',
+    'economic.trade.scope.compose',
+    'economic.trade.fixed_bid.calculate',
   ].includes(id))) {
     return 'assist';
   }
@@ -245,6 +288,7 @@ function authorityFor(capabilities: string[]): NexusAuthorityMode {
     capabilities.length > 0
     && capabilities.every(id => [
       'economic.trade.inspect',
+      'economic.trade.scope.inspect',
       'market.quote',
       'business.pipeline',
       'executor.market_quote',
@@ -343,10 +387,14 @@ interface NexusTurn {
   execution: NexusInteractionEnvelope['execution'];
 }
 
-type EconomicCommandResult = EconomicTradeCommandResult | EconomicEvidenceCommandResult;
+type EconomicCommandResult = EconomicTradeCommandResult | EconomicEvidenceCommandResult | ScopePricingCommandResult;
 
 function isEvidenceResult(result: EconomicCommandResult): result is EconomicEvidenceCommandResult {
   return 'evidenceSummary' in result;
+}
+
+function isScopePricingResult(result: EconomicCommandResult): result is ScopePricingCommandResult {
+  return 'scopePricingSummary' in result;
 }
 
 async function forbiddenEconomicTurn(
@@ -378,15 +426,22 @@ async function economicTradeTurn(
   message: string,
 ): Promise<NexusTurn | null> {
   const evidenceRequest = targetsGeometryEvidenceSubmission(message) || targetsConditionEvidenceSubmission(message);
-  if (!targetsTrade0001(message) && !evidenceRequest) return null;
+  const scopePricingRequest = targetsScopePricingCommand(message);
+  if (!targetsTrade0001(message) && !evidenceRequest && !scopePricingRequest) return null;
   if (!(await economicOwnerAllowed(userId))) return forbiddenEconomicTurn(userId, conversationId, message);
 
   let result: EconomicCommandResult;
   try {
-    const evidenceHandled = evidenceRequest
+    // The pricing-input gap is explicit from the first Trade inspection onward;
+    // it is not allowed to appear only after the property evidence is complete.
+    await ensurePricingGap(userId);
+    const scopeHandled = scopePricingRequest
+      ? await handleScopePricingCommand(userId, message)
+      : null;
+    const evidenceHandled = !scopeHandled && evidenceRequest
       ? await handleEconomicEvidenceCommand(userId, message)
       : null;
-    const handled = evidenceHandled || await handleEconomicTradeCommand(userId, message);
+    const handled = scopeHandled || evidenceHandled || await handleEconomicTradeCommand(userId, message);
     if (!handled) return null;
     result = handled;
   } catch (error) {
@@ -394,7 +449,9 @@ async function economicTradeTurn(
     const reply = `Trade #0001 could not complete the requested operation. ${reason}`;
     const redacted = evidenceRequest
       ? 'Submitted evidence for Trade #0001 (raw evidence stored only in the typed evidence path; chat copy redacted).'
-      : message;
+      : message.includes('PRICING_EVIDENCE:')
+        ? 'Submitted pricing inputs for Trade #0001 (raw inputs stored only in the typed pricing path; chat copy redacted).'
+        : message;
     const resolvedConversationId = await persistDeterministicTurn(userId, conversationId, message, reply, redacted)
       .catch(() => conversationId || generateId());
     return {
@@ -419,9 +476,14 @@ async function economicTradeTurn(
   const evidenceSummary: EvidenceSummary = isEvidenceResult(result)
     ? result.evidenceSummary
     : await getTradeEvidenceSummary(userId, result.trade.id).catch(() => ({ evidence: [], evaluations: [] }));
+  const scopePricingSummary: ScopePricingSummary = isScopePricingResult(result)
+    ? result.scopePricingSummary
+    : await getScopePricingSummary(userId, result.trade.id).catch(() => ({ scope: null, price: null }));
   const storedUserMessage = evidenceRequest
     ? 'Submitted evidence for Trade #0001 (raw evidence stored only in the typed evidence path; chat copy redacted).'
-    : message;
+    : message.includes('PRICING_EVIDENCE:')
+      ? 'Submitted pricing inputs for Trade #0001 (raw inputs stored only in the typed pricing path; chat copy redacted).'
+      : message;
   const resolvedConversationId = await persistDeterministicTurn(
     userId,
     conversationId,
@@ -432,30 +494,45 @@ async function economicTradeTurn(
 
   const toolCalls = isEvidenceResult(result)
     ? 4
-    : result.command === 'inspect'
-      ? 1
-      : 2;
+    : isScopePricingResult(result)
+      ? result.command === 'scope_pricing_inspected' ? 2 : 4
+      : result.command === 'inspect'
+        ? 1
+        : 2;
+  const provider = isEvidenceResult(result)
+    ? 'deterministic:trade-evaluation'
+    : isScopePricingResult(result)
+      ? 'deterministic:trade-scope-pricing'
+      : 'deterministic:trade-state';
+  const evidenceSummaryText = isEvidenceResult(result)
+    ? `Persisted and evaluated Trade #${result.trade.reference} evidence. ${evidenceSummary.evaluations[0]?.passed ? 'Gap rule passed.' : 'Gap remains open.'}`
+    : isScopePricingResult(result)
+      ? result.command === 'fixed_bid_calculated'
+        ? `Calculated and persisted a fixed bid from measured scope and sourced operating inputs.`
+        : result.command === 'scope_composed'
+          ? `Composed and persisted measured scope from accepted property evidence.`
+          : `Read measured scope and fixed-bid state.`
+      : `Read Trade #${result.trade.reference}: ${openGaps.length} blocking gap(s), ${result.trade.actions.length} durable action(s).`;
 
   return {
     conversationId: resolvedConversationId,
     reply: result.reply,
     branch: null,
-    provider: isEvidenceResult(result) ? 'deterministic:trade-evaluation' : 'deterministic:trade-state',
+    provider,
     action: {
       type: 'economic_trade',
       deterministic: true,
       command: result.command,
       trade: result.trade,
       evidenceSummary,
+      scopePricingSummary,
     },
     execution: {
       mode: 'direct',
       capabilities: [result.capabilityId],
       evidence: [{
         capabilityId: result.capabilityId,
-        summary: isEvidenceResult(result)
-          ? `Persisted and evaluated Trade #${result.trade.reference} evidence. ${evidenceSummary.evaluations[0]?.passed ? 'Gap rule passed.' : 'Gap remains open.'}`
-          : `Read Trade #${result.trade.reference}: ${openGaps.length} blocking gap(s), ${result.trade.actions.length} durable action(s).`,
+        summary: evidenceSummaryText,
         source: result.source,
       }],
       gaps: openGaps,
