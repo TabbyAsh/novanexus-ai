@@ -160,6 +160,10 @@ function normalizeRefs(value: unknown): string[] {
   return [...new Set(value.map(item => String(item || '').trim()).filter(Boolean))].slice(0, 40);
 }
 
+function validEvidenceRef(value: string): boolean {
+  return /^(attachment|file|evidence|photo|https?):\/\/.+/i.test(value);
+}
+
 export function validateGeometryEvidence(input: GeometryEvidenceSubmission): { score: number; passed: boolean; findings: string[] } {
   const findings: string[] = [];
   if (!input.measuredBy?.trim()) findings.push('Measured-by identity is missing.');
@@ -187,9 +191,13 @@ export function validateGeometryEvidence(input: GeometryEvidenceSubmission): { s
       allParcelConfirmed = false;
       findings.push(`${prefix} parcel membership is not confirmed.`);
     }
-    if (normalizeRefs(structure.photoRefs).length < 2) {
+    const refs = normalizeRefs(structure.photoRefs);
+    if (refs.length < 2) {
       allHaveReferences = false;
       findings.push(`${prefix} needs at least two evidence references showing the measurement context.`);
+    } else if (refs.some(ref => !validEvidenceRef(ref))) {
+      allHaveReferences = false;
+      findings.push(`${prefix} contains an evidence reference without a supported attachment/file/evidence/URL scheme.`);
     }
   }
 
@@ -212,7 +220,7 @@ export function validateConditionEvidence(input: ConditionEvidenceSubmission): {
   if (!input.attestedAccurate) findings.push('The submitter did not attest that the observations are current and accurate.');
   if (!input.allInScopeFacesCaptured) findings.push('The submitter did not confirm that every in-scope exterior face was captured.');
   if (!Array.isArray(input.surfaces) || input.surfaces.length === 0) findings.push('At least one structure-face observation is required.');
-  if (input.waterAccess === 'UNKNOWN') findings.push('Water access remains unknown.');
+  if (input.waterAccess !== 'CONFIRMED') findings.push('Water access is not confirmed.');
 
   let allComplete = true;
   for (const [index, surface] of (input.surfaces || []).entries()) {
@@ -221,7 +229,15 @@ export function validateConditionEvidence(input: ConditionEvidenceSubmission): {
     if (!String(surface.face || '').trim()) { findings.push(`${prefix} is missing a face/orientation.`); allComplete = false; }
     if (!String(surface.material || '').trim()) { findings.push(`${prefix} is missing a material classification.`); allComplete = false; }
     if (!String(surface.condition || '').trim()) { findings.push(`${prefix} is missing a current-condition description.`); allComplete = false; }
-    if (normalizeRefs(surface.photoRefs).length < 1) { findings.push(`${prefix} needs at least one current photo reference.`); allComplete = false; }
+    if (!String(surface.accessConstraints || '').trim()) { findings.push(`${prefix} is missing access-constraint information.`); allComplete = false; }
+    const refs = normalizeRefs(surface.photoRefs);
+    if (refs.length < 1) {
+      findings.push(`${prefix} needs at least one current photo reference.`);
+      allComplete = false;
+    } else if (refs.some(ref => !validEvidenceRef(ref))) {
+      findings.push(`${prefix} contains an evidence reference without a supported attachment/file/evidence/URL scheme.`);
+      allComplete = false;
+    }
   }
 
   let score = 0.55;
@@ -229,7 +245,7 @@ export function validateConditionEvidence(input: ConditionEvidenceSubmission): {
   if (input.observedAt && !Number.isNaN(new Date(input.observedAt).getTime())) score += 0.05;
   if (input.attestedAccurate) score += 0.08;
   if (input.allInScopeFacesCaptured) score += 0.12;
-  if (input.waterAccess !== 'UNKNOWN') score += 0.05;
+  if (input.waterAccess === 'CONFIRMED') score += 0.05;
   if (allComplete) score += 0.08;
   score = Math.min(0.99, Math.round(score * 100) / 100);
 
@@ -432,7 +448,7 @@ export async function handleEconomicEvidenceCommand(
       evaluation.score,
       input,
       evaluation,
-      'geometry-field-v1',
+      'geometry-field-v2',
     );
     const trade = await getTrade0001(userId);
     const evidenceSummary = await getTradeEvidenceSummary(userId, trade.id);
@@ -465,7 +481,7 @@ export async function handleEconomicEvidenceCommand(
       evaluation.score,
       input,
       evaluation,
-      'surface-condition-field-v1',
+      'surface-condition-field-v2',
     );
     const trade = await getTrade0001(userId);
     const evidenceSummary = await getTradeEvidenceSummary(userId, trade.id);
