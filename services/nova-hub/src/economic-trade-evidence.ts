@@ -335,13 +335,26 @@ async function persistEvidence(
     );
   }
 
-  const openCount = await queryOne<{ count: string }>(
+  // Evidence completion advances the Trade to scope composition even when the
+  // separate pricing-input gap is still open. Scope evidence and pricing inputs
+  // are distinct gates; counting every blocking gap here would deadlock the
+  // Trade in SCOPING after the pricing gap is introduced.
+  const openScopeGapCount = await queryOne<{ count: string }>(
     `SELECT COUNT(*) AS count FROM economic_trade_gaps
-     WHERE trade_id = $1 AND blocking = true AND status NOT IN ('RESOLVED', 'WAIVED')`,
+     WHERE trade_id = $1
+       AND code IN ('geometry-and-parcel-membership', 'current-surface-condition')
+       AND blocking = true
+       AND status NOT IN ('RESOLVED', 'WAIVED')`,
     [trade.id],
   );
-  if (parseInt(openCount?.count || '0', 10) === 0) {
-    await query(`UPDATE economic_trades SET stage = 'READY_FOR_SCOPE', updated_at = NOW() WHERE id = $1`, [trade.id]);
+  if (parseInt(openScopeGapCount?.count || '0', 10) === 0) {
+    await query(
+      `UPDATE economic_trades
+       SET stage = CASE WHEN stage IN ('SCOPING', 'RESEARCHING') THEN 'READY_FOR_SCOPE' ELSE stage END,
+           updated_at = NOW()
+       WHERE id = $1`,
+      [trade.id],
+    );
   } else {
     await query(`UPDATE economic_trades SET updated_at = NOW() WHERE id = $1`, [trade.id]);
   }
