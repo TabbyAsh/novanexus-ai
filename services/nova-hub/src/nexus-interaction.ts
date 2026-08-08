@@ -258,9 +258,20 @@ function authorityFor(capabilities: string[]): NexusAuthorityMode {
 }
 
 async function economicOwnerAllowed(userId: string): Promise<boolean> {
-  if (ECONOMIC_OWNER_EMAILS.size === 0) return process.env.NODE_ENV !== 'production';
-  const row = await queryOne<{ email: string }>('SELECT email FROM users WHERE id = $1', [userId]);
-  return Boolean(row?.email && ECONOMIC_OWNER_EMAILS.has(row.email.trim().toLowerCase()));
+  const row = await queryOne<{ email: string; platform_role: string | null }>(
+    `SELECT u.email,
+            (SELECT om.role
+             FROM org_members om
+             WHERE om.user_id = u.id AND om.role IN ('OWNER', 'ADMIN')
+             ORDER BY CASE om.role WHEN 'OWNER' THEN 0 ELSE 1 END
+             LIMIT 1) AS platform_role
+     FROM users u WHERE u.id = $1`,
+    [userId],
+  ).catch(() => null);
+
+  if (row?.email && ECONOMIC_OWNER_EMAILS.has(row.email.trim().toLowerCase())) return true;
+  if (row?.platform_role === 'OWNER' || row?.platform_role === 'ADMIN') return true;
+  return ECONOMIC_OWNER_EMAILS.size === 0 && process.env.NODE_ENV !== 'production';
 }
 
 async function persistDeterministicTurn(
