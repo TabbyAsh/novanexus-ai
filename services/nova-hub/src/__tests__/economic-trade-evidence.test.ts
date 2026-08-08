@@ -70,6 +70,14 @@ describe('geometry evidence evaluation', () => {
     expect(result.findings.some(item => item.includes('length'))).toBe(true);
     expect(result.findings.some(item => item.includes('evidence references'))).toBe(true);
   });
+
+  it('rejects references that are not attachment, file, evidence, photo, or URL identifiers', () => {
+    const input = validGeometry();
+    input.structures[0].photoRefs = ['north picture', 'scale picture'];
+    const result = validateGeometryEvidence(input);
+    expect(result.passed).toBe(false);
+    expect(result.findings.some(item => item.includes('supported attachment'))).toBe(true);
+  });
 });
 
 describe('surface-condition evidence evaluation', () => {
@@ -86,8 +94,16 @@ describe('surface-condition evidence evaluation', () => {
     input.surfaces[0].photoRefs = [];
     const result = validateConditionEvidence(input);
     expect(result.passed).toBe(false);
-    expect(result.findings).toContain('Water access remains unknown.');
+    expect(result.findings).toContain('Water access is not confirmed.');
     expect(result.findings.some(item => item.includes('current photo reference'))).toBe(true);
+  });
+
+  it('keeps the gap open when access constraints are omitted', () => {
+    const input = validCondition();
+    input.surfaces[0].accessConstraints = '';
+    const result = validateConditionEvidence(input);
+    expect(result.passed).toBe(false);
+    expect(result.findings.some(item => item.includes('access-constraint'))).toBe(true);
   });
 });
 
