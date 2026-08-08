@@ -8,6 +8,7 @@ describe('public doorway', () => {
   it('sends visitors only to clear, real destinations', () => {
     expect(markup).toContain('href="#product"');
     expect(markup).toContain('href="#method"');
+    expect(markup).toContain('href="/loop"');
     expect(markup).toContain('href="/services/back-office-os"');
     expect(markup).toContain('href="/login"');
 
@@ -20,7 +21,7 @@ describe('public doorway', () => {
     expect(markup.match(/data-primary-action/g)).toHaveLength(1);
     expect(markup).toContain('Adaptive operating memory');
     expect(markup).toContain('The world keeps inventing problems');
-    expect(markup).toContain('See the Nova loop');
+    expect(markup).toContain('Start a Nova Loop');
     expect(markup).toContain('Notice');
     expect(markup).toContain('Frame');
     expect(markup).toContain('Commit');

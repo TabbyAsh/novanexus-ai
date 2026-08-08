@@ -53,6 +53,9 @@ export default function HomePage() {
             <Link href="#method" className="underline-offset-4 hover:underline">
               Method
             </Link>
+            <Link href="/loop" className="underline-offset-4 hover:underline">
+              Try Nova
+            </Link>
             <Link href="/services/back-office-os" className="underline-offset-4 hover:underline">
               Guided Pilot
             </Link>
@@ -77,14 +80,14 @@ export default function HomePage() {
           </p>
           <div className="mt-10 flex flex-wrap items-center gap-6">
             <Link
-              href="#method"
+              href="/loop"
               data-primary-action
               className="inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]"
             >
-              See the Nova loop <span aria-hidden="true" className="ml-8">↓</span>
+              Start a Nova Loop <span aria-hidden="true" className="ml-8">→</span>
             </Link>
-            <Link href="/services/back-office-os" className="text-sm font-bold underline underline-offset-4">
-              Start with one real workflow →
+            <Link href="#method" className="text-sm font-bold underline underline-offset-4">
+              See how it works ↓
             </Link>
           </div>
         </div>
