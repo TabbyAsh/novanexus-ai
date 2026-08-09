@@ -55,7 +55,7 @@ const PATHS = [
   {
     emoji: '🏢',
     title: 'Run my business',
-    desc: 'Track leads, quotes, jobs, and revenue in one pipeline. Never forget a follow-up. Your business operating system.',
+    desc: 'Track leads, quotes, jobs, and revenue in one pipeline. Never forget a follow-up. Your business workspace.',
     href: '/dashboard/business',
     color: 'border-emerald-500/25 hover:border-emerald-400/50',
     bg: 'hover:bg-emerald-500/5',

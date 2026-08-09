@@ -91,9 +91,9 @@ export default function NovaLoopClient() {
         <nav aria-label="Primary navigation" className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-5 px-5 py-5 md:px-8">
           <Link href="/" className="text-sm font-black uppercase tracking-[0.22em]">Nova</Link>
           <div className="flex flex-wrap items-center gap-5 text-sm md:gap-8">
-            <Link href="/#protocol" className="underline-offset-4 hover:underline">The protocol</Link>
-            <Link href="/nexus" className="underline-offset-4 hover:underline">Private Nexus</Link>
-            <Link href="/services/back-office-os" className="underline-offset-4 hover:underline">Guided Pilot</Link>
+            <Link href="/#method" className="underline-offset-4 hover:underline">How it works</Link>
+            <Link href="/services/workflow-setup" className="underline-offset-4 hover:underline">Guided setup</Link>
+            <Link href="/login" className="underline-offset-4 hover:underline">Sign in</Link>
           </div>
         </nav>
       </header>
@@ -101,17 +101,17 @@ export default function NovaLoopClient() {
       <section className="mx-auto max-w-6xl border-x border-[#1d211b] px-5 py-14 md:px-10 md:py-20">
         <div className="grid gap-10 lg:grid-cols-[minmax(0,1fr)_20rem] lg:items-end">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#596052]">Nova Loop · public Nexus protocol</p>
+            <p className="text-xs font-bold uppercase tracking-[0.24em] text-[#596052]">Nova Loop · local worksheet</p>
             <h1 className="mt-5 max-w-4xl text-5xl font-black leading-[0.98] tracking-[-0.045em] md:text-6xl">
-              Practice the interaction between potential, human choice, and reality.
+              Turn a changing situation into a next move you can verify.
             </h1>
             <p className="mt-7 max-w-2xl text-lg leading-8 text-[#4d5448]">
-              Reality enters as a change. Potential becomes a choice. Human authority creates a bounded commitment. Evidence returns through Nexus. The result becomes a portable operating record.
+              Work through one problem. The worksheet structures the decision, commitment, evidence standard, and review trigger into a portable record.
             </p>
           </div>
           <aside className="border-t-2 border-[#141713] pt-5 text-sm leading-6 text-[#4d5448]">
-            <p className="font-bold text-[#141713]">Local protocol · no AI call</p>
-            <p className="mt-2">This public version does not call Nova or send your entries to Nexus. They stay in this tab and disappear when it reloads, closes, or you reset it. Copy and download save outside the worksheet and may be retained by clipboard or device-sync tools. Do not enter passwords, payment details, customer personal data, or sensitive health or legal information.</p>
+            <p className="font-bold text-[#141713]">Local worksheet · no AI call</p>
+            <p className="mt-2">This worksheet does not call AI or send your entries anywhere. They stay in this tab and disappear when it reloads, closes, or you reset it. Copy and download save outside the worksheet and may be retained by clipboard or device-sync tools. Do not enter passwords, payment details, customer personal data, or sensitive health or legal information.</p>
           </aside>
         </div>
       </section>
@@ -258,7 +258,7 @@ export default function NovaLoopClient() {
         <div className="mx-auto flex max-w-6xl flex-wrap items-center justify-between gap-4 px-5 py-6 text-xs text-[#596052] md:px-8">
           <p>© 2026 Nova Enterprises</p>
           <div className="flex gap-5">
-            <Link href="/nexus" className="underline-offset-4 hover:underline">Private Nexus</Link>
+            <Link href="/login" className="underline-offset-4 hover:underline">Sign in</Link>
             <Link href="/privacy" className="underline-offset-4 hover:underline">Privacy</Link>
             <Link href="/terms" className="underline-offset-4 hover:underline">Terms</Link>
           </div>

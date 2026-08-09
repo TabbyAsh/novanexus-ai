@@ -30,7 +30,7 @@ export default function AboutPage() {
 
         <div className="space-y-5 text-gray-400 leading-relaxed">
           <p>
-            Most tools that help people make better decisions — real market intelligence, business operating systems,
+            Most tools that help people make better decisions — real market intelligence, practical workflow tools,
             financial analysis, outcome tracking — are designed for institutions. They require capital, expertise,
             or access that most people don&apos;t have.
           </p>
@@ -69,7 +69,7 @@ export default function AboutPage() {
           <h2 className="text-lg font-bold text-white mb-4">What we&apos;re building</h2>
           <div className="space-y-4 text-sm text-gray-400">
             <p>
-              The immediate product: decision cards, income tools, business operating systems, resale intelligence,
+              The immediate product: decision cards, income tools, workflow systems, resale intelligence,
               and market research — for anyone who needs a clearer next move and can&apos;t afford to wait for access.
             </p>
             <p>

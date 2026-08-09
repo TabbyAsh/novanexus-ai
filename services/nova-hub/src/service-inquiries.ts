@@ -1,5 +1,5 @@
 export const SERVICE_INQUIRY_CODE = 'BACK_OFFICE_OS_STARTER' as const;
-export const SERVICE_INQUIRY_NAME = 'Back Office OS Starter Pilot' as const;
+export const SERVICE_INQUIRY_NAME = 'Workflow Setup Pilot' as const;
 export const SERVICE_INQUIRY_SUPPORT_EMAIL = 'hello@novanexus-ai.com' as const;
 
 export const SERVICE_INQUIRY_LIMITS = {
@@ -75,8 +75,8 @@ export function normalizeServiceInquiry(input: unknown): ServiceInquiryValidatio
   if (challenge.length < SERVICE_INQUIRY_LIMITS.challenge.min || challenge.length > SERVICE_INQUIRY_LIMITS.challenge.max) {
     errors.challenge = `Current workflow must be ${SERVICE_INQUIRY_LIMITS.challenge.min}-${SERVICE_INQUIRY_LIMITS.challenge.max} characters.`;
   }
-  if (requestedService && ![SERVICE_INQUIRY_NAME, 'Back Office OS'].includes(requestedService)) {
-    errors.service = 'This inquiry endpoint currently accepts only the Back Office OS Starter Pilot.';
+  if (requestedService && ![SERVICE_INQUIRY_NAME, 'Back Office OS Starter Pilot', 'Back Office OS'].includes(requestedService)) {
+    errors.service = 'This inquiry endpoint currently accepts only the Workflow Setup Pilot.';
   }
 
   if (Object.keys(errors).length > 0) return { ok: false, errors };

@@ -12,7 +12,7 @@ const validInput = {
   email: ' ADA@Example.COM ',
   business: '  Analytical   Engines LLC ',
   challenge: 'We currently track every open customer request in scattered notes.',
-  service: 'Back Office OS Starter Pilot',
+  service: 'Workflow Setup Pilot',
 };
 
 function dependencies(overrides: Partial<ServiceInquiryDependencies> = {}): ServiceInquiryDependencies {
@@ -37,7 +37,7 @@ describe('service inquiry intake', () => {
       ok: true,
       value: {
         serviceCode: 'BACK_OFFICE_OS_STARTER',
-        serviceName: 'Back Office OS Starter Pilot',
+        serviceName: 'Workflow Setup Pilot',
         name: 'Ada Lovelace',
         email: 'ada@example.com',
         business: 'Analytical Engines LLC',
@@ -59,6 +59,11 @@ describe('service inquiry intake', () => {
 
     const oversized = normalizeServiceInquiry({ ...validInput, challenge: 'x'.repeat(2001) });
     expect(oversized.ok).toBe(false);
+
+    expect(normalizeServiceInquiry({ ...validInput, service: 'Back Office OS Starter Pilot' })).toMatchObject({
+      ok: true,
+      value: { serviceName: 'Workflow Setup Pilot' },
+    });
   });
 
   it('escapes every user field before building operator HTML', () => {

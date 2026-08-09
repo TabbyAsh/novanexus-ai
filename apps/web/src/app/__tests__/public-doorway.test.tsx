@@ -6,25 +6,24 @@ describe('public doorway', () => {
   const markup = renderToStaticMarkup(<HomePage />);
 
   it('sends visitors only to clear, real destinations', () => {
-    expect(markup).toContain('href="#system"');
-    expect(markup).toContain('href="#protocol"');
+    expect(markup).toContain('href="#product"');
+    expect(markup).toContain('href="#method"');
     expect(markup).toContain('href="/loop"');
-    expect(markup).toContain('href="/services/back-office-os"');
-    expect(markup).toContain('href="/nexus"');
+    expect(markup).toContain('href="/services/workflow-setup"');
+    expect(markup).toContain('href="/register"');
+    expect(markup).toContain('href="/login"');
 
     expect(markup).not.toContain('href="/world"');
     expect(markup).not.toContain('href="#markets"');
     expect(markup).not.toContain('href="/dashboard');
+    expect(markup).not.toContain('href="/nexus"');
   });
 
   it('explains one coherent Nova product and method', () => {
     expect(markup.match(/data-primary-action/g)).toHaveLength(1);
-    expect(markup).toContain('The Economic Operating System for Humanity™');
-    expect(markup).toContain('Interaction engine for the edge of the AI frontier');
-    expect(markup).toContain('Run the public Nova Loop');
-    expect(markup).toContain('Humanity');
-    expect(markup).toContain('Nexus');
-    expect(markup).toContain('Reality');
+    expect(markup).toContain('Decision support for changing work');
+    expect(markup).toContain('The world keeps inventing problems');
+    expect(markup).toContain('Try the Nova Loop');
     expect(markup).toContain('Notice');
     expect(markup).toContain('Frame');
     expect(markup).toContain('Commit');
@@ -37,11 +36,15 @@ describe('public doorway', () => {
     expect(markup).not.toContain('Webull');
     expect(markup).not.toContain('live trading');
     expect(markup).not.toContain('subscription plans');
+    expect(markup).not.toContain('The Economic Operating System');
+    expect(markup).not.toContain('AI frontier');
+    expect(markup).not.toContain('Humanity');
+    expect(markup).not.toContain('Nexus protocol');
+    expect(markup).not.toContain('North star');
+    expect(markup).not.toContain('Apex');
 
-    expect(markup).toContain('$150 guided pilot');
-    expect(markup).toContain('human work');
-    expect(markup).toContain('not a software subscription');
-    expect(markup).toContain('North star · not present scale');
-    expect(markup).toContain('Frontier · not available');
+    expect(markup).toContain('$150 one-time');
+    expect(markup).toContain('No subscription');
+    expect(markup).toContain('No software access is sold');
   });
 });

@@ -20,7 +20,7 @@ const SECTIONS = [
     items: [
       'Nova Enterprises provides a private operator workspace, limited research and paper-workflow tools, and separately scoped human-delivered business services.',
       'Capabilities labeled Preview, unavailable, paper, or sandbox are not represented as complete, live, or able to affect real funds.',
-      'The public Back Office OS Starter Pilot is a one-time human-delivered service. It does not include a software subscription or automated business administration.',
+      'The public Workflow Setup Pilot is a one-time human-delivered service. It does not include a software subscription or automated business administration.',
     ],
   },
   {
@@ -45,7 +45,7 @@ const SECTIONS = [
   {
     title: '5. Billing, Pilot Scope, and Refunds',
     items: [
-      'The public Back Office OS Starter Pilot costs $150 as a one-time payment. It does not renew and does not create a subscription.',
+      'The public Workflow Setup Pilot costs $150 as a one-time payment. It does not renew and does not create a subscription.',
       'Submitting an intake or making payment does not by itself mean that scope has been accepted or that work has begun.',
       'Before work begins, we will confirm the accepted scope and the access or information required from you in writing.',
       'You may request a full refund of the Starter Pilot payment at any time before work begins by emailing hello@novanexus-ai.com with your service receipt.',

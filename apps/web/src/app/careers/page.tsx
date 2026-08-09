@@ -35,9 +35,9 @@ const OPEN_ROLES = [
     title: 'Business Development',
     type: 'Remote / Flexible',
     level: 'Any',
-    focus: 'Service client acquisition and Back Office OS delivery.',
+    focus: 'Service client acquisition and workflow-setup delivery.',
     skills: ['Client communication', 'Business operations', 'Google Drive / Notion', 'Sales'],
-    description: 'Bring in and serve Back Office OS clients. Help small businesses get set up, deliver their admin systems, and build the human side of the enterprise.',
+    description: 'Bring in and serve workflow-setup clients. Help small businesses get set up, deliver their admin tools, and build the human side of the enterprise.',
   },
   {
     title: 'Content / Field Manual Writer',

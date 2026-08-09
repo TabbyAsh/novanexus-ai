@@ -141,7 +141,7 @@ export default function FieldManualPage() {
         </Link>
         <div className="flex items-center gap-4 text-sm text-gray-500">
           <Link href="/decision-cards" className="hover:text-white transition">Decision Cards</Link>
-          <Link href="/services/back-office-os" className="hover:text-white transition">Services</Link>
+          <Link href="/services/workflow-setup" className="hover:text-white transition">Services</Link>
         </div>
       </nav>
 

@@ -26,14 +26,14 @@ export default function PricingPage() {
             Human-delivered service pilot
           </p>
           <h1 className="max-w-3xl text-4xl font-bold leading-tight md:text-6xl">
-            Back Office OS Starter Pilot
+            Workflow Setup Pilot
           </h1>
           <p className="mt-5 text-3xl font-semibold text-white">$150 one-time</p>
           <p className="mt-6 max-w-2xl text-lg leading-8 text-gray-300">
-            A bounded back-office setup engagement completed by a person. This is not a self-serve software subscription and does not include access to unfinished Nova software.
+            A bounded admin-workflow setup completed by a person. This is not a self-serve software subscription and does not include access to unfinished Nova software.
           </p>
           <div className="mt-8">
-            <Link href="/services/back-office-os" className="inline-block rounded-xl bg-white px-6 py-3 text-center font-semibold text-gray-950 hover:bg-gray-200">
+            <Link href="/services/workflow-setup" className="inline-block rounded-xl bg-white px-6 py-3 text-center font-semibold text-gray-950 hover:bg-gray-200">
               Review the pilot and start intake
             </Link>
           </div>

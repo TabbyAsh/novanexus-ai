@@ -307,7 +307,7 @@ export default function BusinessOSPage() {
         )}
 
         <p className="text-xs text-gray-700 text-center pt-2">
-          This is your business operating system. Every lead tracked, every follow-up remembered, every dollar accounted for.
+          This is your business workspace. Every lead tracked, every follow-up remembered, every dollar accounted for.
           Pair with the <a href="/dashboard/quote-builder" className="text-emerald-500 hover:text-emerald-400">Quote Builder</a> and{' '}
           <a href="/dashboard/invoice-builder" className="text-emerald-500 hover:text-emerald-400">Invoice Builder</a> for professional documents.
         </p>

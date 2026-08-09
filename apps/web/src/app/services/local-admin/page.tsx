@@ -6,7 +6,7 @@ export const metadata: Metadata = {
 };
 
 export default function LocalAdminPage() {
-  // Reuses same contact flow as Back Office OS
+  // Reuses the workflow-setup contact flow.
   const tiers = [
     {
       name: 'Cleanup Sprint',
@@ -61,7 +61,7 @@ export default function LocalAdminPage() {
           <div className="w-7 h-7 rounded-lg bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center text-xs font-bold">N</div>
           <span className="font-semibold text-sm">Nova Enterprises</span>
         </a>
-        <a href="/services/back-office-os" className="text-gray-500 text-sm hover:text-white transition">Back Office OS</a>
+        <a href="/services/workflow-setup" className="text-gray-500 text-sm hover:text-white transition">Workflow setup</a>
       </nav>
 
       <main className="max-w-3xl mx-auto px-6 py-16 space-y-16">
@@ -76,7 +76,7 @@ export default function LocalAdminPage() {
             Website edits, Google Business Profile cleanup, customer scripts, estimate templates, and monthly operations cleanup — without hiring a full-time admin.
           </p>
           <div className="mt-8">
-            <a href="/services/back-office-os#contact"
+            <a href="/services/workflow-setup#intake"
               className="inline-flex items-center gap-2 px-8 py-4 rounded-xl bg-violet-600 hover:bg-violet-500 text-white font-semibold transition-all">
               Clean Up My Business System →
             </a>
@@ -99,7 +99,7 @@ export default function LocalAdminPage() {
                     </li>
                   ))}
                 </ul>
-                <a href="/services/back-office-os#contact"
+                <a href="/services/workflow-setup#intake"
                   className={`block text-center py-2 rounded-lg text-sm font-semibold transition ${tier.highlight ? 'bg-violet-600 hover:bg-violet-500 text-white' : 'border border-gray-700 text-gray-400 hover:text-white'}`}>
                   Get Started
                 </a>

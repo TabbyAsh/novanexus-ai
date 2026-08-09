@@ -2,14 +2,14 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import BackOfficeClient from '../BackOfficeClient';
 
-describe('Back Office OS Starter Pilot page', () => {
+describe('Workflow Setup Pilot page', () => {
   afterEach(() => {
     delete process.env.NEXT_PUBLIC_BACK_OFFICE_STARTER_PAYMENT_URL;
   });
 
   it('presents one bounded human-delivered $150 offer with exactly five deliverables', () => {
     const markup = renderToStaticMarkup(<BackOfficeClient />);
-    expect(markup).toContain('Back Office OS Starter Pilot');
+    expect(markup).toContain('Workflow Setup Pilot');
     expect(markup).toContain('$150');
     expect(markup).toContain('one-time');
     expect(markup.match(/<li/g)).toHaveLength(5);

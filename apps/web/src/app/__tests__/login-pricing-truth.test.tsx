@@ -29,10 +29,10 @@ describe('pricing offer', () => {
   const markup = renderToStaticMarkup(<PricingPage />);
 
   it('presents the real one-time service without a free-account detour', () => {
-    expect(markup).toContain('Back Office OS Starter Pilot');
+    expect(markup).toContain('Workflow Setup Pilot');
     expect(markup).toContain('$150 one-time');
     expect(markup).toContain('not a self-serve software subscription');
-    expect(markup).toContain('href="/services/back-office-os"');
+    expect(markup).toContain('href="/services/workflow-setup"');
     expect(markup).not.toContain('href="/register"');
     expect(markup).not.toContain('Create a free account');
     expect(markup).not.toContain('href="/#services"');

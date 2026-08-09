@@ -51,7 +51,7 @@ export default function BackOfficeClient() {
       const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/v1/contact`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, service: 'Back Office OS Starter Pilot' }),
+        body: JSON.stringify({ ...form, service: 'Workflow Setup Pilot' }),
       });
       const payload = await response.json().catch(() => null);
       const acceptedReceipt = parseSuccessfulPilotReceipt(payload);
@@ -82,9 +82,9 @@ export default function BackOfficeClient() {
       <main className="mx-auto max-w-5xl border-x border-[#1d211b]">
         <section className="grid gap-10 border-b border-[#1d211b] px-5 py-16 md:px-10 md:py-20 lg:grid-cols-[minmax(0,1fr)_17rem]">
           <div>
-            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#596052]">Human-delivered starter pilot</p>
+            <p className="text-xs font-bold uppercase tracking-[0.22em] text-[#596052]">Human-delivered workflow setup</p>
             <h1 className="mt-4 max-w-3xl text-4xl font-black leading-[1.02] tracking-[-0.04em] md:text-6xl">
-              Back Office OS Starter Pilot
+              Workflow Setup Pilot
             </h1>
             <p className="mt-5 max-w-2xl text-lg leading-8 text-[#4d5448]">
               One bounded setup for a small operator who needs a clearer path from customer intake to open work, expenses, and follow-up.

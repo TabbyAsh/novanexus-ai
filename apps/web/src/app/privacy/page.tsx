@@ -11,7 +11,7 @@ const SECTIONS = [
     title: '1. Information We Collect',
     items: [
       'Account information: email address, hashed password (never stored in plaintext), and organization name when you register.',
-      'Service inquiry information: your name, email address, business name, current workflow description, service receipt, and inquiry status when you request the Back Office OS Starter Pilot.',
+      'Service inquiry information: your name, email address, business name, current workflow description, service receipt, and inquiry status when you request the Workflow Setup Pilot.',
       'Usage data: features you use, cards you generate, outcomes you log, and actions you take. This powers the calibration and learning systems.',
       'Connection data: if a private account connects an external provider, we store only the credentials and account data needed for that enabled connection. Public live-broker execution is not currently offered.',
       'Payment data: processed by Stripe. We do not store card numbers. We receive identifiers and status needed to correlate a payment or refund with an account or service receipt.',

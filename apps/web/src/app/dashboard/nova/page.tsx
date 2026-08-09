@@ -57,12 +57,12 @@ interface CapabilitySummary {
 }
 
 const SUGGESTIONS = [
-  'A constraint changed. Help me see the choices it creates.',
-  'Turn this ambition into one bounded next action.',
-  'What is the most valuable unknown to resolve first?',
-  'Show me the tradeoffs I am currently hiding from myself.',
-  'What evidence would reality need to return before I proceed?',
-  'Help me choose the smallest reversible interaction.',
+  'A plan changed. Help me decide what to do next.',
+  'Turn this goal into one bounded next action.',
+  'What important unknown should I resolve first?',
+  'Compare the tradeoffs between these options.',
+  'What evidence would tell me this worked?',
+  'Help me choose the smallest reversible step.',
 ];
 
 export default function NexusPage() {
@@ -201,8 +201,8 @@ export default function NexusPage() {
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-white">N</div>
             <div>
-              <h1 className="text-lg font-bold text-white leading-none">Nexus</h1>
-              <p className="text-xs text-gray-600 mt-0.5">The governed interaction layer among you, Nova, capabilities, and reality</p>
+              <h1 className="text-lg font-bold text-white leading-none">Nova</h1>
+              <p className="text-xs text-gray-600 mt-0.5">AI-assisted workspace for decisions and next steps</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -229,11 +229,10 @@ export default function NexusPage() {
           {messages.length === 0 ? (
             <div className="max-w-2xl mx-auto text-center pt-8">
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-2xl text-white mx-auto mb-5">N</div>
-              <h2 className="text-2xl font-bold text-white mb-2">What potential do you want to realize?</h2>
+              <h2 className="text-2xl font-bold text-white mb-2">What do you need to decide?</h2>
               <p className="text-gray-500 mb-8 leading-relaxed">
-                Bring an intention, problem, or ambition. Nova will make the reachable choices legible.
-                Nexus will show which capabilities and evidence were used, what authority existed,
-                what actually happened, and what is still missing.
+                Bring a changing situation, problem, or goal. Nova will help you frame the decision,
+                choose a bounded next step, and show the evidence, capabilities, and gaps behind the response.
               </p>
               <div className="grid sm:grid-cols-2 gap-2.5 text-left">
                 {SUGGESTIONS.map(s => (

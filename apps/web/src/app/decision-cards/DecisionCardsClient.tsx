@@ -616,7 +616,7 @@ export default function DecisionCardsClient() {
           <span className="font-semibold text-sm">Nova</span>
         </Link>
         <div className="flex items-center gap-4">
-          <Link href="/services/back-office-os" className="text-gray-500 text-sm hover:text-white transition">Services</Link>
+          <Link href="/services/workflow-setup" className="text-gray-500 text-sm hover:text-white transition">Services</Link>
           <Link href="/field-manual"            className="text-gray-500 text-sm hover:text-white transition">Field Manual</Link>
           <Link href="/register"                className="px-4 py-2 rounded-lg bg-emerald-600 hover:bg-emerald-500 text-sm font-semibold text-white transition">
             Get Started
