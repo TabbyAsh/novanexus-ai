@@ -350,22 +350,24 @@ describe('nexus lifecycle API handlers', () => {
     expect(routeHandlers['GET /v1/nexus/conversations/:id']).toBeDefined();
   });
 
-  it('requires explicit confirmation before World creates a persistent watcher', async () => {
+  it('refuses public watcher creation even when a caller supplies confirmation', async () => {
     const hailHandler = routeHandlers['POST /v1/world/hail'];
     expect(hailHandler).toBeDefined();
 
     const preview = makeReqRes({ body: { message: 'watch TSLA', visitorId: 'visitor-1' } });
     await hailHandler(preview.req, preview.res);
-    expect(preview.res.payload.success).toBe(true);
-    expect(preview.res.payload.data.confirmationRequired).toBe(true);
+    expect(preview.res.statusCode).toBe(409);
+    expect(preview.res.payload.success).toBe(false);
+    expect(preview.res.payload.error.code).toBe('WORLD_WATCHERS_RESERVED');
     expect(preview.res.payload.data.authority.externalSideEffectsPerformed).toBe(false);
     expect(mockForgeAgent).not.toHaveBeenCalled();
 
     const confirmed = makeReqRes({ body: { message: 'watch TSLA', visitorId: 'visitor-1', confirm: true } });
     await hailHandler(confirmed.req, confirmed.res);
-    expect(confirmed.res.payload.data.confirmationRequired).toBe(false);
-    expect(confirmed.res.payload.data.authority.externalSideEffectsPerformed).toBe(true);
-    expect(mockForgeAgent).toHaveBeenCalledTimes(1);
+    expect(confirmed.res.statusCode).toBe(409);
+    expect(confirmed.res.payload.error.code).toBe('WORLD_WATCHERS_RESERVED');
+    expect(confirmed.res.payload.data.authority.externalSideEffectsPerformed).toBe(false);
+    expect(mockForgeAgent).not.toHaveBeenCalled();
   });
 
   it('does not store an unverified email address from a public World hail', async () => {

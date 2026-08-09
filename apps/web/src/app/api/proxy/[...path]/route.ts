@@ -1,17 +1,29 @@
 import { NextRequest, NextResponse } from 'next/server';
-
-// The actual backend URL - Railway production
-const BACKEND_URL = process.env.BACKEND_URL || 'https://abackend-production.up.railway.app';
+import { resolveBackendUrl } from '@/lib/backend-url';
 
 // Headers to forward from client
-const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id', 'x-forwarded-for'];
+const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id'];
 
 // Headers to NOT forward back (hop-by-hop)
 const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive'];
 
 async function proxyRequest(request: NextRequest, params: { path: string[] }) {
+  const backendUrl = resolveBackendUrl();
+  if (!backendUrl) {
+    return NextResponse.json(
+      {
+        success: false,
+        error: {
+          code: 'BACKEND_NOT_CONFIGURED',
+          message: 'This deployment is not connected to a Nova backend.',
+        },
+      },
+      { status: 503 },
+    );
+  }
+
   const path = '/' + params.path.join('/');
-  const url = new URL(path, BACKEND_URL);
+  const url = new URL(path, backendUrl);
   
   // Forward query params
   request.nextUrl.searchParams.forEach((value, key) => {
@@ -47,8 +59,7 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
       }
     });
 
-    // Add CORS headers for same-origin
-    responseHeaders.set('X-Proxied-From', BACKEND_URL);
+    responseHeaders.set('X-Nova-Proxy', 'same-origin');
 
     // Get response body
     const body = await response.arrayBuffer();

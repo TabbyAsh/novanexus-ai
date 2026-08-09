@@ -23,7 +23,7 @@ import type {
   RiskLevel,
   NovaCardRow,
 } from '@nova/shared';
-import { requiredScopesForRoute } from './route-authority';
+import { LEGACY_NEXUS_PLATFORM_ROUTES, requiredScopesForRoute } from './route-authority';
 import {
   buildStripeWebhookForward,
   StripeWebhookForwardingError,
@@ -67,6 +67,8 @@ const PLATFORM_CONTROL_ROUTES = [
   '/v1/agents/codex',
   '/v1/smith',
   '/v1/ignition',
+  '/v1/agents/providers',
+  ...LEGACY_NEXUS_PLATFORM_ROUTES,
 ];
 const PLATFORM_OWNER_EMAILS = new Set(
   [process.env.PLATFORM_OWNER_EMAILS, process.env.OWNER_EMAIL]
@@ -92,11 +94,6 @@ const PUBLIC_ROUTES = [
   '/v1/billing/founding-seats',
   '/v1/billing/tiers',
   '/billing/webhook',  // Stripe webhook - authenticated by signature
-  // Nova Nexus AI - public status
-  '/v1/nexus/status',
-  '/v1/nexus/initialize',
-  '/v1/nexus/analyze',
-  '/v1/nexus/ledger',
   // Platform stats + brief proof (public for landing page)
   '/v1/platform/stats',
   '/v1/platform/brief-proof',
@@ -125,12 +122,12 @@ const PUBLIC_ROUTES = [
   // Flip Card — public decision product
   '/v1/flip/',
   '/v1/flip-card/',
-  // The World — public arrival surface (pulse + hail)
-  '/v1/world/',
+  // The World — read-only pulse, conversation, and calibration only.
+  '/v1/world/pulse',
+  '/v1/world/hail',
+  '/v1/world/calibration/',
   // Agent eval leaderboard — public read (Forge Control surface)
   '/v1/agents/evals/leaderboard',
-  // Sovereign Mind Layer provider health — public read (Forge Control)
-  '/v1/agents/providers',
 ];
 
 // Premium features that require paid plan (LITE or higher)
@@ -454,6 +451,8 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
     '/v1/trade', '/v1/store', '/v1/social', '/v1/research',
     '/v1/agents', '/v1/smith', '/v1/ignition', '/v1/proposals',
     '/v1/world/hail', '/v1/nexus/decision-cards',
+    '/v1/nexus/initialize', '/v1/nexus/analyze', '/v1/nexus/execute',
+    '/v1/nexus/autonomous-scan', '/v1/nexus/stop',
   ];
   const isAutomationRoute = automationRoutes.some((r) => req.path.startsWith(r));
 

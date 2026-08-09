@@ -6,8 +6,8 @@ const inter = Inter({ subsets: ['latin'] });
 
 export const metadata: Metadata = {
   metadataBase: new URL('https://novanexus-ai.com'),
-  title: 'Nova — Adaptive operating memory',
-  description: 'Nova holds the thread between a changing problem, a decision, an owned action, and the evidence that makes the next move smarter.',
+  title: 'Nova — The Economic Operating System for Humanity™',
+  description: 'Nova makes potential and choice legible. Nexus governs the interaction among human intention, AI intelligence, connected capabilities, and evidence from reality.',
 };
 
 export default function RootLayout({

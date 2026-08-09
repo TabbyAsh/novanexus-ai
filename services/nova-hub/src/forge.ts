@@ -127,6 +127,7 @@ export async function runForgeTick(): Promise<void> {
   const due = await query<WorldAgent>(
     `SELECT * FROM world_agents
      WHERE status = 'ACTIVE' AND mission = 'WATCH_TICKER' AND symbol IS NOT NULL
+       AND user_id IS NOT NULL
        AND (last_run_at IS NULL OR last_run_at < NOW() - INTERVAL '${RUN_INTERVAL_MIN} minutes')
      LIMIT 20`
   ).catch(() => ({ rows: [] as WorldAgent[] }));

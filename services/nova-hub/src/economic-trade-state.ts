@@ -143,72 +143,6 @@ interface EventRow {
   payload_json: Record<string, unknown> | string;
 }
 
-const GEOMETRY_ROUTES: CapabilityRouteView[] = [
-  {
-    id: 'county_gis_lookup',
-    name: 'County GIS / assessor lookup',
-    providerType: 'EXTERNAL_DATA',
-    status: 'RESERVED',
-    authority: 'OBSERVE',
-    riskTier: 'R0',
-    expectedConfidence: 0.95,
-    expectedCostUsd: 0,
-    blockingReason: 'No dependable automated Putnam County property-record adapter is registered yet.',
-    description: 'Read parcel boundaries, improvement records, and recorded structure dimensions from an official public source.',
-  },
-  {
-    id: 'aerial_measurement',
-    name: 'Aerial geometry measurement',
-    providerType: 'LOCAL_TOOL',
-    status: 'GATED',
-    authority: 'ASSIST',
-    riskTier: 'R1',
-    expectedConfidence: 0.85,
-    expectedCostUsd: 0,
-    blockingReason: 'A reliable scale reference and structure-to-parcel mapping are still missing.',
-    description: 'Measure roof footprints from aerial imagery and retain the imagery, scale, method, and uncertainty as evidence.',
-  },
-  {
-    id: 'field_measurement_task',
-    name: 'Authorized field-measurement task',
-    providerType: 'HUMAN_TASK',
-    status: 'AVAILABLE',
-    authority: 'ASSIST',
-    riskTier: 'R1',
-    expectedConfidence: 0.99,
-    expectedCostUsd: null,
-    blockingReason: null,
-    description: 'Create a checklist for an authorized site visit. The gap remains open until dimensions and photographs are submitted and evaluated.',
-  },
-];
-
-const CONDITION_ROUTES: CapabilityRouteView[] = [
-  {
-    id: 'current_site_photos',
-    name: 'Current site-condition photo task',
-    providerType: 'HUMAN_TASK',
-    status: 'AVAILABLE',
-    authority: 'ASSIST',
-    riskTier: 'R1',
-    expectedConfidence: 0.98,
-    expectedCostUsd: null,
-    blockingReason: null,
-    description: 'Capture current, structure-labeled photographs from authorized/publicly accessible viewpoints.',
-  },
-  {
-    id: 'public_street_imagery',
-    name: 'Public street imagery review',
-    providerType: 'EXTERNAL_DATA',
-    status: 'DEGRADED',
-    authority: 'OBSERVE',
-    riskTier: 'R0',
-    expectedConfidence: 0.55,
-    expectedCostUsd: 0,
-    blockingReason: 'Image date and complete wall coverage may be insufficient for a current-condition requirement.',
-    description: 'Useful for orientation only; stale or incomplete imagery cannot independently close this gap.',
-  },
-];
-
 let tablesReady = false;
 
 function jsonValue<T>(value: T | string | null | undefined, fallback: T): T {
@@ -303,89 +237,15 @@ async function ensureTables(): Promise<void> {
   tablesReady = true;
 }
 
-async function seedTrade0001(userId: string): Promise<string> {
+async function getConfiguredTrade0001Id(userId: string): Promise<string> {
   await ensureTables();
-
-  await query(
-    `INSERT INTO economic_trades (
-       user_id, reference, title, seller, buyer, market, stage, status,
-       currency, expected_revenue, actual_revenue, provenance_status
-     ) VALUES ($1, '0001', $2, $3, $4, $5, 'SCOPING', 'OPEN', 'USD', NULL, 0, 'USER_CONFIRMED')
-     ON CONFLICT (user_id, reference) DO NOTHING`,
-    [
-      userId,
-      'Service Operator → Commercial Site',
-      'Service Operator',
-      'Commercial Site',
-      'Commercial exterior cleaning',
-    ],
-  );
-
   const trade = await queryOne<{ id: string }>(
     `SELECT id FROM economic_trades WHERE user_id = $1 AND reference = '0001'`,
     [userId],
   );
-  if (!trade?.id) throw new Error('Trade #0001 could not be initialized.');
-
-  const gaps = [
-    {
-      code: 'geometry-and-parcel-membership',
-      title: 'Exact building geometry and parcel membership',
-      description: 'The structures included in the sale have not been matched to verified parcel boundaries and measured dimensions.',
-      severity: 'CRITICAL',
-      blockedRequirement: 'A measurable exterior scope and washable-surface calculation.',
-      requiredCapability: 'property.structure_geometry.measure',
-      requiredConfidence: 0.9,
-      routes: GEOMETRY_ROUTES,
-    },
-    {
-      code: 'current-surface-condition',
-      title: 'Current surface-condition evidence',
-      description: 'Current, structure-labeled photographs are unavailable for the walls, doors, trim, gutters, access points, and contamination being priced.',
-      severity: 'CRITICAL',
-      blockedRequirement: 'Treatment selection, labor estimate, risk adjustment, and final fixed price.',
-      requiredCapability: 'property.surface_condition.observe',
-      requiredConfidence: 0.9,
-      routes: CONDITION_ROUTES,
-    },
-  ];
-
-  for (const gap of gaps) {
-    await query(
-      `INSERT INTO economic_trade_gaps (
-         trade_id, code, title, description, status, blocking, severity,
-         provenance_status, blocked_requirement, required_capability,
-         required_confidence, routes_json
-       ) VALUES ($1, $2, $3, $4, 'OPEN', true, $5, 'USER_CONFIRMED', $6, $7, $8, $9::jsonb)
-       ON CONFLICT (trade_id, code) DO NOTHING`,
-      [
-        trade.id,
-        gap.code,
-        gap.title,
-        gap.description,
-        gap.severity,
-        gap.blockedRequirement,
-        gap.requiredCapability,
-        gap.requiredConfidence,
-        JSON.stringify(gap.routes),
-      ],
-    );
+  if (!trade?.id) {
+    throw new Error('Trade #0001 is not configured for this account. Explicit case creation and provenance confirmation are required.');
   }
-
-  const existingEvent = await queryOne<{ id: string }>(
-    `SELECT id FROM economic_trade_events
-     WHERE trade_id = $1 AND event_type = 'TRADE_SEEDED'
-     ORDER BY occurred_at ASC LIMIT 1`,
-    [trade.id],
-  );
-  if (!existingEvent) {
-    await query(
-      `INSERT INTO economic_trade_events (trade_id, user_id, event_type, payload_json)
-       VALUES ($1, $2, 'TRADE_SEEDED', $3::jsonb)`,
-      [trade.id, userId, JSON.stringify({ reference: '0001', source: 'founder-confirmed project state' })],
-    );
-  }
-
   return trade.id;
 }
 
@@ -430,7 +290,7 @@ function mapEvent(row: EventRow): EconomicTradeEventView {
 }
 
 export async function getTrade0001(userId: string): Promise<EconomicTradeView> {
-  const tradeId = await seedTrade0001(userId);
+  const tradeId = await getConfiguredTrade0001Id(userId);
 
   const [trade, gaps, actions, events] = await Promise.all([
     queryOne<TradeRow>(

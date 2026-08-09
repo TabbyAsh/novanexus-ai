@@ -10632,21 +10632,13 @@ app.get('/v1/world/pulse', async (_req: Request, res: Response) => {
   }
 });
 
-// Your agents — they remain (canon §I). Visitor-token scoped.
-app.get('/v1/world/agents', async (req: Request, res: Response) => {
-  try {
-    const visitorId = String(req.query.visitor || '').slice(0, 64);
-    if (!visitorId) { res.json({ success: true, data: { agents: [] } }); return; }
-    const { listAgents } = await import('./forge');
-    const agents = await listAgents(visitorId);
-    res.json({ success: true, data: { agents: agents.map(a => ({
-      id: a.id, name: a.name, symbol: a.symbol, sector: a.sector,
-      created_at: a.created_at, latest_finding: a.latest_finding,
-    })) } });
-  } catch (err) {
-    logger.error('World agents list failed', err as Error);
-    res.status(503).json({ success: false, error: { code: 'WORLD_DARK', message: 'Unavailable.' } });
-  }
+// Anonymous visitor IDs are not ownership. Persistent watchers remain reserved
+// until they have authenticated ownership, durable quotas, expiry, and removal.
+app.get('/v1/world/agents', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+  res.status(410).json({
+    success: false,
+    error: { code: 'WORLD_WATCHERS_RESERVED', message: 'Persistent World watchers are not currently available.' },
+  });
 });
 
 // THE SMITH (agent layer §1, Phases 2+3) — writes code, runs it in an
@@ -10666,9 +10658,9 @@ app.post('/v1/smith/build', authMiddleware, platformOwnerMiddleware, async (req:
   }
 });
 
-// SOVEREIGN MIND LAYER — provider health, sovereignty score, failure memory.
-// Public read: Forge Control shows whether Nova can run agent jobs at all.
-app.get('/v1/agents/providers', async (_req: Request, res: Response) => {
+// SOVEREIGN MIND LAYER — detailed provider health and failure memory are
+// platform diagnostics, never a public availability endpoint.
+app.get('/v1/agents/providers', authMiddleware, platformOwnerMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
   try {
     const { providerHealth } = await import('./ai-router');
     const { recallFailureMemory } = await import('./failure-memory');
@@ -10914,46 +10906,34 @@ app.post('/v1/world/hail', async (req: Request, res: Response) => {
       return;
     }
     const returning = Boolean(req.body?.returning);
-    const confirmed = req.body?.confirm === true;
-    const visitorId = typeof req.body?.visitorId === 'string' ? req.body.visitorId.slice(0, 64) : null;
+    const emailMatch = message.match(/\bnotify me at\s+([^\s@]+@[^\s@]+\.[^\s@]+)/i);
+    if (emailMatch) {
+      res.status(501).json({
+        success: false,
+        error: {
+          code: 'WORLD_EMAIL_VERIFICATION_REQUIRED',
+          message: 'Email alerts are reserved until recipient verification and double opt-in exist. No address was stored.',
+        },
+        data: { authority: { mode: 'assist', externalSideEffectsPerformed: false } },
+      });
+      return;
+    }
 
-    // THE FORGE — some hails are commands, not questions.
-    if (visitorId) {
-      const { parseForgeIntent, forgeAgent } = await import('./forge');
-      const emailMatch = message.match(/\bnotify me at\s+([^\s@]+@[^\s@]+\.[^\s@]+)/i);
-      if (emailMatch) {
-        res.status(501).json({
-          success: false,
-          error: {
-            code: 'WORLD_EMAIL_VERIFICATION_REQUIRED',
-            message: 'Email alerts are reserved until recipient verification and double opt-in exist. No address was stored.',
-          },
-          data: { authority: { mode: 'assist', externalSideEffectsPerformed: false } },
-        });
-        return;
-      }
-      const intent = parseForgeIntent(message);
-      if (intent) {
-        if (!confirmed) {
-          res.json({ success: true, data: {
-            reply: `I can create a persistent 15-minute watcher for ${intent.symbol}. This will keep running after this conversation. Confirm to forge it.`,
-            provider: 'forge', available: true,
-            confirmationRequired: true,
-            authority: { mode: 'assist', externalSideEffectsPerformed: false },
-            proposedAction: { type: 'CREATE_WATCHER', symbol: intent.symbol },
-          }});
-          return;
-        }
-        const forged = await forgeAgent({ visitorId, symbol: intent.symbol });
-        res.json({ success: true, data: {
-          reply: 'error' in forged ? forged.error : forged.reply,
-          provider: 'forge', available: true,
-          agent: 'error' in forged ? null : { id: forged.agent.id, name: forged.agent.name, symbol: forged.agent.symbol },
-          confirmationRequired: false,
-          authority: { mode: 'assist', externalSideEffectsPerformed: !('error' in forged) },
-        }});
-        return;
-      }
+    const { parseForgeIntent } = await import('./forge');
+    const forgeIntent = parseForgeIntent(message);
+    if (forgeIntent) {
+      res.status(409).json({
+        success: false,
+        error: {
+          code: 'WORLD_WATCHERS_RESERVED',
+          message: 'Persistent watchers are reserved until authenticated ownership, quotas, expiry, and removal are available. No watcher was created.',
+        },
+        data: {
+          authority: { mode: 'assist', externalSideEffectsPerformed: false },
+          requestedAction: { type: 'CREATE_WATCHER', symbol: forgeIntent.symbol },
+        },
+      });
+      return;
     }
 
     const result = await hail(message, { returning });
@@ -12730,21 +12710,23 @@ app.post('/v1/nexus/interact', authMiddleware, async (req: AuthenticatedRequest,
   }
 });
 
-app.get('/v1/nexus/capabilities', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+app.get('/v1/nexus/capabilities', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { listNexusCapabilities } = await import('./nexus-interaction');
-    res.json({ success: true, data: { capabilities: listNexusCapabilities() } });
+    const { listNexusCapabilitiesForCaller } = await import('./nexus-interaction');
+    const { userId, scopes } = req.user!;
+    res.json({ success: true, data: { capabilities: await listNexusCapabilitiesForCaller(userId, scopes) } });
   } catch (err) {
     logger.error('Nexus capabilities failed', err as Error);
     res.status(503).json({ success: false, error: { code: 'CAPABILITIES_UNAVAILABLE' } });
   }
 });
 
-app.get('/v1/nexus/potential', authMiddleware, async (_req: AuthenticatedRequest, res: Response) => {
+app.get('/v1/nexus/potential', authMiddleware, async (req: AuthenticatedRequest, res: Response) => {
   try {
-    const { listNexusCapabilities } = await import('./nexus-interaction');
+    const { listNexusCapabilitiesForCaller } = await import('./nexus-interaction');
     const { assessPotentialFrontier } = await import('./potential-frontier');
-    res.json({ success: true, data: assessPotentialFrontier(listNexusCapabilities()) });
+    const { userId, scopes } = req.user!;
+    res.json({ success: true, data: assessPotentialFrontier(await listNexusCapabilitiesForCaller(userId, scopes)) });
   } catch (err) {
     logger.error('Potential frontier failed', err as Error);
     res.status(503).json({ success: false, error: { code: 'POTENTIAL_FRONTIER_UNAVAILABLE' } });

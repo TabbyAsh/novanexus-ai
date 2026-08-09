@@ -114,7 +114,7 @@ async function tryBusinessAction(userId: string, message: string): Promise<Actio
 
   try {
     const rows = await query<any>(
-      `SELECT status, quoted_price, final_price, follow_up_due, contact_name FROM business_jobs WHERE user_id = $1`,
+      `SELECT status, quoted_price, final_price, follow_up_due FROM business_jobs WHERE user_id = $1`,
       [userId]
     );
     const all = rows.rows;
@@ -126,12 +126,12 @@ async function tryBusinessAction(userId: string, message: string): Promise<Actio
     const pipeline = all.filter(j => ['LEAD','QUOTED','SCHEDULED'].includes(j.status)).reduce((s, j) => s + parseFloat(j.quoted_price || 0), 0);
     const followUps = all.filter(j => j.follow_up_due && j.follow_up_due <= today && ['LEAD','QUOTED'].includes(j.status));
 
-    const summary = `[BUSINESS STATUS — real data]
+    const summary = `[BUSINESS STATUS — account-scoped aggregate data]
 Total jobs: ${all.length}
 Revenue (paid): $${revenue.toFixed(0)}
 Pipeline value (open): $${pipeline.toFixed(0)}
 Active leads: ${all.filter(j => ['LEAD','SCHEDULED'].includes(j.status)).length}
-Follow-ups due today: ${followUps.length}${followUps.length ? ' — ' + followUps.map(j => j.contact_name).join(', ') : ''}
+Follow-ups due today: ${followUps.length}
 Unpaid completed jobs: ${all.filter(j => j.status === 'COMPLETED').length}`;
 
     return { ran: true, capabilityId: 'business.pipeline', source: 'postgres:business_jobs', summary, display: { type: 'business', followUps: followUps.length } };

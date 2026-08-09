@@ -1,18 +1,29 @@
 import { NextResponse } from 'next/server';
 import buildInfo from '@/build-info.json';
-
-// Direct backend URL for server-side checks
-const BACKEND_URL = process.env.BACKEND_URL || 'https://abackend-production.up.railway.app';
+import { resolveBackendUrl } from '@/lib/backend-url';
 
 export async function GET(request: Request) {
   const host = request.headers.get('host') || 'unknown';
+  const backendUrl = resolveBackendUrl();
+  if (!backendUrl) {
+    return NextResponse.json({
+      host,
+      webGitSha: buildInfo.gitSha || 'dev',
+      webBuildTime: buildInfo.buildTime || 'unknown',
+      apiBaseUrl: '/api/proxy',
+      backendConfigured: false,
+      apiGitSha: 'unknown',
+      mismatch: false,
+      apiError: 'This deployment is not connected to a Nova backend.',
+    }, { status: 503 });
+  }
   
   // Fetch backend version directly (server-side)
   let apiGitSha = 'unknown';
   let apiError: string | null = null;
   
   try {
-    const response = await fetch(`${BACKEND_URL}/version`, {
+    const response = await fetch(`${backendUrl}/version`, {
       cache: 'no-store',
       signal: AbortSignal.timeout(5000),
     });
@@ -39,7 +50,7 @@ export async function GET(request: Request) {
     webGitSha,
     webBuildTime,
     apiBaseUrl: '/api/proxy',  // Client uses same-origin proxy
-    backendUrl: BACKEND_URL,   // Actual backend (for debugging)
+    backendConfigured: true,
     apiGitSha,
     mismatch,
     ...(apiError && { apiError }),

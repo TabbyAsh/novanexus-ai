@@ -1,7 +1,8 @@
 'use client';
 
 /**
- * Nexus — the interaction engine between humans and Nova.
+ * Nexus — the governed interaction layer among human intention, Nova,
+ * connected capabilities, and evidence from reality.
  *
  * Human intent enters here. Nova's reasoning and capabilities return through
  * an inspectable receipt: what ran, what evidence it used, what is missing,
@@ -13,7 +14,7 @@ import Link from 'next/link';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { Send, Sparkles, ArrowRight, Plus, Database, ShieldCheck, Boxes, AlertTriangle } from 'lucide-react';
 
-const API = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000';
+const API = '/api/proxy';
 const getToken = () => typeof window !== 'undefined' ? localStorage.getItem('nova_access_token') || '' : '';
 
 interface Message {
@@ -56,12 +57,12 @@ interface CapabilitySummary {
 }
 
 const SUGGESTIONS = [
-  'I have a skill but I\'m not making money from it',
-  'Compare current demand trends with flip opportunities and build me a plan',
-  'I run a small business and I\'m disorganized',
-  'What stocks are showing momentum today?',
-  'I want to track my gig income',
-  'Help me save money on my monthly expenses',
+  'A constraint changed. Help me see the choices it creates.',
+  'Turn this ambition into one bounded next action.',
+  'What is the most valuable unknown to resolve first?',
+  'Show me the tradeoffs I am currently hiding from myself.',
+  'What evidence would reality need to return before I proceed?',
+  'Help me choose the smallest reversible interaction.',
 ];
 
 export default function NexusPage() {
@@ -69,6 +70,7 @@ export default function NexusPage() {
   const [input, setInput] = useState('');
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
+  const [restoredConversation, setRestoredConversation] = useState(false);
   const [outcomes, setOutcomes] = useState<Record<string, 'saving' | 'worked' | 'partial' | 'failed' | 'error'>>({});
   const [capabilitySummary, setCapabilitySummary] = useState<CapabilitySummary | null>(null);
   const [interactionCount, setInteractionCount] = useState<number | null>(null);
@@ -117,6 +119,7 @@ export default function NexusPage() {
         const body = await response.json();
         if (requestEpoch.current !== 0 || !body?.success || !Array.isArray(body?.data?.messages)) return;
         setConversationId(latest.id);
+        setRestoredConversation(true);
         setMessages(body.data.messages.map((item: any) => ({
           role: item.role === 'user' ? 'user' : 'nova',
           content: String(item.content || ''),
@@ -184,6 +187,7 @@ export default function NexusPage() {
     requestEpoch.current += 1;
     setMessages([]);
     setConversationId(null);
+    setRestoredConversation(false);
     setInput('');
     setLoading(false);
   };
@@ -198,7 +202,7 @@ export default function NexusPage() {
             <div className="w-9 h-9 rounded-xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-white">N</div>
             <div>
               <h1 className="text-lg font-bold text-white leading-none">Nexus</h1>
-              <p className="text-xs text-gray-600 mt-0.5">The interaction engine between you and Nova</p>
+              <p className="text-xs text-gray-600 mt-0.5">The governed interaction layer among you, Nova, capabilities, and reality</p>
             </div>
           </div>
           <div className="flex items-center gap-3">
@@ -225,11 +229,11 @@ export default function NexusPage() {
           {messages.length === 0 ? (
             <div className="max-w-2xl mx-auto text-center pt-8">
               <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-emerald-500 to-cyan-600 flex items-center justify-center font-bold text-2xl text-white mx-auto mb-5">N</div>
-              <h2 className="text-2xl font-bold text-white mb-2">What do you want to realize?</h2>
+              <h2 className="text-2xl font-bold text-white mb-2">What potential do you want to realize?</h2>
               <p className="text-gray-500 mb-8 leading-relaxed">
-                You enter through Nexus. Express an intention, a problem, or an ambition.
-                Nexus will bring Nova's available capabilities together, show what actually ran,
-                and tell you plainly what is still missing.
+                Bring an intention, problem, or ambition. Nova will make the reachable choices legible.
+                Nexus will show which capabilities and evidence were used, what authority existed,
+                what actually happened, and what is still missing.
               </p>
               <div className="grid sm:grid-cols-2 gap-2.5 text-left">
                 {SUGGESTIONS.map(s => (
@@ -243,6 +247,12 @@ export default function NexusPage() {
             </div>
           ) : (
             <div className="max-w-2xl mx-auto space-y-5">
+              {restoredConversation && (
+                <div className="rounded-xl border border-amber-500/20 bg-amber-500/5 px-4 py-3 text-xs leading-5 text-amber-100/70">
+                  Saved chat restored. Earlier messages are account-scoped conversation context, not verified operating memory.
+                  Their original Nexus receipts, evidence, and outcome state are not reloaded on this screen.
+                </div>
+              )}
               {messages.map((m, i) => (
                 <div key={i} className={`flex gap-3 ${m.role === 'user' ? 'justify-end' : ''}`}>
                   {m.role === 'nova' && (
@@ -373,7 +383,7 @@ export default function NexusPage() {
                         <div className="flex flex-wrap items-center justify-between gap-2 border-t border-white/5 pt-2.5">
                           <div className={`flex items-center gap-1.5 text-[10px] ${m.interaction.memory.persisted ? 'text-emerald-400' : 'text-amber-400'}`}>
                             <Database className="w-3 h-3" />
-                            {m.interaction.memory.persisted ? 'Privacy-safe receipt preserved' : 'Receipt memory unavailable'}
+                            {m.interaction.memory.persisted ? 'Content-redacted interaction receipt saved' : 'Interaction receipt not saved'}
                           </div>
                           {m.interaction.memory.outcomeClosable && (
                             <div className="flex items-center gap-1.5">
@@ -439,8 +449,11 @@ export default function NexusPage() {
                 <Send className="w-4 h-4" />
               </button>
             </div>
-            <p className="text-xs text-gray-700 text-center mt-2">
-              Nexus shows capabilities, evidence, authority, memory, and gaps. External actions require approval.
+            <p className="mt-2 text-center text-[11px] leading-4 text-gray-600">
+              Your messages and Nova&apos;s replies are stored with your account. AI-enabled turns may send the current message,
+              recent chat context, and relevant tool summaries to one or more configured AI providers, which may retain them
+              under their terms. Interaction receipts exclude raw chat. Do not enter secrets or third-party personal information
+              you are not authorized to share. <Link href="/privacy" className="text-gray-400 underline underline-offset-2">Privacy Policy</Link>
             </p>
           </div>
         </div>

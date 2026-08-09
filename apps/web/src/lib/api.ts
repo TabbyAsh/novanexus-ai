@@ -6,6 +6,8 @@
 // 2. Module-level code runs on server first and gets cached
 // 3. We need to detect the actual runtime environment
 
+import { resolveBackendUrl } from './backend-url';
+
 function getApiBase(): string {
   // In browser: use same-origin proxy to avoid CORS issues
   // The proxy routes to the actual backend (Railway)
@@ -13,13 +15,13 @@ function getApiBase(): string {
     return '/api/proxy';
   }
   
-  // Server-side: use direct backend URL
-  if (process.env.BACKEND_URL) {
-    return process.env.BACKEND_URL;
+  // Server-side deployments must be wired explicitly. This prevents a preview
+  // or local build from silently sending tokens and writes to production.
+  const backendUrl = resolveBackendUrl();
+  if (!backendUrl) {
+    throw new Error('BACKEND_URL is not configured for this deployment');
   }
-  
-  // Fallback to Railway production URL
-  return 'https://abackend-production.up.railway.app';
+  return backendUrl;
 }
 
 

@@ -69,7 +69,9 @@ export default function ForgeControl() {
   }, []);
   const loadHealth = useCallback(async () => {
     try {
-      const r = await fetch(`${API}/v1/agents/providers`);
+      const r = await fetch(`${API}/v1/agents/providers`, {
+        headers: { ...(token() ? { Authorization: `Bearer ${token()}` } : {}) },
+      });
       const d = await r.json();
       if (d?.success) setHealth(d.data);
     } catch { /* leave null */ }

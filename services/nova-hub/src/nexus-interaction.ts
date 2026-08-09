@@ -276,6 +276,36 @@ export function listNexusCapabilities(): NexusCapabilityDescriptor[] {
   return [...DIRECT_CAPABILITIES, ...listExecutorCapabilities()];
 }
 
+const ECONOMIC_CAPABILITY_IDS = new Set(
+  DIRECT_CAPABILITIES.filter(item => item.id.startsWith('economic.trade.')).map(item => item.id),
+);
+const PLATFORM_OWNER_CAPABILITY_IDS = new Set([
+  'forge.capability_proposal',
+  'forge.codex_specialist',
+  'forge.recursive_improvement',
+]);
+
+/** Return only capabilities the authenticated caller can actually inspect. */
+export async function listNexusCapabilitiesForCaller(
+  userId: string,
+  scopes: readonly string[],
+  ownerEmails = ECONOMIC_OWNER_EMAILS,
+): Promise<NexusCapabilityDescriptor[]> {
+  const row = await queryOne<{ email: string }>(
+    'SELECT email FROM users WHERE id = $1',
+    [userId],
+  ).catch(() => null);
+  const email = row?.email?.trim().toLowerCase() || null;
+  const economicAllowed = hasEconomicOwnerAuthority(email, scopes, ownerEmails);
+  const platformOwnerAllowed = Boolean(email && ownerEmails.has(email));
+
+  return listNexusCapabilities().filter(capability => {
+    if (ECONOMIC_CAPABILITY_IDS.has(capability.id)) return economicAllowed;
+    if (PLATFORM_OWNER_CAPABILITY_IDS.has(capability.id)) return platformOwnerAllowed;
+    return true;
+  });
+}
+
 function ownerRef(userId: string): string {
   return createHash('sha256').update(`nexus-owner:${userId}`).digest('hex');
 }

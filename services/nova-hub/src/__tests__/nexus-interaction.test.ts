@@ -1,6 +1,7 @@
 jest.mock('@nova/shared', () => ({
   generateId: jest.fn(() => 'interaction-1'),
   query: jest.fn(),
+  queryOne: jest.fn(),
   transaction: jest.fn(),
 }));
 
@@ -26,18 +27,20 @@ jest.mock('../substrate', () => ({
   writeArtifact: jest.fn(),
 }));
 
-import { query, transaction } from '@nova/shared';
+import { query, queryOne, transaction } from '@nova/shared';
 import { novaChat } from '../nova-core';
 import { writeArtifact } from '../substrate';
 import {
   hasEconomicOwnerAuthority,
   listNexusCapabilities,
+  listNexusCapabilitiesForCaller,
   listNexusInteractions,
   nexusInteract,
   recordNexusInteractionOutcome,
 } from '../nexus-interaction';
 
 const queryMock = query as jest.Mock;
+const queryOneMock = queryOne as jest.Mock;
 const transactionMock = transaction as jest.Mock;
 const clientQueryMock = jest.fn();
 const novaChatMock = novaChat as jest.Mock;
@@ -47,6 +50,7 @@ describe('Nexus Interaction Engine', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
+    queryOneMock.mockResolvedValue(null);
     transactionMock.mockImplementation(async (fn: any) => fn({ query: clientQueryMock }));
     writeArtifactMock.mockResolvedValue('artifact-1');
     novaChatMock.mockResolvedValue({
@@ -118,6 +122,25 @@ describe('Nexus Interaction Engine', () => {
       owners,
     )).toBe(false);
     expect(hasEconomicOwnerAuthority('tenant@example.com', ['forge.approve'], owners)).toBe(false);
+  });
+
+  it('reports only the capabilities available to the authenticated caller', async () => {
+    const owners = new Set(['founder@example.com']);
+    queryOneMock.mockResolvedValueOnce({ email: 'tenant@example.com' });
+    const ordinary = await listNexusCapabilitiesForCaller('tenant-1', ['trade.read'], owners);
+    expect(ordinary.some(item => item.id === 'nova.reasoning')).toBe(true);
+    expect(ordinary.some(item => item.id.startsWith('economic.trade.'))).toBe(false);
+    expect(ordinary.some(item => item.id === 'forge.recursive_improvement')).toBe(false);
+
+    queryOneMock.mockResolvedValueOnce({ email: 'tenant@example.com' });
+    const operator = await listNexusCapabilitiesForCaller('operator-1', ['ops.admin'], owners);
+    expect(operator.some(item => item.id.startsWith('economic.trade.'))).toBe(true);
+    expect(operator.some(item => item.id === 'forge.recursive_improvement')).toBe(false);
+
+    queryOneMock.mockResolvedValueOnce({ email: 'founder@example.com' });
+    const founder = await listNexusCapabilitiesForCaller('founder-1', [], owners);
+    expect(founder.some(item => item.id.startsWith('economic.trade.'))).toBe(true);
+    expect(founder.some(item => item.id === 'forge.recursive_improvement')).toBe(true);
   });
 
   it('lists only receipts selected through the caller ownership hash', async () => {

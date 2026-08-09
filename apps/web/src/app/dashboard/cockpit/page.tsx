@@ -23,7 +23,7 @@ export default function CommandCenter() {
   const [pulse, setPulse] = useState<Pulse | null>(null);
 
   useEffect(() => {
-    fetch(`${API}/v1/agents/providers`).then(r => r.json()).then(d => { if (d?.success) setHealth(d.data); }).catch(() => {});
+    fetch(`${API}/v1/agents/providers`, { headers: { Authorization: `Bearer ${tok() || ''}` } }).then(r => r.json()).then(d => { if (d?.success) setHealth(d.data); }).catch(() => {});
     fetch(`${API}/v1/world/pulse`).then(r => r.json()).then(d => { if (d?.success) setPulse(d.data); }).catch(() => {});
   }, []);
 

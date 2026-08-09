@@ -17,18 +17,20 @@ jest.mock('../flip-card', () => ({
 }));
 
 import { query, queryOne } from '@nova/shared';
-import { generateCard } from '../ai-router';
+import { generateCard, generateChat } from '../ai-router';
 import { novaChat, requestsComposition } from '../nova-core';
 
 const queryMock = query as jest.Mock;
 const queryOneMock = queryOne as jest.Mock;
 const generateCardMock = generateCard as jest.Mock;
+const generateChatMock = generateChat as jest.Mock;
 
 describe('Nova capability interface behind Nexus', () => {
   beforeEach(() => {
     jest.clearAllMocks();
     queryMock.mockResolvedValue({ rows: [], rowCount: 1 });
     generateCardMock.mockResolvedValue({ content: 'Start with the smallest real test.', provider: 'deterministic', free: true });
+    generateChatMock.mockResolvedValue({ content: 'Your pipeline has one follow-up due.', provider: 'test-provider' });
   });
 
   it('refuses to load or append to a conversation the caller does not own', async () => {
@@ -64,5 +66,29 @@ describe('Nova capability interface behind Nexus', () => {
   it('recognizes intentions that benefit from capability composition', () => {
     expect(requestsComposition('Compare live trends and flip opportunities, then build me a plan')).toBe(true);
     expect(requestsComposition('What is the price of TSLA?')).toBe(false);
+  });
+
+  it('keeps customer names out of external business-summary prompts', async () => {
+    queryOneMock.mockResolvedValueOnce({ id: 'conversation-owned' });
+    queryMock.mockImplementation(async (sql: string) => {
+      if (sql.includes('FROM business_jobs')) {
+        return {
+          rows: [{
+            status: 'LEAD', quoted_price: 500, final_price: null,
+            follow_up_due: '2020-01-01', contact_name: 'Jane Private',
+          }],
+          rowCount: 1,
+        };
+      }
+      return { rows: [], rowCount: 1 };
+    });
+
+    await novaChat('user-1', 'conversation-owned', 'How is my business pipeline?');
+
+    const prompt = generateChatMock.mock.calls[0][0].user;
+    expect(prompt).toContain('Follow-ups due today: 1');
+    expect(prompt).not.toContain('Jane Private');
+    expect(queryMock.mock.calls.find(call => String(call[0]).includes('FROM business_jobs'))?.[0])
+      .not.toContain('contact_name');
   });
 });

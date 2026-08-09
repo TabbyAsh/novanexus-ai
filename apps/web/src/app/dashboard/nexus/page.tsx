@@ -1,8 +1,11 @@
 'use client';
 
+import Link from 'next/link';
 import { useCallback, useEffect, useMemo, useState } from 'react';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { api } from '@/lib/api';
+import { useAuthStore } from '@/lib/store';
+import { hasWorldAuthority } from '@/lib/world-authority';
 import {
   RefreshCw,
   Play,
@@ -35,6 +38,8 @@ function formatIntegrityScore(score: number | undefined | null) {
 }
 
 export default function MarketDecisionCenterPage() {
+  const { scopes, isLoading: isAuthLoading } = useAuthStore();
+  const hasPlatformAuthority = hasWorldAuthority(scopes);
   const [status, setStatus] = useState<NexusStatusPayload | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
 
@@ -97,8 +102,9 @@ export default function MarketDecisionCenterPage() {
   }, []);
 
   useEffect(() => {
+    if (isAuthLoading || !hasPlatformAuthority) return;
     load({ silent: true });
-  }, [load]);
+  }, [hasPlatformAuthority, isAuthLoading, load]);
 
   const tier = status?.nexus?.constitution?.tier as string | undefined;
   const riskState = status?.nexus?.risk?.riskState as string | undefined;
@@ -236,6 +242,31 @@ export default function MarketDecisionCenterPage() {
       setIsInitializing(false);
     }
   }, [load]);
+
+  if (isAuthLoading) {
+    return (
+      <DashboardLayout>
+        <div className="p-8 text-sm text-gray-400">Checking platform authority…</div>
+      </DashboardLayout>
+    );
+  }
+
+  if (!hasPlatformAuthority) {
+    return (
+      <DashboardLayout>
+        <div className="mx-auto max-w-2xl p-8">
+          <p className="text-xs font-bold uppercase tracking-[0.18em] text-amber-400">Platform-owner control</p>
+          <h1 className="mt-3 text-3xl font-bold text-white">This legacy market surface is restricted.</h1>
+          <p className="mt-4 leading-7 text-gray-400">
+            It operates a shared trade-only ledger and is not the customer Nexus. Use the governed Nova interaction layer instead.
+          </p>
+          <Link href="/dashboard/nova" className="mt-7 inline-flex rounded-lg bg-emerald-500 px-5 py-3 text-sm font-bold text-black">
+            Enter Nexus
+          </Link>
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>

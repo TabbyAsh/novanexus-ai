@@ -16,6 +16,7 @@ const SECTIONS = [
       'Connection data: if a private account connects an external provider, we store only the credentials and account data needed for that enabled connection. Public live-broker execution is not currently offered.',
       'Payment data: processed by Stripe. We do not store card numbers. We receive identifiers and status needed to correlate a payment or refund with an account or service receipt.',
       'Communication data: if you contact us by email, we retain that correspondence.',
+      'Nexus chat data: full messages, Nova replies, and conversation-derived titles are stored with your account. Content-redacted interaction receipts are stored separately and exclude raw chat, but the associated conversation is not content-free.',
       'Device and access data: IP addresses, browser type, and timestamps for security and fraud prevention.',
     ],
   },
@@ -35,6 +36,7 @@ const SECTIONS = [
     title: '3. Data Retention',
     items: [
       'Your account data is retained as long as your account is active.',
+      'Nexus chat retention follows the same account retention and deletion rules. A content-redacted receipt may remain only where a separate legal, security, or integrity obligation requires it.',
       'If you delete your account, personal information is removed within 30 days. Aggregated, anonymized data may be retained.',
       'Outcome and decision data is stored to calibrate your personal recommendations. You may request deletion at any time.',
     ],
@@ -46,7 +48,9 @@ const SECTIONS = [
       'Resend: email delivery infrastructure.',
       'Railway and Vercel: cloud hosting and infrastructure.',
       'Selected market-data or broker providers: used only where an explicitly labeled private, paper, sandbox, or future authorized connection is enabled.',
-      'Selected AI providers: text you submit to an AI-enabled capability may be sent to the configured provider to generate a response. Retention is governed by our configuration and the provider\'s applicable terms.',
+      'AI processing: an AI-enabled Nexus turn may send your current message, up to ten recent stored messages, and relevant tool summaries to one or more configured providers.',
+      'Configured providers may include Google Gemini, Groq, xAI, OpenAI, and Anthropic; local inference may also be configured. The provider used can vary by availability.',
+      'Provider retention depends on Nova\'s configuration and that provider\'s terms. We do not promise zero retention by external AI providers. Do not submit secrets or third-party personal information you are not authorized to share.',
     ],
   },
   {
@@ -61,8 +65,7 @@ const SECTIONS = [
     items: [
       'All data is transmitted over HTTPS.',
       'Passwords are hashed using bcrypt and never stored in plaintext.',
-      'Broker API keys are encrypted at rest.',
-      'The event log uses hash chaining to maintain audit integrity.',
+      'Private product routes use account and authority checks. No system can guarantee absolute security.',
       'If you discover a security vulnerability, contact hello@novanexus-ai.com.',
     ],
   },
@@ -72,7 +75,7 @@ const SECTIONS = [
       'Access: request a copy of your personal data at any time.',
       'Correction: update account information through the Settings page.',
       'Deletion: request deletion of your account and associated data.',
-      'Portability: export your decision cards, outcomes, and journal entries using the built-in CSV export features.',
+      'Portability: request a copy of associated personal information. Some individual tools also provide direct exports.',
       'To exercise any of these rights, email hello@novanexus-ai.com.',
     ],
   },
@@ -111,7 +114,7 @@ export default function PrivacyPage() {
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
-          <p className="text-gray-500 text-sm">Last updated: August 8, 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: August 9, 2026</p>
           <p className="text-gray-400 text-sm mt-4 leading-relaxed">
             Nova Enterprises operates NovaNexus and related services (the &quot;Platform&quot;). This policy explains what
             information we collect, how we use it, and your rights regarding that information. By using the Platform, you agree

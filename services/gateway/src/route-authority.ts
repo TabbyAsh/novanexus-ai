@@ -5,7 +5,26 @@ export type RouteScopeRule = { methods: string[]; path: string; scopes: Scope[] 
 const READ = ['GET', 'HEAD', 'OPTIONS'];
 const WRITE = ['POST', 'PUT', 'PATCH', 'DELETE'];
 
+// These routes belong to the retired trade-only Nexus implementation. They
+// operate on a shared ledger and are therefore platform controls, not tenant
+// product APIs. Keep this list centralized so authentication, ownership, and
+// scope enforcement cannot drift apart.
+export const LEGACY_NEXUS_PLATFORM_ROUTES = [
+  '/v1/nexus/status',
+  '/v1/nexus/initialize',
+  '/v1/nexus/analyze',
+  '/v1/nexus/execute',
+  '/v1/nexus/autonomous-scan',
+  '/v1/nexus/ledger',
+  '/v1/nexus/stop',
+];
+
 export const ROUTE_SCOPE_RULES: RouteScopeRule[] = [
+  ...LEGACY_NEXUS_PLATFORM_ROUTES.map(path => ({
+    methods: [...READ, ...WRITE],
+    path,
+    scopes: ['ops.admin'] as Scope[],
+  })),
   { methods: ['POST'], path: '/v1/trade/backtest', scopes: ['trade.backtest'] },
   { methods: ['POST'], path: '/v1/trade/paper', scopes: ['trade.paper.execute'] },
   { methods: ['POST'], path: '/v1/trade/live', scopes: ['trade.live.execute'] },
