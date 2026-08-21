@@ -32,7 +32,7 @@ RUN npm ci --legacy-peer-deps --ignore-scripts
 RUN npm install -g esbuild
 
 # Build workspace libs with turbo (must succeed — these are deps for everything)
-RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --filter=@nova/nexus-core --no-cache
+RUN npx turbo run build --filter=@nova/shared --filter=@nova/telemetry --filter=@nova/eventing --filter=@nova/bot-sdk --filter=@nova/nexus-core --filter=@nova/proof-core --no-cache
 
 # ==========================================================================
 # Bundle production services with esbuild

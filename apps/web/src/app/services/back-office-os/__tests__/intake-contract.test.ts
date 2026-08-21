@@ -1,5 +1,4 @@
 import {
-  buildHostedPaymentUrl,
   isCompletePilotIntake,
   parseFailedPilotReceipt,
   parseSuccessfulPilotReceipt,
@@ -50,11 +49,4 @@ describe('pilot intake response contract', () => {
     expect(isCompletePilotIntake({ ...complete, challenge: 'Too short' })).toBe(false);
   });
 
-  it('correlates an HTTPS hosted payment link using only the opaque receipt', () => {
-    const url = buildHostedPaymentUrl('https://buy.stripe.com/test?prefilled_promo_code=SAVE', receiptId);
-    expect(url).toContain(`client_reference_id=${receiptId}`);
-    expect(url).toContain('prefilled_promo_code=SAVE');
-    expect(url).not.toContain('ada%40example.com');
-    expect(buildHostedPaymentUrl('javascript:alert(1)', receiptId)).toBeNull();
-  });
 });

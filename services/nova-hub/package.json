@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@nova/nexus-core": "*",
+    "@nova/proof-core": "*",
     "@nova/shared": "*",
     "@nova/telemetry": "*",
     "@openai/codex-sdk": "^0.144.1",

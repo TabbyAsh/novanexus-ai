@@ -1,14 +1,27 @@
 import express, { Request, Response, NextFunction } from 'express';
 import Stripe from 'stripe';
 import { createLogger } from '@nova/telemetry';
-import { SERVICE_PORTS, HTTP_STATUS, ERROR_CODES, query, queryOne } from '@nova/shared';
+import { SERVICE_PORTS, HTTP_STATUS, ERROR_CODES, query, queryOne, transaction, verifyToken } from '@nova/shared';
+import {
+  PROOF_CURRENCY,
+  PROOF_PRICE_CENTS,
+  PROOF_SERVICE_CODE,
+  evaluateProofCommand,
+  proofCheckoutMatchesAuthority,
+  proofEventHash,
+  proofHash,
+  validExpectedVersion,
+  validIdempotencyKey,
+  validProofReceipt,
+  type ProofSnapshot,
+  type ProofState,
+} from '@nova/proof-core';
 import {
   checkoutMetadataMatchesAccount,
   entitlementPlanFromPriceId,
   fullyRefundedPaymentIntentFromCharge,
+  proofServiceReceiptFromMetadata,
   productionWebhookConfigurationError,
-  resolveCheckoutSelection,
-  servicePaymentReferenceFromCheckout,
   stripeStatusToEntitlementStatus,
   type CheckoutPriceMap,
 } from './billing-contract';
@@ -23,11 +36,21 @@ const STRIPE_WEBHOOK_SECRET = process.env.STRIPE_WEBHOOK_SECRET || '';
 const APP_URL = process.env.APP_URL || 'http://localhost:8080';
 const RESEND_API_KEY = process.env.RESEND_API_KEY || '';
 const EMAIL_FROM = process.env.EMAIL_FROM || 'Nova <hello@novanexus-ai.com>';
+const PLATFORM_OWNER_EMAILS = new Set(
+  [process.env.PLATFORM_OWNER_EMAILS, process.env.OWNER_EMAIL]
+    .filter(Boolean)
+    .flatMap(value => String(value).split(','))
+    .map(value => value.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 const webhookConfigurationError = productionWebhookConfigurationError(
   process.env.NODE_ENV,
   STRIPE_WEBHOOK_SECRET,
 );
+if (process.env.NODE_ENV === 'production' && !STRIPE_SECRET_KEY) {
+  throw new Error('STRIPE_SECRET_KEY is required in production');
+}
 if (webhookConfigurationError) {
   throw new Error(webhookConfigurationError);
 }
@@ -69,6 +92,220 @@ interface AuditLog {
   details: Record<string, unknown>;
   ip?: string;
   timestamp: string;
+}
+
+type ProofCheckoutRow = {
+  id: string;
+  receipt_id: string;
+  status: ProofState;
+  payment_status: 'NOT_STARTED' | 'PAID' | 'REFUNDED';
+  outcome_status: 'PENDING' | 'VERIFIED' | 'UNVERIFIED';
+  org_id: string;
+  version: number;
+  assigned_user_id: string | null;
+  next_action: string | null;
+  next_action_due_at: string | null;
+  active_scope_version: number;
+  access_confirmed_at: string | null;
+  work_started_at: string | null;
+  handoff_recorded_at: string | null;
+  risk_code: string | null;
+  checkout_generated_at: string | null;
+  checkout_scope_hash: string | null;
+  stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+  paid_at: string | null;
+  scope_id: string;
+  scope_hash: string;
+  amount_cents: number;
+  currency: string;
+};
+
+class BillingProofError extends Error {
+  constructor(readonly status: number, readonly code: string, message: string, readonly details?: unknown) {
+    super(message);
+  }
+}
+
+async function proofOperator(req: Request): Promise<{ userId: string; orgId: string } | null> {
+  const authorization = req.headers.authorization;
+  if (!authorization?.startsWith('Bearer ')) return null;
+  const payload = verifyToken(authorization.slice(7));
+  if (!payload || payload.type !== 'access' || !payload.scopes.includes('ops.admin')) return null;
+  if (payload.userId !== req.headers['x-user-id'] || payload.orgId !== req.headers['x-org-id']) return null;
+
+  if (PLATFORM_OWNER_EMAILS.size === 0) {
+    throw new BillingProofError(
+      HTTP_STATUS.SERVICE_UNAVAILABLE,
+      'PLATFORM_OWNER_NOT_CONFIGURED',
+      'Proof checkout is paused until an explicit platform owner is configured.',
+    );
+  }
+  const current = await queryOne<{ email: string; status: string; role: string }>(
+    `SELECT users.email, users.status, membership.role
+       FROM users
+       JOIN org_members AS membership
+         ON membership.user_id = users.id AND membership.org_id = $2
+      WHERE users.id = $1
+      LIMIT 1`,
+    [payload.userId, payload.orgId],
+  );
+  if (
+    !current
+    || current.status !== 'ACTIVE'
+    || current.role === 'BOT'
+    || !PLATFORM_OWNER_EMAILS.has(current.email.toLowerCase())
+  ) {
+    return null;
+  }
+  return { userId: payload.userId, orgId: payload.orgId };
+}
+
+function checkoutSnapshot(row: ProofCheckoutRow): ProofSnapshot {
+  return {
+    state: row.status,
+    paymentState: row.payment_status,
+    outcomeState: row.outcome_status,
+    version: Number(row.version),
+    assignedUserId: row.assigned_user_id,
+    nextAction: row.next_action,
+    nextActionDueAt: row.next_action_due_at,
+    activeScopeVersion: Number(row.active_scope_version),
+    accessConfirmedAt: row.access_confirmed_at,
+    handoffRecordedAt: row.handoff_recorded_at,
+    completedDeliverables: [],
+    learning: null,
+  };
+}
+
+async function appendBillingProofEvent(client: any, input: {
+  row: Pick<ProofCheckoutRow, 'id' | 'org_id' | 'status'>;
+  aggregateVersion: number;
+  actorType: 'USER' | 'SYSTEM';
+  actorId: string;
+  eventType: string;
+  payload: Record<string, unknown>;
+  idempotencyKey: string;
+  requestId: string | null;
+  occurredAt?: string;
+}): Promise<void> {
+  const prior = await client.query(
+    `SELECT sequence, event_hash FROM service_case_events
+     WHERE inquiry_id = $1 ORDER BY sequence DESC LIMIT 1`,
+    [input.row.id],
+  );
+  const sequence = Number(prior.rows[0]?.sequence || 0) + 1;
+  const previousHash = prior.rows[0]?.event_hash || '0'.repeat(64);
+  const occurredAt = input.occurredAt || new Date().toISOString();
+  const eventHash = proofEventHash({
+    previousHash,
+    caseId: input.row.id,
+    sequence,
+    type: input.eventType,
+    actorType: input.actorType,
+    actorId: input.actorId,
+    occurredAt,
+    payload: input.payload,
+  });
+  await client.query(
+    `INSERT INTO service_case_events (
+       inquiry_id, org_id, sequence, aggregate_version, actor_type, actor_id,
+       event_type, from_state, to_state, payload_json, idempotency_key,
+       request_id, previous_hash, event_hash, occurred_at
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$8,$9,$10,$11,$12,$13,$14)`,
+    [
+      input.row.id, input.row.org_id, sequence, input.aggregateVersion, input.actorType, input.actorId,
+      input.eventType, input.row.status, JSON.stringify(input.payload), input.idempotencyKey,
+      input.requestId, previousHash, eventHash, occurredAt,
+    ],
+  );
+}
+
+async function loadProofCheckout(
+  client: any,
+  receiptId: string,
+  orgId: string,
+  lock = false,
+): Promise<ProofCheckoutRow | null> {
+  const result = await client.query(
+    `SELECT inquiry.id, inquiry.receipt_id, inquiry.status, inquiry.payment_status,
+            inquiry.outcome_status, inquiry.org_id, inquiry.version, inquiry.assigned_user_id,
+            inquiry.next_action, inquiry.next_action_due_at, inquiry.active_scope_version,
+            inquiry.access_confirmed_at, inquiry.work_started_at, inquiry.handoff_recorded_at,
+            inquiry.risk_code, inquiry.checkout_generated_at, inquiry.checkout_scope_hash,
+            inquiry.stripe_checkout_session_id, inquiry.stripe_payment_intent_id, inquiry.paid_at,
+            scope.id AS scope_id, scope.scope_hash, scope.amount_cents, scope.currency
+     FROM service_inquiries AS inquiry
+     JOIN service_case_scopes AS scope
+       ON scope.inquiry_id = inquiry.id AND scope.version = inquiry.active_scope_version
+     WHERE inquiry.receipt_id = $1 AND inquiry.org_id = $2
+     ${lock ? 'FOR UPDATE OF inquiry' : ''}`,
+    [receiptId, orgId],
+  );
+  return result.rows[0] || null;
+}
+
+function proofCheckoutSessionMatchesIssuance(
+  session: Stripe.Checkout.Session,
+  row: Pick<ProofCheckoutRow, 'id' | 'receipt_id' | 'scope_hash' | 'amount_cents' | 'currency'>,
+  checkoutSessionId: string,
+): boolean {
+  return session.id === checkoutSessionId
+    && session.mode === 'payment'
+    && session.client_reference_id === row.receipt_id
+    && Number(session.amount_total) === Number(row.amount_cents)
+    && String(session.currency || '').toLowerCase() === row.currency.toLowerCase()
+    && session.metadata?.proofCaseId === row.id
+    && session.metadata?.receiptId === row.receipt_id
+    && session.metadata?.scopeHash === row.scope_hash
+    && session.metadata?.amountCents === String(Number(row.amount_cents))
+    && session.metadata?.currency === row.currency.toLowerCase()
+    && session.metadata?.serviceCode === PROOF_SERVICE_CODE;
+}
+
+type ProofCheckoutAttemptRow = {
+  command_hash: string;
+  scope_hash: string;
+  stripe_checkout_session_id: string;
+  aggregate_version: number;
+};
+
+async function loadProofCheckoutAttempt(
+  client: any,
+  inquiryId: string,
+  idempotencyKey: string,
+): Promise<ProofCheckoutAttemptRow | null> {
+  const result = await client.query(
+    `SELECT command_hash, scope_hash, stripe_checkout_session_id, aggregate_version
+       FROM service_checkout_attempts
+      WHERE inquiry_id = $1 AND idempotency_key = $2`,
+    [inquiryId, idempotencyKey],
+  );
+  return result.rows[0] || null;
+}
+
+async function recordProofCheckoutAttempt(client: any, input: {
+  inquiryId: string;
+  idempotencyKey: string;
+  commandHash: string;
+  scopeHash: string;
+  checkoutSessionId: string;
+  aggregateVersion: number;
+}): Promise<void> {
+  await client.query(
+    `INSERT INTO service_checkout_attempts (
+       inquiry_id, idempotency_key, command_hash, scope_hash,
+       stripe_checkout_session_id, aggregate_version
+     ) VALUES ($1,$2,$3,$4,$5,$6)`,
+    [
+      input.inquiryId,
+      input.idempotencyKey,
+      input.commandHash,
+      input.scopeHash,
+      input.checkoutSessionId,
+      input.aggregateVersion,
+    ],
+  );
 }
 
 // ============================================
@@ -172,6 +409,8 @@ app.get('/health', async (_req: Request, res: Response) => {
   const checks = {
     database: false,
     stripe: false,
+    stripeSecret: process.env.NODE_ENV !== 'production' || Boolean(STRIPE_SECRET_KEY),
+    webhookSignature: process.env.NODE_ENV !== 'production' || Boolean(STRIPE_WEBHOOK_SECRET),
   };
 
   try {
@@ -186,20 +425,21 @@ app.get('/health', async (_req: Request, res: Response) => {
     try {
       await stripe.balance.retrieve();
       checks.stripe = true;
-    } catch (error) {
+    } catch {
       logger.warn('Stripe connection check failed (may be expected in dev)');
     }
   } else {
     checks.stripe = true; // Not configured = ok for dev
   }
 
-  const healthy = checks.database;
+  const healthy = checks.database && checks.stripeSecret && checks.webhookSignature;
   res.status(healthy ? 200 : 503).json({
     status: healthy ? 'healthy' : 'unhealthy',
     service: 'billing',
     timestamp: new Date().toISOString(),
     checks,
     stripeConfigured: !!stripe,
+    webhookSignatureConfigured: Boolean(STRIPE_WEBHOOK_SECRET),
   });
 });
 
@@ -360,101 +600,215 @@ async function updateEntitlement(
 // Checkout Session Endpoint
 // ============================================
 
-app.post('/v1/billing/checkout-session', async (req: Request, res: Response) => {
-  const requestId = req.headers['x-request-id'] as string;
-  const userId = req.headers['x-user-id'] as string;
-  const orgId = req.headers['x-org-id'] as string;
-
-  if (!userId || !orgId) {
-    return res.status(HTTP_STATUS.UNAUTHORIZED).json({
+// The public intake never creates a payment link. An authorized operator can
+// issue exactly one server-priced checkout only after the accepted scope has
+// been committed to the Proof Desk ledger.
+app.post('/v1/billing/service-checkout', async (req: Request, res: Response) => {
+  let operator: { userId: string; orgId: string } | null;
+  try {
+    operator = await proofOperator(req);
+  } catch (error) {
+    if (error instanceof BillingProofError) {
+      return res.status(error.status).json({
+        success: false,
+        error: { code: error.code, message: error.message },
+      });
+    }
+    logger.error('Proof checkout authority verification failed', error as Error);
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
-      error: { code: ERROR_CODES.TOKEN_EXPIRED, message: 'Authentication required' },
+      error: { code: 'PROOF_AUTHORITY_UNAVAILABLE', message: 'Proof checkout authority could not be verified.' },
     });
   }
-
+  if (!operator) {
+    const authenticated = Boolean(req.headers.authorization);
+    return res.status(authenticated ? HTTP_STATUS.FORBIDDEN : HTTP_STATUS.UNAUTHORIZED).json({
+      success: false,
+      error: { code: 'PROOF_CHECKOUT_AUTHORITY_REQUIRED', message: 'Proof checkout requires operator authority.' },
+    });
+  }
   if (!stripe) {
     return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       success: false,
-      error: { code: 'STRIPE_NOT_CONFIGURED', message: 'Billing is not configured. Set STRIPE_SECRET_KEY.' },
+      error: { code: 'STRIPE_NOT_CONFIGURED', message: 'Payment checkout is unavailable.' },
     });
+  }
+
+  const receiptId = req.body?.receiptId;
+  const expectedVersion = Number(req.body?.expectedVersion);
+  const idempotencyKey = req.get('Idempotency-Key');
+  const requestId = req.get('X-Request-ID') || null;
+  if (!validProofReceipt(receiptId)) {
+    return res.status(422).json({ success: false, error: { code: 'INVALID_PROOF_RECEIPT', message: 'A valid proof receipt is required.' } });
+  }
+  if (!validExpectedVersion(expectedVersion)) {
+    return res.status(422).json({ success: false, error: { code: 'EXPECTED_VERSION_REQUIRED', message: 'Reload the proof before issuing checkout.' } });
+  }
+  if (!validIdempotencyKey(idempotencyKey)) {
+    return res.status(422).json({ success: false, error: { code: 'IDEMPOTENCY_KEY_REQUIRED', message: 'A durable idempotency key is required.' } });
   }
 
   try {
-    const selection = resolveCheckoutSelection(req.body, CHECKOUT_PRICES);
-    if (selection.ok === false) {
-      return res.status(selection.status).json({
-        success: false,
-        error: { code: selection.code, message: selection.message },
-      });
-    }
+    const result = await transaction(async client => {
+      const row = await loadProofCheckout(client, receiptId, operator.orgId, true);
+      if (!row) throw new BillingProofError(404, 'PROOF_NOT_FOUND', 'No accepted proof scope exists for that receipt.');
 
-    // Get or create entitlement to get Stripe customer ID
-    const entitlement = await getOrCreateEntitlement(userId, orgId);
-    
-    let customerId = entitlement.stripeCustomerId;
-    
-    // Create Stripe customer if needed
-    if (!customerId) {
-      const customer = await stripe.customers.create({
-        metadata: { userId, orgId },
-      });
-      customerId = customer.id;
-      await updateEntitlement(userId, { stripeCustomerId: customerId });
-    }
+      const commandHash = proofHash({ command: 'GENERATE_PAYMENT_LINK', receiptId, expectedVersion });
+      const priorAttempt = await loadProofCheckoutAttempt(client, row.id, idempotencyKey);
+      if (priorAttempt) {
+        if (priorAttempt.command_hash !== commandHash || priorAttempt.scope_hash !== row.scope_hash) {
+          throw new BillingProofError(409, 'IDEMPOTENCY_KEY_REUSED', 'That key was already used for a different checkout request.');
+        }
+        const existing = await stripe.checkout.sessions.retrieve(priorAttempt.stripe_checkout_session_id);
+        if (!proofCheckoutSessionMatchesIssuance(existing, row, priorAttempt.stripe_checkout_session_id)) {
+          throw new BillingProofError(409, 'CHECKOUT_AUTHORITY_MISMATCH', 'The original checkout no longer matches its accepted scope.');
+        }
+        if (existing.status === 'expired' || !existing.url) {
+          throw new BillingProofError(409, 'CHECKOUT_EXPIRED', 'The original checkout expired. Issue a replacement with a new idempotency key.');
+        }
+        return { sessionId: existing.id, url: existing.url, version: Number(priorAttempt.aggregate_version), idempotent: true };
+      }
 
-    // Create checkout session
-    const session = await stripe.checkout.sessions.create({
-      customer: customerId,
-      payment_method_types: ['card'],
-      line_items: [{ price: selection.priceId, quantity: 1 }],
-      mode: 'subscription',
-      success_url: `${APP_URL}/billing/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${APP_URL}/billing/cancel`,
-      subscription_data: {
-        metadata: {
-          userId,
-          orgId,
-          checkoutPlan: selection.plan,
-          checkoutInterval: selection.interval,
+      // Events created by an older deployment did not persist the exact Stripe
+      // session ID. Never guess by replaying the inquiry's current session.
+      const legacyAttempt = await client.query(
+        `SELECT 1 FROM service_case_events
+          WHERE inquiry_id = $1 AND idempotency_key = $2`,
+        [row.id, idempotencyKey],
+      );
+      if (legacyAttempt.rows[0]) {
+        throw new BillingProofError(409, 'CHECKOUT_REPLAY_UNAVAILABLE', 'The original checkout cannot be replayed safely. Issue a replacement with a new key.');
+      }
+
+      if (Number(row.version) !== expectedVersion) {
+        throw new BillingProofError(409, 'STALE_PROOF_VERSION', 'The proof changed. Reload before issuing checkout.', {
+          expected: expectedVersion,
+          current: Number(row.version),
+        });
+      }
+      const gate = evaluateProofCommand(checkoutSnapshot(row), 'GENERATE_PAYMENT_LINK');
+      if (gate.ok === false) throw new BillingProofError(gate.status, gate.code, gate.message, gate.unmet);
+
+      if (row.checkout_scope_hash === row.scope_hash && row.stripe_checkout_session_id) {
+        const existing = await stripe.checkout.sessions.retrieve(row.stripe_checkout_session_id);
+        if (existing.status !== 'expired' && existing.url) {
+          if (!proofCheckoutSessionMatchesIssuance(existing, row, row.stripe_checkout_session_id)) {
+            throw new BillingProofError(409, 'CHECKOUT_AUTHORITY_MISMATCH', 'The committed checkout no longer matches its accepted scope.');
+          }
+          await recordProofCheckoutAttempt(client, {
+            inquiryId: row.id,
+            idempotencyKey,
+            commandHash,
+            scopeHash: row.scope_hash,
+            checkoutSessionId: existing.id,
+            aggregateVersion: Number(row.version),
+          });
+          await appendBillingProofEvent(client, {
+            row,
+            aggregateVersion: Number(row.version),
+            actorType: 'USER',
+            actorId: operator.userId,
+            eventType: 'proof.payment_link_reused',
+            payload: {
+              commandHash,
+              scopeHash: row.scope_hash,
+              checkoutSessionHash: proofHash(existing.id),
+            },
+            idempotencyKey,
+            requestId,
+          });
+          return { sessionId: existing.id, url: existing.url, version: Number(row.version), idempotent: true };
+        }
+      }
+
+      const metadata = {
+        proofCaseId: row.id,
+        receiptId: row.receipt_id,
+        scopeHash: row.scope_hash,
+        amountCents: String(PROOF_PRICE_CENTS),
+        currency: PROOF_CURRENCY.toLowerCase(),
+        serviceCode: PROOF_SERVICE_CODE,
+      };
+      const stripeIdempotencyKey = `proof_${proofHash({ caseId: row.id, scopeHash: row.scope_hash, idempotencyKey }).slice(0, 48)}`;
+      const session = await stripe.checkout.sessions.create({
+        mode: 'payment',
+        payment_method_types: ['card'],
+        client_reference_id: row.receipt_id,
+        line_items: [{
+          quantity: 1,
+          price_data: {
+            currency: PROOF_CURRENCY.toLowerCase(),
+            unit_amount: PROOF_PRICE_CENTS,
+            product_data: {
+              name: 'Nova Workflow Setup Pilot',
+              description: 'One written-scope, human-delivered workflow setup. No subscription or software access.',
+            },
+          },
+        }],
+        payment_intent_data: { metadata },
+        metadata,
+        success_url: `${APP_URL}/services/workflow-setup?payment=processing`,
+        cancel_url: `${APP_URL}/services/workflow-setup?payment=cancelled`,
+      }, { idempotencyKey: stripeIdempotencyKey });
+      if (!session.url) throw new BillingProofError(502, 'CHECKOUT_URL_MISSING', 'Stripe did not return a hosted checkout URL.');
+
+      const nextVersion = Number(row.version) + 1;
+      await client.query(
+        `UPDATE service_inquiries
+         SET stripe_checkout_session_id = $2, checkout_generated_at = NOW(), checkout_scope_hash = $3,
+             version = version + 1, updated_at = NOW()
+         WHERE id = $1`,
+        [row.id, session.id, row.scope_hash],
+      );
+      await recordProofCheckoutAttempt(client, {
+        inquiryId: row.id,
+        idempotencyKey,
+        commandHash,
+        scopeHash: row.scope_hash,
+        checkoutSessionId: session.id,
+        aggregateVersion: nextVersion,
+      });
+      await appendBillingProofEvent(client, {
+        row,
+        aggregateVersion: nextVersion,
+        actorType: 'USER',
+        actorId: operator.userId,
+        eventType: 'proof.payment_link_generated',
+        payload: {
+          commandHash,
+          scopeHash: row.scope_hash,
+          amountCents: PROOF_PRICE_CENTS,
+          currency: PROOF_CURRENCY,
+          checkoutSessionHash: proofHash(session.id),
         },
-      },
-      metadata: {
-        userId,
-        orgId,
-        checkoutPlan: selection.plan,
-        checkoutInterval: selection.interval,
-      },
+        idempotencyKey,
+        requestId,
+      });
+      return { sessionId: session.id, url: session.url, version: nextVersion, idempotent: false };
     });
 
-    await auditLog({
-      userId,
-      action: 'CHECKOUT_SESSION_CREATED',
-      resource: 'billing',
-      details: {
-        sessionId: session.id,
-        plan: selection.plan,
-        interval: selection.interval,
-      },
-      ip: req.ip,
-      timestamp: new Date().toISOString(),
-    });
-
-    logger.info('Checkout session created', { sessionId: session.id, userId, requestId });
-
-    res.json({
-      success: true,
-      data: {
-        sessionId: session.id,
-        url: session.url,
-      },
-    });
+    logger.info('Governed service checkout issued', { requestId, idempotent: result.idempotent });
+    return res.json({ success: true, data: result });
   } catch (error) {
-    logger.error('Failed to create checkout session', error as Error, { requestId });
-    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
-      success: false,
-      error: { code: 'CHECKOUT_FAILED', message: 'Failed to create checkout session' },
-    });
+    if (error instanceof BillingProofError) {
+      return res.status(error.status).json({
+        success: false,
+        error: { code: error.code, message: error.message, details: error.details },
+      });
+    }
+    logger.error('Governed service checkout failed', error as Error, { requestId });
+    return res.status(500).json({ success: false, error: { code: 'PROOF_CHECKOUT_FAILED', message: 'Checkout was not committed.' } });
   }
+});
+
+app.post('/v1/billing/checkout-session', (_req: Request, res: Response) => {
+  return res.status(410).json({
+    success: false,
+    error: {
+      code: 'SELF_SERVE_CHECKOUT_DISABLED',
+      message: 'Nova subscriptions are not available for self-serve purchase. Private pilots require an accepted written scope.',
+    },
+  });
 });
 
 // A browser return URL is not proof of payment. This authenticated endpoint
@@ -630,54 +984,321 @@ app.get('/v1/billing/entitlement', async (req: Request, res: Response) => {
 // Webhook Endpoint
 // ============================================
 
-async function recordPaidServiceInquiry(session: Stripe.Checkout.Session): Promise<boolean> {
-  const payment = servicePaymentReferenceFromCheckout(session);
-  if (!payment) return false;
+type ServiceWebhookDisposition = 'PROCESSED' | 'IGNORED' | 'DUPLICATE';
 
-  const updated = await queryOne<{ receipt_id: string }>(
-    `UPDATE service_inquiries
-     SET payment_status = 'PAID',
-         stripe_checkout_session_id = $1,
-         stripe_payment_intent_id = $2,
-         paid_at = NOW()
-     WHERE receipt_id = $3
-       AND payment_status = 'NOT_STARTED'
-     RETURNING receipt_id`,
-    [payment.checkoutSessionId, payment.paymentIntentId, payment.receiptId],
+async function registerServiceWebhook(
+  client: any,
+  eventId: string,
+  eventType: string,
+  payload: unknown,
+  receiptId: string | null,
+): Promise<boolean> {
+  const inserted = await client.query(
+    `INSERT INTO service_case_webhook_events (
+       stripe_event_id, event_type, payload_hash, receipt_id, processing_status, reason
+     ) VALUES ($1,$2,$3,$4,'FAILED','PROCESSING')
+     ON CONFLICT (stripe_event_id) DO NOTHING
+     RETURNING stripe_event_id`,
+    [eventId, eventType, proofHash(payload), receiptId],
   );
-
-  logger.info('Service payment receipt processed', {
-    checkoutSessionId: payment.checkoutSessionId,
-    updated: !!updated,
-  });
-  return !!updated;
+  return Boolean(inserted.rows[0]);
 }
 
-async function recordRefundedServiceInquiry(charge: Stripe.Charge): Promise<boolean> {
-  const paymentIntentId = fullyRefundedPaymentIntentFromCharge(charge);
-  if (!paymentIntentId) return false;
-
-  const updated = await queryOne<{ receipt_id: string }>(
-    `UPDATE service_inquiries
-     SET payment_status = 'REFUNDED'
-     WHERE stripe_payment_intent_id = $1
-       AND payment_status = 'PAID'
-       AND NOT EXISTS (
-         SELECT 1
-         FROM service_inquiries AS duplicate
-         WHERE duplicate.stripe_payment_intent_id = $1
-           AND duplicate.payment_status = 'PAID'
-           AND duplicate.id <> service_inquiries.id
-       )
-     RETURNING receipt_id`,
-    [paymentIntentId],
+async function finishServiceWebhook(
+  client: any,
+  eventId: string,
+  status: 'PROCESSED' | 'IGNORED' | 'FAILED',
+  reason: string,
+  receiptId?: string | null,
+): Promise<void> {
+  await client.query(
+    `UPDATE service_case_webhook_events
+     SET processing_status = $2, reason = $3, receipt_id = COALESCE($4, receipt_id)
+     WHERE stripe_event_id = $1`,
+    [eventId, status, reason.slice(0, 160), receiptId || null],
   );
+}
 
-  logger.info('Service refund receipt processed', {
-    paymentIntentId,
-    updated: !!updated,
+async function rejectServicePayment(client: any, input: {
+  inquiry: any;
+  eventId: string;
+  session: Stripe.Checkout.Session;
+  riskCode: string;
+  reason: string;
+}): Promise<ServiceWebhookDisposition> {
+  const nextVersion = Number(input.inquiry.version) + 1;
+  await client.query(
+    `UPDATE service_inquiries
+     SET risk_code = $2, version = version + 1, updated_at = NOW()
+     WHERE id = $1`,
+    [input.inquiry.id, input.riskCode],
+  );
+  if (input.inquiry.org_id) {
+    await appendBillingProofEvent(client, {
+      row: input.inquiry,
+      aggregateVersion: nextVersion,
+      actorType: 'SYSTEM',
+      actorId: 'stripe-webhook',
+      eventType: 'proof.payment_rejected',
+      payload: {
+        reason: input.reason,
+        riskCode: input.riskCode,
+        checkoutSessionHash: proofHash(input.session.id),
+      },
+      idempotencyKey: `stripe:${input.eventId}`.slice(0, 160),
+      requestId: input.eventId,
+    });
+  }
+  await finishServiceWebhook(client, input.eventId, 'IGNORED', input.reason, input.inquiry.receipt_id);
+  return 'IGNORED';
+}
+
+async function markServiceInquiryRefunded(client: any, input: {
+  inquiry: any;
+  paymentIntentId: string;
+  eventId: string;
+  beforePaymentConfirmation: boolean;
+}): Promise<void> {
+  const riskCode = input.inquiry.work_started_at
+    ? 'REFUNDED_AFTER_WORK_START'
+    : input.beforePaymentConfirmation
+      ? 'PAYMENT_REFUNDED_BEFORE_CONFIRMATION'
+      : null;
+  const nextVersion = Number(input.inquiry.version) + 1;
+  await client.query(
+    `UPDATE service_inquiries
+     SET payment_status = 'REFUNDED', stripe_payment_intent_id = COALESCE(stripe_payment_intent_id, $2),
+         paid_at = CASE WHEN $3 THEN NULL ELSE paid_at END,
+         risk_code = COALESCE($4, risk_code),
+         next_action = CASE WHEN status NOT IN ('CLOSED','CANCELLED') THEN 'Resolve the refunded case before any further work' ELSE next_action END,
+         next_action_due_at = CASE WHEN status NOT IN ('CLOSED','CANCELLED') THEN CURRENT_DATE ELSE next_action_due_at END,
+         version = version + 1, updated_at = NOW()
+     WHERE id = $1`,
+    [input.inquiry.id, input.paymentIntentId, input.beforePaymentConfirmation, riskCode],
+  );
+  if (input.inquiry.org_id) {
+    await appendBillingProofEvent(client, {
+      row: input.inquiry,
+      aggregateVersion: nextVersion,
+      actorType: 'SYSTEM',
+      actorId: 'stripe-webhook',
+      eventType: 'proof.payment_refunded',
+      payload: {
+        paymentIntentHash: proofHash(input.paymentIntentId),
+        afterWorkStarted: Boolean(input.inquiry.work_started_at),
+        beforePaymentConfirmation: input.beforePaymentConfirmation,
+        riskCode,
+      },
+      idempotencyKey: `stripe:${input.eventId}`.slice(0, 160),
+      requestId: input.eventId,
+    });
+  }
+}
+
+async function recordPaidServiceInquiry(
+  session: Stripe.Checkout.Session,
+  eventId: string,
+  eventType: string,
+): Promise<ServiceWebhookDisposition> {
+  const receiptId = validProofReceipt(session.client_reference_id) ? session.client_reference_id : null;
+  return transaction(async client => {
+    const registered = await registerServiceWebhook(client, eventId, eventType, session, receiptId);
+    if (!registered) return 'DUPLICATE';
+    if (!receiptId) {
+      await finishServiceWebhook(client, eventId, 'IGNORED', 'INVALID_RECEIPT');
+      return 'IGNORED';
+    }
+
+    const inquiryResult = await client.query(
+      `SELECT id, receipt_id, status, payment_status, outcome_status, org_id, version,
+              assigned_user_id, next_action, next_action_due_at, active_scope_version,
+              access_confirmed_at, work_started_at, handoff_recorded_at, risk_code,
+              checkout_generated_at, checkout_scope_hash, stripe_checkout_session_id,
+              stripe_payment_intent_id, paid_at
+       FROM service_inquiries WHERE receipt_id = $1 FOR UPDATE`,
+      [receiptId],
+    );
+    const inquiry = inquiryResult.rows[0];
+    if (!inquiry) {
+      await finishServiceWebhook(client, eventId, 'IGNORED', 'UNKNOWN_RECEIPT');
+      return 'IGNORED';
+    }
+    if (!inquiry.active_scope_version || !inquiry.org_id) {
+      return rejectServicePayment(client, {
+        inquiry, eventId, session, riskCode: 'PAID_BEFORE_SCOPE', reason: 'NO_ACCEPTED_SCOPE',
+      });
+    }
+
+    const scopeResult = await client.query(
+      `SELECT id AS scope_id, scope_hash, amount_cents, currency
+       FROM service_case_scopes WHERE inquiry_id = $1 AND version = $2`,
+      [inquiry.id, inquiry.active_scope_version],
+    );
+    if (!scopeResult.rows[0]) {
+      return rejectServicePayment(client, {
+        inquiry, eventId, session, riskCode: 'SCOPE_INTEGRITY_FAILURE', reason: 'ACTIVE_SCOPE_MISSING',
+      });
+    }
+    const row = { ...inquiry, ...scopeResult.rows[0] } as ProofCheckoutRow;
+
+    if (!row.stripe_checkout_session_id || row.checkout_scope_hash !== row.scope_hash) {
+      return rejectServicePayment(client, {
+        inquiry: row, eventId, session, riskCode: 'UNISSUED_PAYMENT', reason: 'CHECKOUT_NOT_ISSUED_FOR_SCOPE',
+      });
+    }
+    const matched = proofCheckoutMatchesAuthority(session, {
+      receiptId: row.receipt_id,
+      caseId: row.id,
+      scopeHash: row.scope_hash,
+      amountCents: Number(row.amount_cents),
+      currency: row.currency,
+      checkoutSessionId: row.stripe_checkout_session_id,
+    });
+    if (matched.ok === false) {
+      return rejectServicePayment(client, {
+        inquiry: row,
+        eventId,
+        session,
+        riskCode: 'PAYMENT_AUTHORITY_MISMATCH',
+        reason: `AUTHORITY_MISMATCH_${matched.reason.toUpperCase().replace(/[^A-Z0-9]+/g, '_')}`,
+      });
+    }
+
+    // Stripe does not guarantee webhook delivery order. A full refund can be
+    // durably recorded before checkout completion binds the PaymentIntent to
+    // this inquiry; in that case the refund must win over the paid transition.
+    const pendingRefundResult = await client.query(
+      `SELECT stripe_event_id, receipt_id
+         FROM service_case_pending_refunds
+        WHERE payment_intent_id = $1 AND resolved_at IS NULL
+        FOR UPDATE`,
+      [matched.paymentIntentId],
+    );
+    const pendingRefund = pendingRefundResult.rows[0];
+    if (pendingRefund) {
+      if (row.payment_status !== 'REFUNDED') {
+        await markServiceInquiryRefunded(client, {
+          inquiry: row,
+          paymentIntentId: matched.paymentIntentId,
+          eventId: pendingRefund.stripe_event_id,
+          beforePaymentConfirmation: row.payment_status !== 'PAID',
+        });
+      }
+      await client.query(
+        `UPDATE service_case_pending_refunds
+            SET resolved_inquiry_id = $2, resolution_reason = $3, resolved_at = NOW()
+          WHERE payment_intent_id = $1 AND resolved_at IS NULL`,
+        [matched.paymentIntentId, row.id, 'REFUND_RECONCILED_ON_CHECKOUT_COMPLETION'],
+      );
+      await finishServiceWebhook(client, eventId, 'PROCESSED', 'PAYMENT_ALREADY_REFUNDED', receiptId);
+      return 'PROCESSED';
+    }
+
+    if (row.payment_status === 'PAID') {
+      const samePayment = row.stripe_checkout_session_id === matched.checkoutSessionId
+        && row.stripe_payment_intent_id === matched.paymentIntentId;
+      await finishServiceWebhook(client, eventId, samePayment ? 'PROCESSED' : 'IGNORED', samePayment ? 'ALREADY_PAID' : 'DIFFERENT_PAYMENT', receiptId);
+      return samePayment ? 'PROCESSED' : 'IGNORED';
+    }
+    if (row.payment_status !== 'NOT_STARTED' || row.status !== 'SCOPE_ACCEPTED') {
+      return rejectServicePayment(client, {
+        inquiry: row, eventId, session, riskCode: 'PAYMENT_OUT_OF_SEQUENCE', reason: 'CASE_NOT_AWAITING_PAYMENT',
+      });
+    }
+
+    const nextVersion = Number(row.version) + 1;
+    await client.query(
+      `UPDATE service_inquiries
+       SET payment_status = 'PAID', stripe_payment_intent_id = $2, paid_at = NOW(),
+           next_action = COALESCE(next_action, 'Confirm access and start the accepted work'),
+           next_action_due_at = COALESCE(next_action_due_at, CURRENT_DATE + 1),
+           risk_code = NULL, version = version + 1, updated_at = NOW()
+       WHERE id = $1`,
+      [row.id, matched.paymentIntentId],
+    );
+    await appendBillingProofEvent(client, {
+      row,
+      aggregateVersion: nextVersion,
+      actorType: 'SYSTEM',
+      actorId: 'stripe-webhook',
+      eventType: 'proof.payment_confirmed',
+      payload: {
+        scopeHash: row.scope_hash,
+        amountCents: Number(row.amount_cents),
+        currency: row.currency,
+        checkoutSessionHash: proofHash(matched.checkoutSessionId),
+        paymentIntentHash: proofHash(matched.paymentIntentId),
+      },
+      idempotencyKey: `stripe:${eventId}`.slice(0, 160),
+      requestId: eventId,
+    });
+    await finishServiceWebhook(client, eventId, 'PROCESSED', 'PAYMENT_CONFIRMED', receiptId);
+    return 'PROCESSED';
   });
-  return !!updated;
+}
+
+async function recordRefundedServiceInquiry(
+  charge: Stripe.Charge,
+  eventId: string,
+  eventType: string,
+): Promise<ServiceWebhookDisposition> {
+  const paymentIntentId = fullyRefundedPaymentIntentFromCharge(charge);
+  return transaction(async client => {
+    const registered = await registerServiceWebhook(client, eventId, eventType, charge, null);
+    if (!registered) return 'DUPLICATE';
+    if (!paymentIntentId) {
+      await finishServiceWebhook(client, eventId, 'IGNORED', 'NOT_A_FULL_REFUND');
+      return 'IGNORED';
+    }
+    const result = await client.query(
+      `SELECT id, receipt_id, status, payment_status, org_id, version, work_started_at
+       FROM service_inquiries WHERE stripe_payment_intent_id = $1 FOR UPDATE`,
+      [paymentIntentId],
+    );
+    const row = result.rows[0];
+    if (!row) {
+      let receiptId = proofServiceReceiptFromMetadata(charge.metadata);
+      if (!receiptId && charge.payment_intent && typeof charge.payment_intent === 'object') {
+        receiptId = proofServiceReceiptFromMetadata(charge.payment_intent.metadata);
+      }
+      if (!receiptId) {
+        if (!stripe) throw new Error('Stripe is required to identify an unbound service refund');
+        const paymentIntent = await stripe.paymentIntents.retrieve(paymentIntentId);
+        receiptId = proofServiceReceiptFromMetadata(paymentIntent.metadata);
+      }
+      if (!receiptId) {
+        await finishServiceWebhook(client, eventId, 'IGNORED', 'UNKNOWN_PAYMENT_INTENT');
+        return 'IGNORED';
+      }
+      await client.query(
+        `INSERT INTO service_case_pending_refunds (
+           payment_intent_id, stripe_event_id, receipt_id, payload_hash
+         ) VALUES ($1,$2,$3,$4)
+         ON CONFLICT (payment_intent_id) DO NOTHING`,
+        [paymentIntentId, eventId, receiptId, proofHash(charge)],
+      );
+      await finishServiceWebhook(client, eventId, 'PROCESSED', 'PENDING_PAYMENT_RECONCILIATION', receiptId);
+      return 'PROCESSED';
+    }
+    if (row.payment_status === 'REFUNDED') {
+      await finishServiceWebhook(client, eventId, 'PROCESSED', 'ALREADY_REFUNDED', row.receipt_id);
+      return 'PROCESSED';
+    }
+    await markServiceInquiryRefunded(client, {
+      inquiry: row,
+      paymentIntentId,
+      eventId,
+      beforePaymentConfirmation: row.payment_status !== 'PAID',
+    });
+    await finishServiceWebhook(
+      client,
+      eventId,
+      'PROCESSED',
+      row.payment_status === 'PAID' ? 'FULL_REFUND_RECORDED' : 'REFUND_RECORDED_BEFORE_CONFIRMATION',
+      row.receipt_id,
+    );
+    return 'PROCESSED';
+  });
 }
 
 app.post('/webhook', async (req: Request, res: Response) => {
@@ -712,11 +1333,9 @@ app.post('/webhook', async (req: Request, res: Response) => {
       case 'checkout.session.completed': {
         const session = event.data.object as Stripe.Checkout.Session;
         if (session.mode === 'payment') {
-          const paymentRecorded = await recordPaidServiceInquiry(session);
-          if (!paymentRecorded) {
-            logger.warn('Paid service checkout did not match a pending receipt', {
-              checkoutSessionId: session.id,
-            });
+          const disposition = await recordPaidServiceInquiry(session, event.id, event.type);
+          if (disposition === 'IGNORED') {
+            logger.warn('Service payment was rejected by proof authority', { eventId: event.id });
           }
           break;
         }
@@ -845,8 +1464,8 @@ app.post('/webhook', async (req: Request, res: Response) => {
       }
 
       case 'charge.refunded': {
-        const refundRecorded = await recordRefundedServiceInquiry(event.data.object as Stripe.Charge);
-        if (!refundRecorded) {
+        const disposition = await recordRefundedServiceInquiry(event.data.object as Stripe.Charge, event.id, event.type);
+        if (disposition === 'IGNORED') {
           logger.info('Refund event did not change a paid service receipt', { eventId: event.id });
         }
         break;

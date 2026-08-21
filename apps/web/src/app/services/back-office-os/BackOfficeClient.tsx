@@ -4,7 +4,6 @@ import { useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, CheckCircle, Send } from 'lucide-react';
 import {
-  buildHostedPaymentUrl,
   isCompletePilotIntake,
   parseFailedPilotReceipt,
   parseSuccessfulPilotReceipt,
@@ -38,9 +37,6 @@ export default function BackOfficeClient() {
   const [receipt, setReceipt] = useState<PilotInquiryReceipt | null>(null);
   const [failureReceipt, setFailureReceipt] = useState<PilotInquiryReceipt | null>(null);
   const complete = isCompletePilotIntake(form);
-  const hostedPaymentUrl = receipt
-    ? buildHostedPaymentUrl(process.env.NEXT_PUBLIC_BACK_OFFICE_STARTER_PAYMENT_URL || '', receipt.receiptId)
-    : null;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
@@ -147,19 +143,12 @@ export default function BackOfficeClient() {
                 <p className="mt-2 break-all font-mono text-sm font-bold">{receipt.receiptId}</p>
               </div>
               <p className="mt-5 text-sm leading-6 text-[#596052]">{receipt.recovery.message}</p>
-              {hostedPaymentUrl ? (
-                <div className="mt-7 border-t border-[#777d70] pt-6">
-                  <p className="mb-4 text-sm leading-6 text-[#596052]">The hosted payment link is available because the complete intake now has a durable receipt. Work still begins only after written scope acceptance.</p>
-                  <a href={hostedPaymentUrl} rel="noopener noreferrer" className="inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white">
-                    Continue to hosted payment <ArrowRight aria-hidden="true" className="ml-8 h-4 w-4" />
-                  </a>
-                  <p className="mt-4 text-xs leading-5 text-[#596052]">
-                    By paying, you agree to the <Link className="font-bold underline" href="/terms">Terms</Link> and acknowledge the <Link className="font-bold underline" href="/privacy">Privacy Policy</Link>. The payment is fully refundable on request until work begins.
-                  </p>
-                </div>
-              ) : (
-                <p className="mt-6 text-sm font-bold">No payment is requested on this page. Payment instructions are provided only if the scope is accepted.</p>
-              )}
+              <div className="mt-7 border-t border-[#777d70] pt-6">
+                <p className="text-sm font-bold">No payment is requested after intake.</p>
+                <p className="mt-2 text-sm leading-6 text-[#596052]">
+                  Nova reviews the workflow first. A server-generated $150 payment link is available only after both sides accept the exact written scope. Payment never authorizes work outside that scope.
+                </p>
+              </div>
             </div>
           ) : (
             <form

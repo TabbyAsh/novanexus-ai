@@ -15,6 +15,7 @@
     "baseUrl": "../..",
     "paths": {
       "@nova/nexus-core": ["libs/nexus-core/dist"],
+      "@nova/proof-core": ["libs/proof-core/dist"],
       "@nova/shared": ["libs/shared/dist"],
       "@nova/telemetry": ["libs/telemetry/dist"]
     }

@@ -35,6 +35,8 @@ import {
   contactRateLimitKey,
   isPublicContactPath,
 } from './contact-rate-limit';
+import { requestRateLimitKey } from './request-rate-limit';
+import { checkBillingReadiness } from './billing-readiness';
 
 const app = express();
 const logger = createLogger('gateway-service');
@@ -59,6 +61,8 @@ const SERVICE_URLS = {
 const PLATFORM_CONTROL_ROUTES = [
   '/v1/kill-switch',
   '/v1/admin',
+  '/v1/ops/proofs',
+  '/v1/billing/service-checkout',
   '/v1/ops',
   '/v1/agents/proposals',
   '/v1/agents/evals/run',
@@ -231,7 +235,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Idempotency-Key');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
 
@@ -249,24 +253,14 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   next();
 });
 
-// Rate limiting middleware (Redis-backed)
+// Bound JWT verification work before authentication. The key is derived only
+// from network identity, so attacker-controlled bearer prefixes can neither
+// create a shared global bucket nor bypass it by rotating token bytes.
 app.use(async (req: Request, res: Response, next: NextFunction) => {
+  if (!req.headers.authorization) return next();
   try {
-    const clientId = req.headers.authorization
-      ? `user:${req.headers.authorization.substring(7, 20)}`
-      : `ip:${req.ip || 'unknown'}`;
-
-    const isAuthRoute = req.path.startsWith('/v1/auth/');
-    const limit = isAuthRoute
-      ? RATE_LIMITS.AUTH_ATTEMPTS_PER_MINUTE
-      : RATE_LIMITS.API_REQUESTS_PER_MINUTE;
-
-    const result = await checkRateLimit(clientId, limit, 60);
-
-    res.setHeader('X-RateLimit-Limit', limit.toString());
-    res.setHeader('X-RateLimit-Remaining', result.remaining.toString());
-    res.setHeader('X-RateLimit-Reset', result.resetAt.toString());
-
+    const clientId = `preauth:${requestRateLimitKey(req)}`;
+    const result = await checkRateLimit(clientId, RATE_LIMITS.API_REQUESTS_PER_MINUTE, 60);
     if (!result.allowed) {
       return res.status(HTTP_STATUS.TOO_MANY_REQUESTS).json({
         success: false,
@@ -276,11 +270,9 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
         },
       });
     }
-
     next();
   } catch (error) {
-    // If Redis fails, allow the request but log it
-    logger.error('Rate limiting check failed', error as Error);
+    logger.error('Pre-authentication rate limiting check failed', error as Error);
     next();
   }
 });
@@ -317,6 +309,41 @@ app.use(async (req: Request, res: Response, next: NextFunction) => {
 
   req.auth = payload;
   next();
+});
+
+// Rate limiting middleware (Redis-backed). This runs after authentication so
+// bearer-token bytes never become an identity: verified users are isolated by
+// durable IDs, while public traffic is isolated by its network identity.
+app.use(async (req: Request, res: Response, next: NextFunction) => {
+  try {
+    const clientId = requestRateLimitKey(req);
+    const isAuthRoute = req.path.startsWith('/v1/auth/');
+    const limit = isAuthRoute
+      ? RATE_LIMITS.AUTH_ATTEMPTS_PER_MINUTE
+      : RATE_LIMITS.API_REQUESTS_PER_MINUTE;
+
+    const result = await checkRateLimit(clientId, limit, 60);
+
+    res.setHeader('X-RateLimit-Limit', limit.toString());
+    res.setHeader('X-RateLimit-Remaining', result.remaining.toString());
+    res.setHeader('X-RateLimit-Reset', result.resetAt.toString());
+
+    if (!result.allowed) {
+      return res.status(HTTP_STATUS.TOO_MANY_REQUESTS).json({
+        success: false,
+        error: {
+          code: ERROR_CODES.RATE_LIMITED,
+          message: 'Rate limit exceeded. Retry after reset window.',
+        },
+      });
+    }
+
+    next();
+  } catch (error) {
+    // If Redis fails, allow the request but log it
+    logger.error('Rate limiting check failed', error as Error);
+    next();
+  }
 });
 
 // Enforce the declarative route-scope map. Longest-prefix matching prevents a
@@ -529,12 +556,17 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-// Health check
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'healthy',
+// Railway probes this endpoint, so it must include the billing process that
+// owns payment and webhook readiness rather than reporting gateway-only liveness.
+app.get('/health', async (_req: Request, res: Response) => {
+  const billing = await checkBillingReadiness(SERVICE_URLS.billing);
+  const healthy = billing.healthy;
+
+  res.status(healthy ? HTTP_STATUS.OK : HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+    status: healthy ? 'healthy' : 'unhealthy',
     service: 'gateway',
     timestamp: new Date().toISOString(),
+    checks: { billing },
   });
 });
 
@@ -682,6 +714,9 @@ async function proxyRequestRewrite(targetUrl: string, targetPath: string, req: R
     if (req.headers.authorization) {
       headers['Authorization'] = req.headers.authorization;
     }
+    if (typeof req.headers['idempotency-key'] === 'string') {
+      headers['Idempotency-Key'] = req.headers['idempotency-key'];
+    }
 
     if (req.auth) {
       headers['X-User-ID'] = req.auth.userId;
@@ -773,6 +808,9 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
     // Forward auth header
     if (req.headers.authorization) {
       headers['Authorization'] = req.headers.authorization;
+    }
+    if (typeof req.headers['idempotency-key'] === 'string') {
+      headers['Idempotency-Key'] = req.headers['idempotency-key'];
     }
 
     // Add user context headers
@@ -1166,6 +1204,10 @@ app.all('/v1/kb*', requireScopes(['research.read']), researchUnavailable);
 app.all('/v1/proposals*', requireScopes(['research.read']), researchUnavailable);
 
 // Ops routes -> OpsBot
+app.all(['/v1/ops/proofs', '/v1/ops/proofs/*'], requireScopes(['ops.admin']), (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.novaHub, req, res);
+});
+
 app.all('/v1/ops/*', requireScopes(['ops.read']), (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.opsbot, req, res);
 });
@@ -1336,6 +1378,10 @@ app.get('/v1/billing/checkout-session/status', (req: Request, res: Response) => 
 });
 
 app.post('/v1/billing/checkout-session', (req: Request, res: Response) => {
+  proxyRequest(SERVICE_URLS.billing, req, res);
+});
+
+app.post('/v1/billing/service-checkout', requireScopes(['ops.admin']), (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.billing, req, res);
 });
 

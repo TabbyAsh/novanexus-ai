@@ -56,6 +56,7 @@ const USER_NAV = [
 // authority; Nova's capabilities remain visible and accountable.
 const ADMIN_NAV = [
   { name: 'Enter the World',    href: '/world',                   icon: '✦' },
+  { name: 'Proof Desk',         href: '/ops/proofs',              icon: '✓' },
   { name: 'Command Center',     href: '/dashboard/cockpit',       icon: '◉' },
   { name: 'Agent Workforce',    href: '/dashboard/forge-control', icon: '⚒' },
   { name: 'Operations',         href: '/dashboard/business',      icon: '◈' },

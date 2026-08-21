@@ -4,7 +4,6 @@ export interface PilotIntakeForm {
   business: string;
   challenge: string;
 }
-
 export type EmailDeliveryStatus = 'PROVIDER_ACCEPTED' | 'FAILED' | 'NOT_CONFIGURED' | 'SKIPPED';
 
 export interface PilotInquiryReceipt {
@@ -20,7 +19,6 @@ export interface PilotInquiryReceipt {
     message: string;
   };
 }
-
 function object(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' ? value as Record<string, unknown> : null;
 }
@@ -90,16 +88,4 @@ export function isCompletePilotIntake(form: PilotIntakeForm): boolean {
     && business.length <= 160
     && challenge.length >= 20
     && challenge.length <= 2000;
-}
-
-export function buildHostedPaymentUrl(baseUrl: string, receiptId: string): string | null {
-  if (!validReceiptId(receiptId)) return null;
-  try {
-    const url = new URL(baseUrl);
-    if (url.protocol !== 'https:') return null;
-    url.searchParams.set('client_reference_id', receiptId);
-    return url.toString();
-  } catch {
-    return null;
-  }
 }

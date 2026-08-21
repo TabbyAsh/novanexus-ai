@@ -3,10 +3,6 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import BackOfficeClient from '../BackOfficeClient';
 
 describe('Workflow Setup Pilot page', () => {
-  afterEach(() => {
-    delete process.env.NEXT_PUBLIC_BACK_OFFICE_STARTER_PAYMENT_URL;
-  });
-
   it('presents one bounded human-delivered $150 offer with exactly five deliverables', () => {
     const markup = renderToStaticMarkup(<BackOfficeClient />);
     expect(markup).toContain('Workflow Setup Pilot');
@@ -20,11 +16,12 @@ describe('Workflow Setup Pilot page', () => {
     expect(markup).not.toContain('Most popular');
   });
 
-  it('does not reveal an env-configured hosted payment link before a durable receipt exists', () => {
-    process.env.NEXT_PUBLIC_BACK_OFFICE_STARTER_PAYMENT_URL = 'https://buy.stripe.com/test_link';
+  it('contains no client-assembled payment link and states the enforced scope gate', () => {
     const markup = renderToStaticMarkup(<BackOfficeClient />);
     expect(markup).not.toContain('buy.stripe.com');
     expect(markup).not.toContain('Continue to hosted payment');
+    expect(markup).toContain('It is not scope acceptance, a payment, or the start of work');
+    expect(markup).toContain('Both sides must accept the written scope before work begins');
   });
 
   it('explains every minimum before the inquiry button can be enabled', () => {

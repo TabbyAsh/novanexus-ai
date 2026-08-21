@@ -43,6 +43,7 @@ import {
 } from './decision-infrastructure';
 import { ingestFlipOpportunityInput } from './nexus-ingestion';
 import { automationAllowed } from './automation-authority';
+import { createProofDeskRouter } from './proof-desk';
 import {
   SERVICE_INQUIRY_NAME,
   SERVICE_INQUIRY_SUPPORT_EMAIL,
@@ -165,6 +166,7 @@ async function runAutonomous(label: string, task: () => Promise<unknown>): Promi
 }
 
 app.use('/v1/admin', authMiddleware, platformOwnerMiddleware);
+app.use('/v1/ops/proofs', authMiddleware, platformOwnerMiddleware, createProofDeskRouter());
 
 // ============================================
 // Plan & Quota Helpers

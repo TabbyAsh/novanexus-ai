@@ -15,6 +15,12 @@ const appMock = {
 
 const expressMock: any = () => appMock;
 expressMock.json = jest.fn(() => (_req: any, _res: any, next: any) => next?.());
+const routerMock = {
+  use: jest.fn(),
+  get: jest.fn(),
+  post: jest.fn(),
+};
+expressMock.Router = jest.fn(() => routerMock);
 
 const mockQuery = jest.fn();
 const mockQueryOne = jest.fn();
@@ -26,6 +32,7 @@ jest.spyOn(global, 'setTimeout').mockImplementation((() => 0) as any);
 jest.mock('express', () => ({
   __esModule: true,
   default: expressMock,
+  Router: expressMock.Router,
 }));
 
 jest.mock('@nova/telemetry', () => ({

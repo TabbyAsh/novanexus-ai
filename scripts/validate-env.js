@@ -8,11 +8,12 @@
 const REQUIRED_VARS = [
   { name: 'DATABASE_URL', description: 'PostgreSQL connection string' },
   { name: 'JWT_SECRET', description: 'JWT signing secret (min 32 chars)' },
+  { name: 'STRIPE_SECRET_KEY', description: 'Stripe API key for the paid Workflow Setup Pilot' },
+  { name: 'STRIPE_WEBHOOK_SECRET', description: 'Stripe webhook signing secret' },
 ];
 
 const RECOMMENDED_VARS = [
   { name: 'REDIS_URL', description: 'Redis connection string (caching/rate limiting)' },
-  { name: 'STRIPE_SECRET_KEY', description: 'Stripe API key for billing' },
   { name: 'POLYGON_API_KEY', description: 'Polygon.io API key for market data' },
 ];
 

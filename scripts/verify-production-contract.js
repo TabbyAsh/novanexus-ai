@@ -97,6 +97,13 @@ for (const route of nexusInteractionRoutes) {
   }
 }
 
+if (!gateway.includes("'/v1/ops/proofs'")) {
+  failures.push('Gateway does not forward the governed Proof Desk route');
+}
+if (!gateway.includes("'/v1/billing/service-checkout'")) {
+  failures.push('Gateway does not forward operator-issued proof checkout');
+}
+
 // A reserved-but-empty service must fail honestly at the Gateway. This guards
 // against phantom routes that proxy to a port production never starts.
 if (gateway.includes('proxyRequest(SERVICE_URLS.researchbot')) {

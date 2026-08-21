@@ -40,6 +40,130 @@ interface ApiResponse<T> {
   };
   meta?: { page?: number; pageSize?: number; total?: number };
 }
+
+export type ProofState =
+  | 'RECEIVED'
+  | 'IN_REVIEW'
+  | 'SCOPE_ACCEPTED'
+  | 'IN_PROGRESS'
+  | 'DELIVERED'
+  | 'CLOSED'
+  | 'CANCELLED';
+
+export type ProofPaymentState = 'NOT_STARTED' | 'PAID' | 'REFUNDED';
+export type ProofOutcomeState = 'PENDING' | 'VERIFIED' | 'UNVERIFIED';
+export type ProofCommand =
+  | 'BEGIN_REVIEW'
+  | 'SET_NEXT_ACTION'
+  | 'RECORD_SCOPE_ACCEPTANCE'
+  | 'START_WORK'
+  | 'COMPLETE_DELIVERABLE'
+  | 'REOPEN_DELIVERABLE'
+  | 'RECORD_HANDOFF'
+  | 'RECORD_OUTCOME'
+  | 'CLOSE_CASE'
+  | 'CANCEL_CASE';
+
+export type ProofPulse = {
+  new_inquiries: number;
+  awaiting_review: number;
+  awaiting_payment: number;
+  ready_to_start: number;
+  active_work: number;
+  awaiting_outcome: number;
+  verified_outcomes: number;
+  overdue_actions: number;
+  risk_flags: number;
+  cash_collected_cents: number | string;
+};
+
+export type ProofQueueItem = {
+  id: string;
+  receipt_id: string;
+  service_code: string;
+  business: string;
+  status: ProofState;
+  payment_status: ProofPaymentState;
+  version: number;
+  next_action: string | null;
+  next_action_due_at: string | null;
+  risk_code: string | null;
+  outcome_status: ProofOutcomeState;
+  created_at: string;
+  updated_at: string;
+  age_days: number;
+};
+
+export type ProofCaseRecord = Omit<ProofQueueItem, 'age_days'> & {
+  name: string;
+  email: string;
+  challenge: string;
+  org_id: string | null;
+  assigned_user_id: string | null;
+  active_scope_version: number | null;
+  access_confirmed_at: string | null;
+  work_started_at: string | null;
+  handoff_recorded_at: string | null;
+  delivered_at: string | null;
+  outcome_json: Record<string, unknown> | string | null;
+  learning: string | null;
+  cancel_reason: string | null;
+  closed_at: string | null;
+  stripe_checkout_session_id: string | null;
+  stripe_payment_intent_id: string | null;
+  paid_at: string | null;
+  checkout_generated_at: string | null;
+  checkout_scope_hash: string | null;
+};
+
+export type ProofScope = {
+  id: string;
+  version: number;
+  target_result: string;
+  deliverables_json: Array<{ code: string; detail: string }>;
+  exclusions_json: string[];
+  required_access_json: string[];
+  delivery_target_business_days: number;
+  amount_cents: number;
+  currency: string;
+  acceptance_channel: string;
+  acceptance_reference: string;
+  accepted_by: string;
+  accepted_at: string;
+  scope_hash: string;
+  created_at: string;
+};
+
+export type ProofDeliverable = {
+  code: string;
+  label: string;
+  status: 'OPEN' | 'COMPLETE';
+  evidence_reference: string | null;
+  evidence_hash: string | null;
+  completed_at: string | null;
+  updated_at: string;
+};
+
+export type ProofTimelineEvent = {
+  sequence: number;
+  aggregate_version: number;
+  actor_type: string;
+  actor_id: string;
+  event_type: string;
+  from_state: string | null;
+  to_state: string | null;
+  payload_json: Record<string, unknown>;
+  event_hash: string;
+  occurred_at: string;
+};
+
+export type ProofCaseDetail = {
+  case: ProofCaseRecord;
+  scope: ProofScope | null;
+  deliverables: ProofDeliverable[];
+  timeline: ProofTimelineEvent[];
+  integrity: { eventCount: number; headHash: string | null; scopeHash: string | null };
+};
 type CandleIntegrity = {
   source_type: string;
   source_identifier: string;
@@ -185,10 +309,11 @@ class ApiClient {
     method: string,
     path: string,
     body?: unknown,
-    options?: { skipAuth?: boolean }
+    options?: { skipAuth?: boolean; headers?: Record<string, string> }
   ): Promise<ApiResponse<T>> {
     const headers: Record<string, string> = {
       'Content-Type': 'application/json',
+      ...options?.headers,
     };
 
     if (this.accessToken && !options?.skipAuth) {
@@ -315,6 +440,62 @@ class ApiClient {
       role: string;
       scopes: string[];
     }>('GET', '/v1/me');
+  }
+
+  // Private Proof Desk. Server-side ops.admin authorization remains authoritative.
+  async getProofDesk(params?: { status?: ProofState | ''; cursor?: string; limit?: number }) {
+    const query = new URLSearchParams();
+    if (params?.status) query.set('status', params.status);
+    if (params?.cursor) query.set('cursor', params.cursor);
+    if (params?.limit) query.set('limit', String(params.limit));
+    const suffix = query.toString() ? `?${query.toString()}` : '';
+    return this.request<{
+      pulse: ProofPulse;
+      cases: ProofQueueItem[];
+      page: { nextCursor: string | null; hasMore: boolean };
+      asOf: string;
+    }>('GET', `/v1/ops/proofs${suffix}`);
+  }
+
+  async getProofCase(receiptId: string) {
+    return this.request<ProofCaseDetail>('GET', `/v1/ops/proofs/${encodeURIComponent(receiptId)}`);
+  }
+
+  async sendProofCommand(input: {
+    receiptId: string;
+    command: ProofCommand;
+    expectedVersion: number;
+    payload?: Record<string, unknown>;
+    idempotencyKey: string;
+  }) {
+    return this.request<ProofCaseDetail & { command: { idempotent: boolean; version: number } }>(
+      'POST',
+      `/v1/ops/proofs/${encodeURIComponent(input.receiptId)}/commands`,
+      {
+        command: input.command,
+        expectedVersion: input.expectedVersion,
+        payload: input.payload || {},
+      },
+      { headers: { 'Idempotency-Key': input.idempotencyKey } },
+    );
+  }
+
+  async createProofCheckout(input: {
+    receiptId: string;
+    expectedVersion: number;
+    idempotencyKey: string;
+  }) {
+    return this.request<{
+      sessionId: string;
+      url: string;
+      version: number;
+      idempotent: boolean;
+    }>(
+      'POST',
+      '/v1/billing/service-checkout',
+      { receiptId: input.receiptId, expectedVersion: input.expectedVersion },
+      { headers: { 'Idempotency-Key': input.idempotencyKey } },
+    );
   }
 
   // Billing endpoints

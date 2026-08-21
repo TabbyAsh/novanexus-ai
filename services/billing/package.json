@@ -12,6 +12,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@nova/proof-core": "*",
     "@nova/shared": "*",
     "@nova/telemetry": "*",
     "express": "^4.18.2",

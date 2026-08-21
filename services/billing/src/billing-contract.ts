@@ -1,3 +1,5 @@
+import { PROOF_SERVICE_CODE, validProofReceipt } from '@nova/proof-core';
+
 export type CheckoutPlan = 'LITE' | 'FOUNDING' | 'FLIP_PRO';
 export type CheckoutInterval = 'monthly' | 'yearly';
 export type CheckoutKey = `${CheckoutPlan}:${CheckoutInterval}`;
@@ -138,49 +140,6 @@ export function checkoutMetadataMatchesAccount(
   return metadata?.userId === userId && metadata?.orgId === orgId;
 }
 
-const SERVICE_RECEIPT_PATTERN = /^svc_[A-Za-z0-9_-]{24}$/;
-
-export type ServicePaymentReference = {
-  receiptId: string;
-  checkoutSessionId: string;
-  paymentIntentId: string;
-};
-
-export function servicePaymentReferenceFromCheckout(session: {
-  id?: unknown;
-  mode?: unknown;
-  payment_status?: unknown;
-  client_reference_id?: unknown;
-  payment_intent?: unknown;
-}): ServicePaymentReference | null {
-  if (
-    session.mode !== 'payment'
-    || session.payment_status !== 'paid'
-    || typeof session.id !== 'string'
-    || typeof session.client_reference_id !== 'string'
-    || !SERVICE_RECEIPT_PATTERN.test(session.client_reference_id)
-  ) {
-    return null;
-  }
-
-  const paymentIntentId = typeof session.payment_intent === 'string'
-    ? session.payment_intent
-    : session.payment_intent
-      && typeof session.payment_intent === 'object'
-      && 'id' in session.payment_intent
-      && typeof (session.payment_intent as { id?: unknown }).id === 'string'
-        ? (session.payment_intent as { id: string }).id
-        : null;
-
-  if (!paymentIntentId) return null;
-
-  return {
-    receiptId: session.client_reference_id,
-    checkoutSessionId: session.id,
-    paymentIntentId,
-  };
-}
-
 export function fullyRefundedPaymentIntentFromCharge(charge: {
   refunded?: unknown;
   payment_intent?: unknown;
@@ -196,4 +155,13 @@ export function fullyRefundedPaymentIntentFromCharge(charge: {
     return (charge.payment_intent as { id: string }).id;
   }
   return null;
+}
+
+export function proofServiceReceiptFromMetadata(
+  metadata: Record<string, string> | null | undefined,
+): string | null {
+  const receiptId = metadata?.receiptId;
+  return metadata?.serviceCode === PROOF_SERVICE_CODE && validProofReceipt(receiptId)
+    ? receiptId
+    : null;
 }

@@ -18,6 +18,12 @@ describe('method-aware gateway authority', () => {
     expect(requiredScopesForRoute('GET', '/v1/agents')).toEqual(['forge.read']);
   });
 
+  it('keeps Proof Desk behind platform authority for reads and writes', () => {
+    expect(requiredScopesForRoute('GET', '/v1/ops/proofs')).toEqual(['ops.admin']);
+    expect(requiredScopesForRoute('POST', '/v1/ops/proofs/svc_123/commands')).toEqual(['ops.admin']);
+    expect(requiredScopesForRoute('POST', '/v1/billing/service-checkout')).toEqual(['ops.admin']);
+  });
+
   it('keeps every legacy trade-only Nexus route behind platform authority', () => {
     expect(LEGACY_NEXUS_PLATFORM_ROUTES).toEqual(expect.arrayContaining([
       '/v1/nexus/status',
@@ -33,6 +39,40 @@ describe('method-aware gateway authority', () => {
       expect(requiredScopesForRoute('GET', route)).toEqual(['ops.admin']);
       expect(requiredScopesForRoute('POST', route)).toEqual(['ops.admin']);
     }
+  });
+
+  it('preserves idempotency keys across the service boundary', () => {
+    const gatewaySource = fs.readFileSync(path.resolve(__dirname, '..', 'index.ts'), 'utf8');
+    const proxyRequestStart = gatewaySource.indexOf('async function proxyRequest(');
+    const routeHandlersStart = gatewaySource.indexOf('// Route Handlers', proxyRequestStart);
+    const proxyRequestSource = gatewaySource.slice(proxyRequestStart, routeHandlersStart);
+
+    expect(proxyRequestStart).toBeGreaterThan(-1);
+    expect(routeHandlersStart).toBeGreaterThan(proxyRequestStart);
+    expect(proxyRequestSource).toContain("typeof req.headers['idempotency-key'] === 'string'");
+    expect(proxyRequestSource).toContain("headers['Idempotency-Key'] = req.headers['idempotency-key']");
+  });
+
+  it('rate-limits only after bearer authentication can establish a verified identity', () => {
+    const gatewaySource = fs.readFileSync(path.resolve(__dirname, '..', 'index.ts'), 'utf8');
+    const authenticationMiddleware = gatewaySource.indexOf('// Authentication middleware');
+    const rateLimitMiddleware = gatewaySource.indexOf('// Rate limiting middleware');
+
+    expect(authenticationMiddleware).toBeGreaterThan(-1);
+    expect(rateLimitMiddleware).toBeGreaterThan(authenticationMiddleware);
+    expect(gatewaySource).not.toContain('authorization.substring');
+  });
+
+  it('bounds invalid bearer verification by network identity before authentication', () => {
+    const gatewaySource = fs.readFileSync(path.resolve(__dirname, '..', 'index.ts'), 'utf8');
+    const preAuthLimiter = gatewaySource.indexOf('// Bound JWT verification work before authentication');
+    const authenticationMiddleware = gatewaySource.indexOf('// Authentication middleware');
+    const preAuthSource = gatewaySource.slice(preAuthLimiter, authenticationMiddleware);
+
+    expect(preAuthLimiter).toBeGreaterThan(-1);
+    expect(authenticationMiddleware).toBeGreaterThan(preAuthLimiter);
+    expect(preAuthSource).toContain('`preauth:${requestRateLimitKey(req)}`');
+    expect(preAuthSource).not.toContain('substring');
   });
 
   it('never declares a legacy Nexus platform control as a public route', () => {
@@ -54,5 +94,14 @@ describe('method-aware gateway authority', () => {
     expect(publicRoutes).not.toContain("'/v1/world/'");
     expect(publicRoutes).not.toContain("'/v1/agents/providers'");
     expect(platformRoutes).toContain("'/v1/agents/providers'");
+  });
+
+  it('keeps operator-issued service checkout behind the platform-owner boundary', () => {
+    const gatewaySource = fs.readFileSync(path.resolve(__dirname, '..', 'index.ts'), 'utf8');
+    const publicRoutes = gatewaySource.match(/const PUBLIC_ROUTES = \[([\s\S]*?)\n\];/)?.[1] ?? '';
+    const platformRoutes = gatewaySource.match(/const PLATFORM_CONTROL_ROUTES = \[([\s\S]*?)\n\];/)?.[1] ?? '';
+
+    expect(publicRoutes).not.toContain("'/v1/billing/service-checkout'");
+    expect(platformRoutes).toContain("'/v1/billing/service-checkout'");
   });
 });
