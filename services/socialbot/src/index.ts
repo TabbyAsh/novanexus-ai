@@ -141,7 +141,7 @@ const bot = new BotClient(botConfig);
 
 bot.registerTaskHandler('GENERATE_CONTENT', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
   ctx.logger.info('Generating content via OpenAI');
-  const { topic, platform, tone, niche } = task.input as Record<string, string>;
+  const { topic, platform, tone, niche } = task.inputJson as Record<string, string>;
   const result = await generateContent({ topic, platform, tone, niche });
   return {
     success: true,
