@@ -1,9 +1,10 @@
 'use client';
 
+import { Suspense } from 'react';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 
-export default function BillingSuccessPage() {
+function BillingSuccessContent() {
   const searchParams = useSearchParams();
   const sessionId = searchParams.get('session_id');
 
@@ -80,5 +81,19 @@ export default function BillingSuccessPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function BillingSuccessPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4 text-gray-400">
+          Loading checkout confirmation…
+        </div>
+      }
+    >
+      <BillingSuccessContent />
+    </Suspense>
   );
 }
