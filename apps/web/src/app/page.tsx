@@ -151,7 +151,7 @@ export default function HomePage() {
         </ol>
         <Link
           href="/loop"
-          className="mt-10 inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713]"
+          className="mt-10 inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]"
         >
           Start a Nova Loop <span aria-hidden="true" className="ml-8">→</span>
         </Link>
@@ -194,7 +194,7 @@ export default function HomePage() {
           <div>
             <Link
               href="/services/workflow-setup"
-              className="inline-flex min-h-12 w-full items-center justify-between border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713]"
+              className="inline-flex min-h-12 w-full items-center justify-between border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]"
             >
               Review the workflow setup pilot <span aria-hidden="true">→</span>
             </Link>

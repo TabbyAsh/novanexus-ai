@@ -29,16 +29,17 @@ describe('Workflow Setup Pilot page', () => {
     expect(markup).not.toContain('Continue to hosted payment');
   });
 
-  it('explains every minimum before the inquiry button can be enabled', () => {
+  it('explains every minimum and keeps the submit control available for native validation', () => {
     const markup = renderToStaticMarkup(<BackOfficeClient />);
     expect(markup).toContain('All four fields are required');
     expect(markup).toContain('at least 2 characters for your name and business');
     expect(markup).toContain('a valid email address');
     expect(markup).toContain('at least 20 characters for the workflow description');
-    expect(markup).toContain('The inquiry button enables when those requirements are met');
+    expect(markup).toContain('The form identifies anything missing before an inquiry is sent');
     expect(markup).toContain('Minimum 20 characters');
     expect(markup).toContain('aria-describedby="pilot-intake-requirements"');
-    expect(markup).toContain('disabled=""');
+    expect(markup).toContain('aria-busy="false"');
+    expect(markup).not.toContain('disabled=""');
   });
 
   it('submits the revenue inquiry through the same-origin backend proxy', () => {

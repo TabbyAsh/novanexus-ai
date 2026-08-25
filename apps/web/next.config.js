@@ -1,6 +1,7 @@
 // Deployment trigger: 2026-02-10-phase71-v2
 const fs = require('fs');
 const path = require('path');
+const { securityHeaderRules } = require('./src/security-headers');
 
 // Generate build info at config evaluation time (during build)
 const BUILD_INFO = {
@@ -23,6 +24,7 @@ try {
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
+  poweredByHeader: false,
   transpilePackages: ['@nova/shared'],
   // Standalone output is for Docker/self-hosting. Vercel supplies its own
   // tracing adapter and expects the native Next build layout.
@@ -38,6 +40,9 @@ const nextConfig = {
     NEXT_PUBLIC_GIT_SHA: BUILD_INFO.gitSha,
     NEXT_PUBLIC_BUILD_TIME: BUILD_INFO.buildTime,
     NEXT_PUBLIC_BUILD_ID: BUILD_INFO.buildId,
+  },
+  async headers() {
+    return securityHeaderRules();
   },
 };
 

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { resolveBackendUrl } from '@/lib/backend-url';
+import { requestIdFor } from '@/lib/request-id';
 
 // Headers to forward from client
 const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id'];
@@ -8,9 +9,10 @@ const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-i
 const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive'];
 
 async function proxyRequest(request: NextRequest, params: { path: string[] }) {
+  const requestId = requestIdFor(request.headers.get('x-request-id'));
   const backendUrl = resolveBackendUrl();
   if (!backendUrl) {
-    return NextResponse.json(
+    const response = NextResponse.json(
       {
         success: false,
         error: {
@@ -20,6 +22,8 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
       },
       { status: 503 },
     );
+    response.headers.set('X-Request-ID', requestId);
+    return response;
   }
 
   const path = '/' + params.path.join('/');
@@ -33,11 +37,13 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
   // Build headers to forward
   const headers: Record<string, string> = {};
   FORWARD_HEADERS.forEach(name => {
+    if (name === 'x-request-id') return;
     const value = request.headers.get(name);
     if (value) {
       headers[name] = value;
     }
   });
+  headers['x-request-id'] = requestId;
 
   // Make the request to backend
   try {
@@ -60,6 +66,7 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
     });
 
     responseHeaders.set('X-Nova-Proxy', 'same-origin');
+    responseHeaders.set('X-Request-ID', requestIdFor(response.headers.get('x-request-id'), () => requestId));
 
     // Get response body
     const body = await response.arrayBuffer();
@@ -70,17 +77,19 @@ async function proxyRequest(request: NextRequest, params: { path: string[] }) {
       headers: responseHeaders,
     });
   } catch (error) {
-    console.error('[Proxy Error]', error);
-    return NextResponse.json(
+    console.error(`[Proxy Error] requestId=${requestId}`, error);
+    const response = NextResponse.json(
       { 
         success: false, 
         error: { 
           code: 'PROXY_ERROR', 
-          message: error instanceof Error ? error.message : 'Backend unreachable' 
+          message: 'The Nova backend could not be reached.'
         } 
       },
       { status: 502 }
     );
+    response.headers.set('X-Request-ID', requestId);
+    return response;
   }
 }
 
