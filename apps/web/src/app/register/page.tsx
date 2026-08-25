@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useMemo } from 'react';
+import { Suspense, useState, useEffect, useMemo } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -55,7 +55,7 @@ function calculatePasswordStrength(password: string): { score: number; label: st
   return { score, label: 'Strong', color: 'bg-green-500' };
 }
 
-export default function RegisterPage() {
+function RegisterForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const register = useAuthStore((s) => s.register);
@@ -456,5 +456,19 @@ export default function RegisterPage() {
         </div>
       </motion.div>
     </div>
+  );
+}
+
+export default function RegisterPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="min-h-screen bg-gray-950 flex items-center justify-center px-4 text-gray-400">
+          Loading registration…
+        </div>
+      }
+    >
+      <RegisterForm />
+    </Suspense>
   );
 }
