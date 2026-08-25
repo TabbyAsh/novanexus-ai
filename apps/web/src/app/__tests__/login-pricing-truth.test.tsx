@@ -2,6 +2,7 @@ import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import LoginPage from '../login/page';
 import PricingPage from '../pricing/page';
+import TermsPage from '../terms/page';
 
 jest.mock('next/navigation', () => ({
   useRouter: () => ({ push: jest.fn() }),
@@ -36,5 +37,15 @@ describe('pricing offer', () => {
     expect(markup).not.toContain('href="/register"');
     expect(markup).not.toContain('Create a free account');
     expect(markup).not.toContain('href="/#services"');
+  });
+});
+
+describe('terms offer identity', () => {
+  const markup = renderToStaticMarkup(<TermsPage />);
+
+  it('uses the exact public and Stripe product name throughout the service terms', () => {
+    expect(markup.match(/Workflow Setup Pilot/g)?.length).toBeGreaterThanOrEqual(4);
+    expect(markup).not.toContain('Starter Pilot');
+    expect(markup).toContain('Last updated: August 25, 2026');
   });
 });

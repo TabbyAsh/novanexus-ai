@@ -48,7 +48,7 @@ const SECTIONS = [
       'The public Workflow Setup Pilot costs $150 as a one-time payment. It does not renew and does not create a subscription.',
       'Submitting an intake or making payment does not by itself mean that scope has been accepted or that work has begun.',
       'Before work begins, we will confirm the accepted scope and the access or information required from you in writing.',
-      'You may request a full refund of the Starter Pilot payment at any time before work begins by emailing hello@novanexus-ai.com with your service receipt.',
+      'You may request a full refund of the Workflow Setup Pilot payment at any time before work begins by emailing hello@novanexus-ai.com with your service receipt.',
       'Once work begins, any cancellation, refund, or change is handled under the written scope agreed with you and applicable law.',
       'The seven-business-day delivery target begins only after written scope acceptance and receipt of the required access and information. It is a target, not a guarantee, and pauses while required client input is missing.',
       'Nova subscriptions are not currently offered for public self-serve purchase. Any future or privately offered recurring plan will disclose its price, renewal, cancellation, and refund terms before purchase.',
@@ -69,7 +69,7 @@ const SECTIONS = [
     items: [
       'The Platform, its code, design, content, and branding are the property of Nova Enterprises.',
       'Decision Cards you generate using the Platform based on your own input are yours. Generic template content remains our property.',
-      'You retain ownership of your business data. For an accepted Starter Pilot, you own the client-specific records and workspace we create for you; our pre-existing methods and generic templates remain ours, with a perpetual right for you to use the delivered copies in your business.',
+      'You retain ownership of your business data. For an accepted Workflow Setup Pilot, you own the client-specific records and workspace we create for you; our pre-existing methods and generic templates remain ours, with a perpetual right for you to use the delivered copies in your business.',
       'You grant us a license to use data you log (outcomes, decisions) in anonymized, aggregated form to improve the Platform.',
       'You may not copy, modify, distribute, or create derivative works of the Platform without written permission.',
     ],
@@ -133,7 +133,7 @@ export default function TermsPage() {
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Terms of Service</h1>
-          <p className="text-gray-500 text-sm">Last updated: August 8, 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: August 25, 2026</p>
           <p className="text-gray-400 text-sm mt-4 leading-relaxed">
             These Terms of Service (&quot;Terms&quot;) govern your access to and use of the services provided by Nova Enterprises,
             including the NovaNexus platform and all associated tools and products (collectively, the &quot;Platform&quot;).
