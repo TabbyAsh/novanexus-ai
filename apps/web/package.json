@@ -18,7 +18,7 @@
     "framer-motion": "^12.31.0",
     "gsap": "^3.14.2",
     "lucide-react": "^0.303.0",
-    "next": "14.0.4",
+    "next": "16.3.3",
     "nova-enterprises": "file:../..",
     "react": "^18.2.0",
     "react-dom": "^18.2.0",
@@ -32,7 +32,7 @@
     "@types/react": "^18.2.45",
     "@types/react-dom": "^18.2.18",
     "autoprefixer": "^10.4.16",
-    "postcss": "^8.4.32",
+    "postcss": "^8.5.23",
     "tailwindcss": "^3.4.0",
     "typescript": "^5.3.0"
   }
