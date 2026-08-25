@@ -839,7 +839,7 @@ export default function ScreenerPage() {
     loadCardWallet();
     // Auto-run the screener on first load so the user sees real signals
     runScan();
-  }, []); // eslint-disable-line react-hooks/exhaustive-deps
+  }, []);
 
   // Handler for adding signal to watchlist
   const handleAddToWatchlist = useCallback(async (symbol: string) => {
