@@ -6,7 +6,7 @@ import { requestIdFor } from '@/lib/request-id';
 const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id'];
 
 // Headers to NOT forward back (hop-by-hop)
-const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive'];
+const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive', 'x-powered-by'];
 
 async function proxyRequest(request: NextRequest, params: { path: string[] }) {
   const requestId = requestIdFor(request.headers.get('x-request-id'));

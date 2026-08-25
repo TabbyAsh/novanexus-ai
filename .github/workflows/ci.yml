@@ -78,6 +78,11 @@ jobs:
         env:
           PGPASSWORD: nova_ci_password
 
+      - name: Billing PostgreSQL revenue safety tests
+        run: npm test --workspace @nova/billing-service -- --runInBand revenue-safety.postgres.test.ts
+        env:
+          BILLING_POSTGRES_TESTS: 'true'
+
       - name: Build all packages
         run: npx turbo run build --no-cache
 

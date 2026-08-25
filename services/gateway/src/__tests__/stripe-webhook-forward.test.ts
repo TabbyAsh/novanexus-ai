@@ -44,6 +44,7 @@ describe('Stripe webhook forwarding', () => {
     expect(jsonParser).toBeGreaterThan(rawParser);
     expect(gatewaySource).toContain("app.post('/billing/webhook'");
     expect(gatewaySource).toContain('proxyStripeWebhook(req, res)');
+    expect(gatewaySource).toContain("app.disable('x-powered-by')");
   });
 
   it('keeps checkout verification authenticated and proxies the bearer context', () => {
