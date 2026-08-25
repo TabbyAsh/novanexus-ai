@@ -17,7 +17,7 @@
     "@nova/telemetry": "*",
     "axios": "^1.19.0",
     "express": "^4.22.2",
-    "openai": "^6.17.0",
+    "openai": "^6.49.0",
     "tsconfig-paths": "^4.2.0"
   },
   "devDependencies": {
