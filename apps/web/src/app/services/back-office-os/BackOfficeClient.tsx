@@ -44,7 +44,7 @@ export default function BackOfficeClient() {
     setStatus('submitting');
     setFailureReceipt(null);
     try {
-      const response = await fetch(`${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'}/v1/contact`, {
+      const response = await fetch('/api/proxy/v1/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ...form, service: 'Workflow Setup Pilot' }),

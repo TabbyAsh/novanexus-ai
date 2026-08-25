@@ -1,5 +1,7 @@
 import React from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
 import BackOfficeClient from '../BackOfficeClient';
 
 describe('Workflow Setup Pilot page', () => {
@@ -34,5 +36,12 @@ describe('Workflow Setup Pilot page', () => {
     expect(markup).toContain('Minimum 20 characters');
     expect(markup).toContain('aria-describedby="pilot-intake-requirements"');
     expect(markup).toContain('disabled=""');
+  });
+
+  it('submits the revenue inquiry through the same-origin backend proxy', () => {
+    const source = readFileSync(path.resolve(__dirname, '..', 'BackOfficeClient.tsx'), 'utf8');
+    expect(source).toContain("fetch('/api/proxy/v1/contact'");
+    expect(source).not.toContain('NEXT_PUBLIC_API_URL');
+    expect(source).not.toContain('up.railway.app');
   });
 });
