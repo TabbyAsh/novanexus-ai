@@ -8,6 +8,7 @@ import {
   isCompletePilotIntake,
   parseFailedPilotReceipt,
   parseSuccessfulPilotReceipt,
+  validatePilotIntake,
   type PilotInquiryReceipt,
   type PilotIntakeForm,
 } from './intake-contract';
@@ -34,17 +35,24 @@ function deliveryMessage(receipt: PilotInquiryReceipt): string {
 
 export default function BackOfficeClient() {
   const [form, setForm] = useState<PilotIntakeForm>(initialForm);
-  const [status, setStatus] = useState<'idle' | 'submitting' | 'received' | 'error'>('idle');
+  const [status, setStatus] = useState<'idle' | 'invalid' | 'submitting' | 'received' | 'error'>('idle');
+  const [attempted, setAttempted] = useState(false);
   const [receipt, setReceipt] = useState<PilotInquiryReceipt | null>(null);
   const [failureReceipt, setFailureReceipt] = useState<PilotInquiryReceipt | null>(null);
   const complete = isCompletePilotIntake(form);
+  const validationErrors = validatePilotIntake(form);
   const hostedPaymentUrl = receipt
     ? buildHostedPaymentUrl(process.env.NEXT_PUBLIC_BACK_OFFICE_STARTER_PAYMENT_URL || '', receipt.receiptId)
     : null;
 
   const submit = async (event: React.FormEvent) => {
     event.preventDefault();
-    if (!complete || status === 'submitting') return;
+    setAttempted(true);
+    if (!complete) {
+      setStatus('invalid');
+      return;
+    }
+    if (status === 'submitting') return;
     setStatus('submitting');
     setFailureReceipt(null);
     try {
@@ -65,6 +73,11 @@ export default function BackOfficeClient() {
     } catch {
       setStatus('error');
     }
+  };
+
+  const updateField = (field: keyof PilotIntakeForm, value: string) => {
+    setForm(previous => ({ ...previous, [field]: value }));
+    if (status === 'invalid') setStatus('idle');
   };
 
   return (
@@ -89,7 +102,7 @@ export default function BackOfficeClient() {
             <p className="mt-5 max-w-2xl text-lg leading-8 text-[#4d5448]">
               One bounded setup for a small operator who needs a clearer path from customer intake to open work, expenses, and follow-up.
             </p>
-            <a href="#intake" className="mt-8 inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713]">
+            <a href="#intake" className="mt-8 inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white transition hover:bg-transparent hover:text-[#141713] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]">
               Complete the pilot intake <ArrowRight aria-hidden="true" className="ml-8 h-4 w-4" />
             </a>
           </div>
@@ -138,7 +151,7 @@ export default function BackOfficeClient() {
           </div>
 
           {status === 'received' && receipt ? (
-            <div aria-live="polite" className="border-2 border-[#141713] bg-white p-6 md:p-8">
+            <div role="status" aria-live="polite" aria-atomic="true" className="border-2 border-[#141713] bg-white p-6 md:p-8">
               <CheckCircle className="h-9 w-9" aria-hidden="true" />
               <h3 className="mt-5 text-2xl font-black">Inquiry recorded.</h3>
               <p className="mt-3 leading-7 text-[#4d5448]">{deliveryMessage(receipt)}</p>
@@ -150,7 +163,7 @@ export default function BackOfficeClient() {
               {hostedPaymentUrl ? (
                 <div className="mt-7 border-t border-[#777d70] pt-6">
                   <p className="mb-4 text-sm leading-6 text-[#596052]">The hosted payment link is available because the complete intake now has a durable receipt. Work still begins only after written scope acceptance.</p>
-                  <a href={hostedPaymentUrl} rel="noopener noreferrer" className="inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white">
+                  <a href={hostedPaymentUrl} rel="noopener noreferrer" className="inline-flex min-h-12 items-center border-2 border-[#141713] bg-[#141713] px-6 py-3 text-sm font-bold text-white focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]">
                     Continue to hosted payment <ArrowRight aria-hidden="true" className="ml-8 h-4 w-4" />
                   </a>
                   <p className="mt-4 text-xs leading-5 text-[#596052]">
@@ -164,72 +177,93 @@ export default function BackOfficeClient() {
           ) : (
             <form
               onSubmit={submit}
+              onInvalidCapture={() => {
+                setAttempted(true);
+                setStatus('invalid');
+              }}
               className="border-2 border-[#141713] bg-white p-5 md:p-8"
-              noValidate
+              aria-busy={status === 'submitting'}
               aria-describedby="pilot-intake-requirements"
             >
               <p id="pilot-intake-requirements" className="mb-5 border-l-4 border-[#777d70] bg-[#f8f7f2] px-4 py-3 text-sm leading-6 text-[#4d5448]">
-                All four fields are required. Use at least 2 characters for your name and business, a valid email address, and at least 20 characters for the workflow description. The inquiry button enables when those requirements are met.
+                All four fields are required. Use at least 2 characters for your name and business, a valid email address, and at least 20 characters for the workflow description. The form identifies anything missing before an inquiry is sent.
               </p>
+              {status === 'invalid' && (
+                <div role="alert" className="mb-5 border-l-4 border-[#9b2c2c] bg-[#fff5f5] p-4 text-sm leading-6">
+                  Review the highlighted fields. Your inquiry has not been sent.
+                </div>
+              )}
               <div className="grid gap-5 sm:grid-cols-2">
                 <label className="text-sm font-bold">
                   Your name
                   <input
                     value={form.name}
-                    onChange={event => setForm(previous => ({ ...previous, name: event.target.value }))}
+                    onChange={event => updateField('name', event.target.value)}
                     minLength={2}
                     maxLength={100}
                     autoComplete="name"
                     required
-                    className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
+                    aria-invalid={attempted && Boolean(validationErrors.name)}
+                    aria-describedby={attempted && validationErrors.name ? 'pilot-name-error' : undefined}
+                    className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713] focus-visible:ring-2 focus-visible:ring-[#141713] aria-[invalid=true]:border-[#9b2c2c]"
                   />
+                  {attempted && validationErrors.name && <span id="pilot-name-error" className="mt-2 block text-xs font-normal text-[#7a1f1f]">{validationErrors.name}</span>}
                 </label>
                 <label className="text-sm font-bold">
                   Email
                   <input
                     value={form.email}
-                    onChange={event => setForm(previous => ({ ...previous, email: event.target.value }))}
+                    onChange={event => updateField('email', event.target.value)}
                     type="email"
                     maxLength={254}
                     autoComplete="email"
                     required
-                    className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
+                    aria-invalid={attempted && Boolean(validationErrors.email)}
+                    aria-describedby={attempted && validationErrors.email ? 'pilot-email-error' : undefined}
+                    className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713] focus-visible:ring-2 focus-visible:ring-[#141713] aria-[invalid=true]:border-[#9b2c2c]"
                   />
+                  {attempted && validationErrors.email && <span id="pilot-email-error" className="mt-2 block text-xs font-normal text-[#7a1f1f]">{validationErrors.email}</span>}
                 </label>
               </div>
               <label className="mt-5 block text-sm font-bold">
                 Business name and type
                 <input
                   value={form.business}
-                  onChange={event => setForm(previous => ({ ...previous, business: event.target.value }))}
+                  onChange={event => updateField('business', event.target.value)}
                   minLength={2}
                   maxLength={160}
                   required
                   placeholder="Example: local service business with recurring customer follow-up"
-                  className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713]"
+                  aria-invalid={attempted && Boolean(validationErrors.business)}
+                  aria-describedby={attempted && validationErrors.business ? 'pilot-business-error' : undefined}
+                  className="mt-2 min-h-12 w-full border border-[#777d70] bg-[#f8f7f2] px-3 font-normal outline-none focus:border-[#141713] focus-visible:ring-2 focus-visible:ring-[#141713] aria-[invalid=true]:border-[#9b2c2c]"
                 />
+                {attempted && validationErrors.business && <span id="pilot-business-error" className="mt-2 block text-xs font-normal text-[#7a1f1f]">{validationErrors.business}</span>}
               </label>
               <label className="mt-5 block text-sm font-bold">
                 Describe the current workflow, the breakdown, and the one result you need
                 <textarea
                   value={form.challenge}
-                  onChange={event => setForm(previous => ({ ...previous, challenge: event.target.value }))}
+                  onChange={event => updateField('challenge', event.target.value)}
                   minLength={20}
                   maxLength={2000}
                   rows={7}
                   required
-                  className="mt-2 w-full resize-y border border-[#777d70] bg-[#f8f7f2] px-3 py-3 font-normal leading-6 outline-none focus:border-[#141713]"
+                  aria-invalid={attempted && Boolean(validationErrors.challenge)}
+                  aria-describedby={attempted && validationErrors.challenge ? 'pilot-challenge-help pilot-challenge-error' : 'pilot-challenge-help'}
+                  className="mt-2 w-full resize-y border border-[#777d70] bg-[#f8f7f2] px-3 py-3 font-normal leading-6 outline-none focus:border-[#141713] focus-visible:ring-2 focus-visible:ring-[#141713] aria-[invalid=true]:border-[#9b2c2c]"
                 />
-                <span className="mt-1 flex justify-between gap-4 text-xs font-normal text-[#596052]">
+                <span id="pilot-challenge-help" className="mt-1 flex justify-between gap-4 text-xs font-normal text-[#596052]">
                   <span>Minimum 20 characters</span>
                   <span>{form.challenge.length}/2000</span>
                 </span>
+                {attempted && validationErrors.challenge && <span id="pilot-challenge-error" className="mt-2 block text-xs font-normal text-[#7a1f1f]">{validationErrors.challenge}</span>}
               </label>
               <button
                 type="submit"
-                disabled={!complete || status === 'submitting'}
+                disabled={status === 'submitting'}
                 aria-describedby="pilot-intake-requirements"
-                className="mt-6 flex min-h-12 w-full items-center justify-center bg-[#141713] px-5 py-3 text-sm font-bold text-white disabled:cursor-not-allowed disabled:opacity-40"
+                className="mt-6 flex min-h-12 w-full items-center justify-center bg-[#141713] px-5 py-3 text-sm font-bold text-white disabled:cursor-wait disabled:opacity-60 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#141713]"
               >
                 <Send aria-hidden="true" className="mr-3 h-4 w-4" />
                 {status === 'submitting' ? 'Recording inquiry…' : 'Record my pilot inquiry'}
@@ -240,7 +274,7 @@ export default function BackOfficeClient() {
                   {failureReceipt ? (
                     <p className="mt-1">A record exists as <span className="font-mono font-bold">{failureReceipt.receiptId}</span>, but its delivery status is uncertain. Email support with that receipt.</p>
                   ) : (
-                    <p className="mt-1">Retry once, or email support directly. No payment has been requested.</p>
+                    <p className="mt-1">Retry once, or <a className="font-bold underline" href="mailto:hello@novanexus-ai.com?subject=Workflow%20Setup%20Pilot%20intake">email support directly</a>. No payment has been requested.</p>
                   )}
                 </div>
               )}

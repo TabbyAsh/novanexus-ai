@@ -3,6 +3,7 @@ import {
   isCompletePilotIntake,
   parseFailedPilotReceipt,
   parseSuccessfulPilotReceipt,
+  validatePilotIntake,
 } from '../intake-contract';
 
 const receiptId = 'svc_abcdefghijklmnopqrstuvwx';
@@ -48,6 +49,13 @@ describe('pilot intake response contract', () => {
     expect(isCompletePilotIntake(complete)).toBe(true);
     expect(isCompletePilotIntake({ ...complete, business: '' })).toBe(false);
     expect(isCompletePilotIntake({ ...complete, challenge: 'Too short' })).toBe(false);
+    expect(validatePilotIntake({ ...complete, name: '', email: 'invalid', business: '', challenge: '' }))
+      .toEqual({
+        name: 'Enter your name using 2 to 100 characters.',
+        email: 'Enter a valid email address.',
+        business: 'Describe your business using 2 to 160 characters.',
+        challenge: 'Describe the workflow using 20 to 2,000 characters.',
+      });
   });
 
   it('correlates an HTTPS hosted payment link using only the opaque receipt', () => {

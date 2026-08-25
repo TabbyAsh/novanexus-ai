@@ -5,6 +5,8 @@ export interface PilotIntakeForm {
   challenge: string;
 }
 
+export type PilotIntakeErrors = Partial<Record<keyof PilotIntakeForm, string>>;
+
 export type EmailDeliveryStatus = 'PROVIDER_ACCEPTED' | 'FAILED' | 'NOT_CONFIGURED' | 'SKIPPED';
 
 export interface PilotInquiryReceipt {
@@ -77,19 +79,31 @@ export function parseFailedPilotReceipt(payload: unknown): PilotInquiryReceipt |
   return parseReceiptData(response.data);
 }
 
-export function isCompletePilotIntake(form: PilotIntakeForm): boolean {
+export function validatePilotIntake(form: PilotIntakeForm): PilotIntakeErrors {
   const name = form.name.trim();
   const email = form.email.trim();
   const business = form.business.trim();
   const challenge = form.challenge.trim();
-  return name.length >= 2
-    && name.length <= 100
-    && email.length <= 254
-    && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)
-    && business.length >= 2
-    && business.length <= 160
-    && challenge.length >= 20
-    && challenge.length <= 2000;
+  const errors: PilotIntakeErrors = {};
+
+  if (name.length < 2 || name.length > 100) {
+    errors.name = 'Enter your name using 2 to 100 characters.';
+  }
+  if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+    errors.email = 'Enter a valid email address.';
+  }
+  if (business.length < 2 || business.length > 160) {
+    errors.business = 'Describe your business using 2 to 160 characters.';
+  }
+  if (challenge.length < 20 || challenge.length > 2000) {
+    errors.challenge = 'Describe the workflow using 20 to 2,000 characters.';
+  }
+
+  return errors;
+}
+
+export function isCompletePilotIntake(form: PilotIntakeForm): boolean {
+  return Object.keys(validatePilotIntake(form)).length === 0;
 }
 
 export function buildHostedPaymentUrl(baseUrl: string, receiptId: string): string | null {

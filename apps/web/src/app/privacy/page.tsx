@@ -1,12 +1,19 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 
+interface LinkedPolicyItem {
+  text: string;
+  href: string;
+  linkText: string;
+  suffix: string;
+}
+
 export const metadata: Metadata = {
   title: 'Privacy Policy — Nova Enterprises',
   description: 'How Nova Enterprises collects, uses, and protects your personal information.',
 };
 
-const SECTIONS = [
+const SECTIONS: Array<{ title: string; items: Array<string | LinkedPolicyItem> }> = [
   {
     title: '1. Information We Collect',
     items: [
@@ -58,6 +65,12 @@ const SECTIONS = [
     items: [
       'We use browser local storage to maintain your login session and store some tool data locally (e.g., income tracker sessions).',
       'We use minimal cookies for authentication only. We do not use advertising cookies or third-party tracking.',
+      {
+        text: 'We use Vercel Web Analytics to measure anonymized, aggregate page views, including page or route, referrer, approximate location, browser, operating system, and device type. It does not use cookies or track visitors across websites. We do not use it for advertising and do not send form or lead contents or custom events. ',
+        href: 'https://vercel.com/docs/analytics/privacy-policy',
+        linkText: 'Read Vercel’s Web Analytics privacy and compliance details',
+        suffix: '.',
+      },
     ],
   },
   {
@@ -114,7 +127,7 @@ export default function PrivacyPage() {
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
-          <p className="text-gray-500 text-sm">Last updated: August 9, 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: August 25, 2026</p>
           <p className="text-gray-400 text-sm mt-4 leading-relaxed">
             Nova Enterprises operates NovaNexus and related services (the &quot;Platform&quot;). This policy explains what
             information we collect, how we use it, and your rights regarding that information. By using the Platform, you agree
@@ -128,7 +141,23 @@ export default function PrivacyPage() {
             <ul className="space-y-2">
               {s.items.map((item, i) => (
                 <li key={i} className="text-gray-400 text-sm leading-relaxed flex items-start gap-2">
-                  <span className="text-gray-700 mt-1.5 shrink-0">•</span>{item}
+                  <span className="text-gray-700 mt-1.5 shrink-0">•</span>
+                  <span>
+                    {typeof item === 'string' ? item : (
+                      <>
+                        {item.text}
+                        <a
+                          href={item.href}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="text-emerald-400 hover:text-emerald-300 underline"
+                        >
+                          {item.linkText}
+                        </a>
+                        {item.suffix}
+                      </>
+                    )}
+                  </span>
                 </li>
               ))}
             </ul>
