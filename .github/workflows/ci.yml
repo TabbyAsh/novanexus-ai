@@ -65,7 +65,16 @@ jobs:
         run: |
           for f in infra/migrations/*.sql; do
             echo "Running migration: $f"
-            psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+            if grep -qF -- '-- nova:maintenance-required' "$f"; then
+              # This Postgres service is ephemeral and has no legacy workers.
+              # Authorize only this psql session; production rolling startup
+              # continues to refuse maintenance migrations.
+              psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 \
+                -c "SELECT set_config('nova.maintenance_mode', 'on', false)" \
+                -f "$f"
+            else
+              psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
+            fi
           done
         env:
           PGPASSWORD: nova_ci_password

@@ -91,6 +91,7 @@ module.exports = {
       },
       wait_ready: true,
       listen_timeout: 10000,
+      kill_timeout: 10000,
     },
     {
       name: 'marketdata',
@@ -131,6 +132,7 @@ module.exports = {
       },
       wait_ready: true,
       listen_timeout: 10000,
+      kill_timeout: 10000,
     },
     {
       name: 'storebot',
@@ -145,6 +147,7 @@ module.exports = {
       },
       wait_ready: true,
       listen_timeout: 10000,
+      kill_timeout: 10000,
     },
     {
       name: 'commercedata',

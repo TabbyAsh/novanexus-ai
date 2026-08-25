@@ -4,6 +4,8 @@ import {
   BotClient,
   createBotConfig,
   createBotHealthRoutes,
+  installBotShutdownHandlers,
+  startRegisteredBotHttpService,
   TaskDefinition,
   TaskContext,
   TaskResult,
@@ -100,12 +102,16 @@ const botConfig = createBotConfig('storebot', [
 const bot = new BotClient(botConfig);
 
 bot.registerTaskHandler('CHECK_INVENTORY', async (_task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   ctx.logger.info('Checking inventory levels');
   await ctx.reportProgress(50, 'Analyzing inventory...');
-  
+  ctx.throwIfCancelled();
+
   const alerts = await checkInventory();
-  
+  ctx.throwIfCancelled();
+
   for (const alert of alerts) {
+    ctx.throwIfCancelled();
     await ctx.emit('INVENTORY_ALERT', { ...alert });
   }
   
@@ -117,11 +123,14 @@ bot.registerTaskHandler('CHECK_INVENTORY', async (_task: TaskDefinition, ctx: Ta
 });
 
 bot.registerTaskHandler('ANALYZE_PRICING', async (_task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   ctx.logger.info('Analyzing pricing');
   await ctx.reportProgress(50, 'Computing recommendations...');
-  
+  ctx.throwIfCancelled();
+
   const recommendations = await analyzePricing();
-  
+  ctx.throwIfCancelled();
+
   return {
     success: true,
     output: { recommendations, analyzedAt: nowTimestamp() },
@@ -789,18 +798,23 @@ function formatFlip(row: any) {
 // ============================================================================
 
 async function main() {
-  app.listen(PORT, () => logger.info(`StoreBot API started on port ${PORT}`));
-  
-  try {
-    await bot.start();
-    logger.info('StoreBot connected to orchestrator');
-  } catch (error) {
-    logger.warn('Running in standalone mode', { error });
-  }
+  // Do not expose a listener or notify PM2 until registration succeeds.
+  await startRegisteredBotHttpService(bot, () => new Promise<void>((resolve, reject) => {
+    const httpServer = app.listen(PORT);
+    httpServer.once('error', reject);
+    httpServer.once('listening', () => resolve());
+  }));
+  logger.info(`StoreBot API started on port ${PORT}`);
+  logger.info('StoreBot connected to orchestrator');
 }
 
-process.on('SIGTERM', async () => { await bot.stop(); process.exit(0); });
-process.on('SIGINT', async () => { await bot.stop(); process.exit(0); });
+installBotShutdownHandlers(bot, { logger });
 
-main();
+if (process.env.NODE_ENV !== 'test') {
+  void main().catch(async error => {
+    logger.error('StoreBot startup failed', error as Error);
+    await bot.stop().catch(stopError => logger.warn('StoreBot startup cleanup failed', { error: stopError }));
+    process.exit(1);
+  });
+}
 export default app;

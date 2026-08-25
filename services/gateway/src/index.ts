@@ -23,6 +23,7 @@ import type {
   RiskLevel,
   NovaCardRow,
 } from '@nova/shared';
+import { checkRequiredServices } from './aggregate-health';
 
 const app = express();
 const logger = createLogger('gateway-service');
@@ -442,11 +443,20 @@ app.use((req: Request, _res: Response, next: NextFunction) => {
   next();
 });
 
-// Health check
-app.get('/health', (_req: Request, res: Response) => {
-  res.json({
-    status: 'healthy',
+// Railway checks the gateway, so gateway health must represent the minimum
+// usable monolith rather than merely proving that this HTTP listener is alive.
+app.get('/health', async (_req: Request, res: Response) => {
+  const checks = await checkRequiredServices({
+    orchestrator: SERVICE_URLS.orchestrator,
+    tradebot: SERVICE_URLS.tradebot,
+    storebot: SERVICE_URLS.storebot,
+    socialbot: SERVICE_URLS.socialbot,
+  });
+  const healthy = Object.values(checks).every(check => check.ok);
+  res.status(healthy ? HTTP_STATUS.OK : HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+    status: healthy ? 'healthy' : 'unhealthy',
     service: 'gateway',
+    checks,
     timestamp: new Date().toISOString(),
   });
 });
@@ -1585,6 +1595,7 @@ app.use((err: Error, _req: Request, res: Response, _next: NextFunction) => {
 // Start server
 app.listen(PORT, () => {
   logger.info(`Gateway service started on port ${PORT}`);
+  if (typeof process.send === 'function') process.send('ready');
 });
 
 export default app;

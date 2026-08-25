@@ -23,6 +23,14 @@ import type {
   JWTPayload,
   KillSwitchState,
 } from '@nova/shared';
+import {
+  acknowledgeTaskClaim,
+  claimTasks,
+  completeTaskClaim,
+  renewTaskLease,
+  updateTaskProgress,
+  type TaskClaimIdentity,
+} from './task-claim';
 
 const app = express();
 const logger = createLogger('orchestrator-service');
@@ -40,12 +48,12 @@ const GOAL_TRANSITIONS: Record<GoalStatus, GoalStatus[]> = {
 };
 
 const TASK_TRANSITIONS: Record<TaskStatus, TaskStatus[]> = {
-  QUEUED: ['RUNNING', 'FAILED'],
+  QUEUED: ['FAILED'],
   RUNNING: ['DONE', 'NEEDS_APPROVAL', 'FAILED', 'RETRYING'],
-  NEEDS_APPROVAL: ['RUNNING', 'FAILED'],
+  NEEDS_APPROVAL: ['QUEUED', 'FAILED'],
   DONE: [],
   FAILED: ['RETRYING', 'QUEUED'],
-  RETRYING: ['RUNNING', 'FAILED'],
+  RETRYING: ['QUEUED', 'FAILED'],
 };
 
 app.use(express.json());
@@ -125,10 +133,32 @@ async function setKillSwitchState(state: KillSwitchState): Promise<void> {
   );
 }
 
+async function assertTaskClaimSchemaReady(): Promise<void> {
+  // Direct column references fail closed if the maintenance migration has not
+  // been applied. The invariant check prevents an accidentally partial schema
+  // from advertising readiness to bots or Railway.
+  await query(`
+    SELECT claimed_by_bot_id, claim_generation, claim_token, lease_expires_at
+    FROM tasks
+    LIMIT 0
+  `);
+  await query('SELECT claim_generation FROM task_runs LIMIT 0');
+  const invariant = await queryOne<{ present: boolean }>(`
+    SELECT EXISTS (
+      SELECT 1
+      FROM pg_constraint
+      WHERE conname = 'tasks_running_claim_required'
+        AND conrelid = 'tasks'::regclass
+    ) AS present
+  `);
+  if (!invariant?.present) throw new Error('Task-claim schema invariant is missing');
+}
+
 // Health check
 app.get('/health', async (_req: Request, res: Response) => {
   try {
     await query('SELECT 1');
+    await assertTaskClaimSchemaReady();
     const killSwitch = await getKillSwitchState();
     res.json({
       status: 'healthy',
@@ -140,7 +170,7 @@ app.get('/health', async (_req: Request, res: Response) => {
     res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
       status: 'unhealthy',
       service: 'orchestrator',
-      error: 'Database connection failed',
+      error: 'Database or task-claim schema unavailable',
     });
   }
 });
@@ -536,6 +566,16 @@ app.patch('/v1/tasks/:id/status', async (req: Request, res: Response) => {
       });
     }
 
+    if (newStatus === 'RUNNING') {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: {
+          code: ERROR_CODES.INVALID_INPUT,
+          message: 'RUNNING is assigned only by the task-claim lease; resume work as QUEUED',
+        },
+      });
+    }
+
     const current = await queryOne<{ status: string; goal_id: string }>(
       'SELECT status, goal_id FROM tasks WHERE id = $1 AND org_id = $2',
       [req.params.id, auth.orgId]
@@ -561,14 +601,29 @@ app.patch('/v1/tasks/:id/status', async (req: Request, res: Response) => {
 
     if (output) {
       await query(
-        'UPDATE tasks SET status = $1, output_json = $2, updated_at = NOW() WHERE id = $3',
+        `UPDATE tasks
+         SET status = $1,
+             output_json = $2,
+             claimed_by_bot_id = NULL,
+             claim_token = NULL,
+             claim_acknowledged_at = NULL,
+             lease_expires_at = NULL,
+             updated_at = NOW()
+         WHERE id = $3`,
         [newStatus, JSON.stringify(output), req.params.id]
       );
     } else {
-      await query('UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2', [
-        newStatus,
-        req.params.id,
-      ]);
+      await query(
+        `UPDATE tasks
+         SET status = $1,
+             claimed_by_bot_id = NULL,
+             claim_token = NULL,
+             claim_acknowledged_at = NULL,
+             lease_expires_at = NULL,
+             updated_at = NOW()
+         WHERE id = $2`,
+        [newStatus, req.params.id]
+      );
     }
 
     const eventType =
@@ -675,10 +730,19 @@ app.post('/v1/approvals/:id/approve', async (req: Request, res: Response) => {
       [JSON.stringify({ approvedBy: auth.userId, ...req.body }), req.params.id]
     );
 
-    // Resume the task
-    await query("UPDATE tasks SET status = 'RUNNING', updated_at = NOW() WHERE id = $1", [
-      approval.task_id,
-    ]);
+    // Resume by requeueing. Only the atomic claim path may create RUNNING work.
+    await query(
+      `UPDATE tasks
+       SET status = 'QUEUED',
+           claimed_by_bot_id = NULL,
+           claim_token = NULL,
+           claim_acknowledged_at = NULL,
+           lease_expires_at = NULL,
+           claim_available_at = NOW(),
+           updated_at = NOW()
+       WHERE id = $1`,
+      [approval.task_id]
+    );
 
     emitEvent(auth.orgId, 'USER', auth.userId, EVENT_TYPES.APPROVAL_RESOLVED, {
       approvalId: req.params.id,
@@ -790,7 +854,14 @@ app.post('/v1/kill-switch/enable', async (req: Request, res: Response) => {
 
     // Cancel all running tasks
     await query(
-      `UPDATE tasks SET status = 'FAILED', updated_at = NOW() WHERE org_id = $1 AND status IN ('QUEUED', 'RUNNING')`,
+      `UPDATE tasks
+       SET status = 'FAILED',
+           claimed_by_bot_id = NULL,
+           claim_token = NULL,
+           claim_acknowledged_at = NULL,
+           lease_expires_at = NULL,
+           updated_at = NOW()
+       WHERE org_id = $1 AND status IN ('QUEUED', 'RUNNING')`,
       [auth.orgId]
     );
 
@@ -873,6 +944,7 @@ const CANONICAL_BOT_TYPES = [
 ] as const;
 
 type CanonicalBotType = typeof CANONICAL_BOT_TYPES[number];
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function normalizeBotType(input: string): { normalized: CanonicalBotType; wasNormalized: boolean } | null {
   if (!input) return null;
@@ -890,6 +962,39 @@ function normalizeBotType(input: string): { normalized: CanonicalBotType; wasNor
 
   if (!normalized) return null;
   return { normalized, wasNormalized: raw !== normalized };
+}
+
+function parseTaskClaimIdentity(
+  taskId: unknown,
+  botId: unknown,
+  claimToken: unknown,
+  claimGeneration: unknown,
+): TaskClaimIdentity | null {
+  const generation = Number(claimGeneration);
+  if (
+    typeof taskId !== 'string'
+    || typeof botId !== 'string'
+    || typeof claimToken !== 'string'
+    || !taskId
+    || !botId
+    || !claimToken
+    || !UUID_PATTERN.test(claimToken)
+    || !Number.isSafeInteger(generation)
+    || generation < 1
+  ) {
+    return null;
+  }
+
+  return { taskId, botId, claimToken, claimGeneration: generation };
+}
+
+function taskClaimIdentityFromHeaders(req: Request, taskId: string): TaskClaimIdentity | null {
+  return parseTaskClaimIdentity(
+    taskId,
+    req.headers['x-bot-id'],
+    req.headers['x-task-claim-token'],
+    req.headers['x-task-claim-generation'],
+  );
 }
 
 export interface BotRegistration {
@@ -1036,7 +1141,7 @@ app.post('/v1/bots/:id/heartbeat', async (req: Request, res: Response) => {
       });
     }
 
-    const { status } = req.body;
+    const { status, currentTask } = req.body;
 
     const result = await queryOne<any>(
       `UPDATE bots SET last_heartbeat = NOW(), status = COALESCE($1, status), updated_at = NOW()
@@ -1051,7 +1156,41 @@ app.post('/v1/bots/:id/heartbeat', async (req: Request, res: Response) => {
       });
     }
 
-    res.json({ success: true, data: { lastHeartbeat: result.last_heartbeat } });
+    // Heartbeats may renew only the single acknowledged task the worker says it
+    // is currently executing. A lost claim response is therefore never renewed.
+    let renewedTask: { id: string; lease_expires_at: string } | null = null;
+    if (currentTask !== undefined && currentTask !== null) {
+      const identity = parseTaskClaimIdentity(
+        currentTask.id,
+        botId,
+        currentTask.claimToken,
+        currentTask.claimGeneration,
+      );
+      if (!identity) {
+        return res.status(HTTP_STATUS.BAD_REQUEST).json({
+          success: false,
+          error: { code: ERROR_CODES.INVALID_INPUT, message: 'Invalid current task claim identity' },
+        });
+      }
+
+      renewedTask = await renewTaskLease<{ id: string; lease_expires_at: string }>(query, identity);
+      if (!renewedTask) {
+        return res.status(HTTP_STATUS.CONFLICT).json({
+          success: false,
+          error: { code: 'TASK_CLAIM_STALE', message: 'Current task lease is stale or expired' },
+        });
+      }
+    }
+
+    res.json({
+      success: true,
+      data: {
+        lastHeartbeat: result.last_heartbeat,
+        currentTask: renewedTask
+          ? { id: renewedTask.id, leaseExpiresAt: renewedTask.lease_expires_at }
+          : null,
+      },
+    });
   } catch (error) {
     logger.error('Heartbeat failed', error as Error);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
@@ -1064,7 +1203,25 @@ app.post('/v1/bots/:id/heartbeat', async (req: Request, res: Response) => {
 // DELETE /v1/bots/:id - Unregister a bot
 app.delete('/v1/bots/:id', async (req: Request, res: Response) => {
   try {
-    const result = await query('DELETE FROM bots WHERE id = $1 RETURNING id', [req.params.id]);
+    const result = await transaction(async (client) => {
+      // Preserve the remaining lease as a requeue delay before removing the FK
+      // owner. This keeps the RUNNING invariant valid and avoids an immediate
+      // duplicate if the worker completed a side effect but lost its response.
+      await client.query(
+        `UPDATE tasks
+         SET status = 'QUEUED',
+             claim_available_at = GREATEST(COALESCE(lease_expires_at, NOW()), NOW()),
+             claimed_by_bot_id = NULL,
+             claim_token = NULL,
+             claim_acknowledged_at = NULL,
+             lease_expires_at = NULL,
+             updated_at = NOW()
+         WHERE claimed_by_bot_id = $1
+           AND status = 'RUNNING'`,
+        [req.params.id],
+      );
+      return client.query('DELETE FROM bots WHERE id = $1 RETURNING id', [req.params.id]);
+    });
 
     if (result.rowCount === 0) {
       return res.status(HTTP_STATUS.NOT_FOUND).json({
@@ -1080,6 +1237,42 @@ app.delete('/v1/bots/:id', async (req: Request, res: Response) => {
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
       success: false,
       error: { code: 'UNREGISTER_FAILED', message: 'Failed to unregister bot' },
+    });
+  }
+});
+
+// POST /v1/bots/:id/tasks/:taskId/ack - Accept a delivered claim before work.
+app.post('/v1/bots/:id/tasks/:taskId/ack', async (req: Request, res: Response) => {
+  try {
+    const identity = taskClaimIdentityFromHeaders(req, req.params.taskId);
+    if (!identity || identity.botId !== req.params.id) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Valid bot and task claim headers are required' },
+      });
+    }
+
+    const acknowledged = await acknowledgeTaskClaim(query, identity);
+    if (!acknowledged) {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        error: { code: 'TASK_CLAIM_STALE', message: 'Task claim is stale or expired' },
+      });
+    }
+
+    res.json({
+      success: true,
+      data: {
+        taskId: identity.taskId,
+        acknowledged: true,
+        leaseExpiresAt: acknowledged.lease_expires_at,
+      },
+    });
+  } catch (error) {
+    logger.error('Failed to acknowledge task claim', error as Error);
+    res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
+      success: false,
+      error: { code: 'TASK_ACK_FAILED', message: 'Failed to acknowledge task claim' },
     });
   }
 });
@@ -1106,26 +1299,26 @@ app.get('/v1/bots/:id/tasks', async (req: Request, res: Response) => {
       });
     }
 
-    // Find queued tasks that can be assigned to this bot type
-    const tasks = await query<any>(
-      `SELECT t.* FROM tasks t
-       WHERE t.status = 'QUEUED'
-       AND (t.assigned_to_bot IS NULL OR t.assigned_to_bot = $1)
-       ORDER BY t.created_at ASC
-       LIMIT 5`,
-      [bot.bot_type]
-    );
+    // Claim and return one task atomically. The SDK processes one task per poll,
+    // and claiming a larger batch would lease work it has not started yet.
+    const tasks = await claimTasks<any>(query, {
+      botId,
+      botType: bot.bot_type,
+    });
 
-    const result = tasks.rows.map((row) => ({
+    const result = tasks.map((row) => ({
       id: row.id,
       goalId: row.goal_id,
-      botId: row.assigned_to_bot,
+      botId: row.claimed_by_bot_id,
       type: row.type,
       priority: row.priority || 0,
       status: row.status,
       inputJson: parseJsonValue<Record<string, unknown>>(row.input_json, {}),
       createdAt: row.created_at,
       startedAt: row.started_at,
+      leaseExpiresAt: row.lease_expires_at,
+      claimToken: row.claim_token,
+      claimGeneration: Number(row.claim_generation),
     }));
 
     res.json(result);
@@ -1143,24 +1336,22 @@ app.post('/v1/tasks/:id/progress', async (req: Request, res: Response) => {
   try {
     const { progress, message } = req.body;
 
-    const task = await queryOne<any>('SELECT * FROM tasks WHERE id = $1', [req.params.id]);
-    if (!task) {
-      return res.status(HTTP_STATUS.NOT_FOUND).json({
+    const identity = taskClaimIdentityFromHeaders(req, req.params.id);
+    if (!identity) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
         success: false,
-        error: { code: ERROR_CODES.NOT_FOUND, message: 'Task not found' },
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Valid task claim headers are required' },
       });
     }
 
-    // Update task with progress (store in output_json for now)
     const progressData = { progress, message, updatedAt: new Date().toISOString() };
-    await query(
-      `UPDATE tasks SET 
-       output_json = jsonb_set(COALESCE(output_json::jsonb, '{}'::jsonb), '{progress}', $1::jsonb),
-       status = CASE WHEN status = 'QUEUED' THEN 'RUNNING' ELSE status END,
-       updated_at = NOW()
-       WHERE id = $2`,
-      [JSON.stringify(progressData), req.params.id]
-    );
+    const updated = await updateTaskProgress(query, identity, JSON.stringify(progressData));
+    if (!updated) {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        error: { code: 'TASK_CLAIM_STALE', message: 'Task claim is stale or expired' },
+      });
+    }
 
     res.json({ success: true, data: { taskId: req.params.id, progress } });
   } catch (error) {
@@ -1177,34 +1368,50 @@ app.post('/v1/tasks/:id/complete', async (req: Request, res: Response) => {
   try {
     const { status, output, error: errorMsg, metrics } = req.body;
 
-    const task = await queryOne<any>('SELECT * FROM tasks WHERE id = $1', [req.params.id]);
-    if (!task) {
-      return res.status(HTTP_STATUS.NOT_FOUND).json({
+    const identity = taskClaimIdentityFromHeaders(req, req.params.id);
+    if (!identity) {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
         success: false,
-        error: { code: ERROR_CODES.NOT_FOUND, message: 'Task not found' },
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Valid task claim headers are required' },
       });
     }
 
     const finalStatus = status === 'DONE' ? 'DONE' : 'FAILED';
     const outputJson = JSON.stringify({ result: output, error: errorMsg, metrics });
 
-    await query(
-      `UPDATE tasks SET status = $1, output_json = $2, updated_at = NOW() WHERE id = $3`,
-      [finalStatus, outputJson, req.params.id]
+    const result = await completeTaskClaim(
+      (operation) => transaction((client) => operation(
+        (text, params) => client.query(text, params)
+      )),
+      { ...identity, status: finalStatus, outputJson },
     );
 
-    // Record task run in task_runs table if bot is specified
-    const botId = req.headers['x-bot-id'];
-    if (botId) {
-      await query(
-        `INSERT INTO task_runs (task_id, bot_id, started_at, completed_at, status, result_json)
-         VALUES ($1, $2, $3, NOW(), $4, $5)`,
-        [req.params.id, botId, task.created_at, finalStatus, outputJson]
-      );
+    if (result.outcome === 'not_found') {
+      return res.status(HTTP_STATUS.NOT_FOUND).json({
+        success: false,
+        error: { code: ERROR_CODES.NOT_FOUND, message: 'Task not found' },
+      });
+    }
+    if (result.outcome === 'stale') {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        error: { code: 'TASK_CLAIM_STALE', message: 'Task claim is stale or expired' },
+      });
     }
 
-    logger.info('Task completed', { taskId: req.params.id, status: finalStatus });
-    res.json({ success: true, data: { taskId: req.params.id, status: finalStatus } });
+    logger.info('Task completed', {
+      taskId: req.params.id,
+      status: finalStatus,
+      idempotent: result.outcome === 'idempotent',
+    });
+    res.json({
+      success: true,
+      data: {
+        taskId: req.params.id,
+        status: finalStatus,
+        idempotent: result.outcome === 'idempotent',
+      },
+    });
   } catch (error) {
     logger.error('Failed to complete task', error as Error);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
@@ -1285,10 +1492,17 @@ app.post('/v1/tasks/:id/cancel', async (req: Request, res: Response) => {
       });
     }
 
-    await query('UPDATE tasks SET status = $1, updated_at = NOW() WHERE id = $2', [
-      'FAILED',
-      req.params.id,
-    ]);
+    await query(
+      `UPDATE tasks
+       SET status = $1,
+           claimed_by_bot_id = NULL,
+           claim_token = NULL,
+           claim_acknowledged_at = NULL,
+           lease_expires_at = NULL,
+           updated_at = NOW()
+       WHERE id = $2`,
+      ['FAILED', req.params.id]
+    );
 
     // Cancel any pending approval
     await query(
@@ -1410,9 +1624,26 @@ app.get('/v1/stats', async (req: Request, res: Response) => {
   }
 });
 
-// Start server
-app.listen(PORT, () => {
-  logger.info(`Orchestrator service started on port ${PORT}`);
-});
+// Start only after the maintenance schema is present. A rolling deploy with a
+// pending maintenance migration therefore never registers as ready.
+async function main(): Promise<void> {
+  await assertTaskClaimSchemaReady();
+  await new Promise<void>((resolve, reject) => {
+    const server = app.listen(PORT);
+    server.once('error', reject);
+    server.once('listening', () => {
+      logger.info(`Orchestrator service started on port ${PORT}`);
+      if (typeof process.send === 'function') process.send('ready');
+      resolve();
+    });
+  });
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  void main().catch(error => {
+    logger.error('Orchestrator startup failed', error as Error);
+    process.exit(1);
+  });
+}
 
 export default app;

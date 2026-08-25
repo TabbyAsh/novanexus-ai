@@ -3,6 +3,8 @@ import {
   BotClient,
   createBotConfig,
   createBotHealthRoutes,
+  installBotShutdownHandlers,
+  startRegisteredBotHttpService,
   TaskDefinition,
   TaskContext,
   TaskResult,
@@ -13,6 +15,11 @@ import { RegimeType } from '@nova/nexus-core';
 import { NexusTrader, type NexusDecisionCard } from './nexus-trader';
 import { getAdaptiveEngine, type TradeOutcome, type VolRegime } from './adaptive-thresholds';
 import { analyzeStock } from './trade-analyzer';
+import {
+  liveProviderWritesEnabled,
+  providerEffectCapabilities,
+  PROVIDER_WRITES_DISABLED_REASON,
+} from './provider-effect-policy';
 
 const PORT = parseInt(process.env.PORT || '3010', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
@@ -137,6 +144,7 @@ class AlpacaClient {
     limit_price?: number;
     stop_price?: number;
   }): Promise<AlpacaOrder | null> {
+    if (!liveProviderWritesEnabled()) throw new Error(PROVIDER_WRITES_DISABLED_REASON);
     try {
       const body = {
         symbol: params.symbol,
@@ -168,6 +176,7 @@ class AlpacaClient {
   }
 
   async cancelOrder(orderId: string): Promise<boolean> {
+    if (!liveProviderWritesEnabled()) throw new Error(PROVIDER_WRITES_DISABLED_REASON);
     try {
       const res = await fetch(`${this.baseUrl}/orders/${orderId}`, {
         method: 'DELETE',
@@ -181,6 +190,7 @@ class AlpacaClient {
   }
 
   async closePosition(symbol: string): Promise<AlpacaOrder | null> {
+    if (!liveProviderWritesEnabled()) throw new Error(PROVIDER_WRITES_DISABLED_REASON);
     try {
       const res = await fetch(`${this.baseUrl}/positions/${symbol}`, {
         method: 'DELETE',
@@ -195,6 +205,7 @@ class AlpacaClient {
   }
 
   async closeAllPositions(): Promise<AlpacaOrder[]> {
+    if (!liveProviderWritesEnabled()) throw new Error(PROVIDER_WRITES_DISABLED_REASON);
     try {
       const res = await fetch(`${this.baseUrl}/positions`, {
         method: 'DELETE',
@@ -1181,6 +1192,7 @@ const PAPER_TRADE_MAX_SLIPPAGE_BPS = Number(process.env.PAPER_TRADE_MAX_SLIPPAGE
 
 class PaperTradingSimulator {
   private trades: Map<string, PaperTrade> = new Map();
+  private idempotentTradeIds: Map<string, string> = new Map();
   private portfolio: { cash: number; positions: Record<string, number> } = {
     cash: 100000,
     positions: {},
@@ -1192,7 +1204,13 @@ class PaperTradingSimulator {
     this.marketData = marketData;
   }
 
-  async openTrade(thesis: ThesisCard, quantity: number): Promise<PaperTrade> {
+  async openTrade(thesis: ThesisCard, quantity: number, idempotencyKey?: string): Promise<PaperTrade> {
+    if (idempotencyKey) {
+      const existingId = this.idempotentTradeIds.get(idempotencyKey);
+      const existing = existingId ? this.trades.get(existingId) : undefined;
+      if (existing) return existing;
+    }
+
     if (!Number.isFinite(quantity) || quantity <= 0) {
       throw new Error('Quantity must be positive');
     }
@@ -1230,6 +1248,7 @@ class PaperTradingSimulator {
     };
 
     this.trades.set(trade.id, trade);
+    if (idempotencyKey) this.idempotentTradeIds.set(idempotencyKey, trade.id);
     if (side === 'BUY') {
       this.portfolio.cash -= entryNotional + entryFee;
     } else {
@@ -1549,6 +1568,7 @@ const bot = new BotClient(botConfig);
 
 // Register task handlers
 bot.registerTaskHandler('SCAN_WATCHLIST', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   const { watchlistId, filters } = task.inputJson;
   const watchlist = watchlistManager.get((watchlistId as string) || 'default');
   
@@ -1558,6 +1578,7 @@ bot.registerTaskHandler('SCAN_WATCHLIST', async (task: TaskDefinition, ctx: Task
 
   ctx.logger.info('Scanning watchlist', { watchlistId: watchlist.id, symbols: watchlist.symbols.length });
   await ctx.reportProgress(10, 'Starting scan...');
+  ctx.throwIfCancelled();
   let results: ScannerResult[];
   try {
     results = await scanner.scan(watchlist.symbols, filters as any);
@@ -1567,6 +1588,7 @@ bot.registerTaskHandler('SCAN_WATCHLIST', async (task: TaskDefinition, ctx: Task
     }
     throw error;
   }
+  ctx.throwIfCancelled();
   await ctx.reportProgress(100, 'Scan complete');
 
   return {
@@ -1577,6 +1599,7 @@ bot.registerTaskHandler('SCAN_WATCHLIST', async (task: TaskDefinition, ctx: Task
 });
 
 bot.registerTaskHandler('GENERATE_THESIS', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   const { symbol, watchlistId } = task.inputJson;
   
   let symbolToAnalyze = symbol as string;
@@ -1585,6 +1608,7 @@ bot.registerTaskHandler('GENERATE_THESIS', async (task: TaskDefinition, ctx: Tas
     const watchlist = watchlistManager.get(watchlistId as string);
     if (watchlist) {
       const results = await scanner.scan(watchlist.symbols, { minScore: 60 });
+      ctx.throwIfCancelled();
       if (results.length > 0) {
         symbolToAnalyze = results[0].symbol;
       }
@@ -1597,6 +1621,7 @@ bot.registerTaskHandler('GENERATE_THESIS', async (task: TaskDefinition, ctx: Tas
 
   ctx.logger.info('Generating thesis', { symbol: symbolToAnalyze });
   await ctx.reportProgress(20, 'Analyzing symbol...');
+  ctx.throwIfCancelled();
   let scanResults: ScannerResult[];
   try {
     scanResults = await scanner.scan([symbolToAnalyze]);
@@ -1606,15 +1631,18 @@ bot.registerTaskHandler('GENERATE_THESIS', async (task: TaskDefinition, ctx: Tas
     }
     throw error;
   }
+  ctx.throwIfCancelled();
   if (scanResults.length === 0) {
     return { success: false, error: 'Could not analyze symbol' };
   }
 
   await ctx.reportProgress(60, 'Generating thesis card...');
+  ctx.throwIfCancelled();
   const thesis = thesisGenerator.generate(scanResults[0]);
   activeTheses.set(thesis.id, thesis);
 
   await ctx.reportProgress(100, 'Thesis generated');
+  ctx.throwIfCancelled();
   await ctx.emit('THESIS_GENERATED', { thesisId: thesis.id, symbol: thesis.symbol });
 
   return {
@@ -1625,6 +1653,7 @@ bot.registerTaskHandler('GENERATE_THESIS', async (task: TaskDefinition, ctx: Tas
 });
 
 bot.registerTaskHandler('EXECUTE_PAPER_TRADE', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   const { thesisId, quantity } = task.inputJson;
   
   const thesis = activeTheses.get(thesisId as string);
@@ -1635,7 +1664,8 @@ bot.registerTaskHandler('EXECUTE_PAPER_TRADE', async (task: TaskDefinition, ctx:
   ctx.logger.info('Executing paper trade', { thesisId, symbol: thesis.symbol });
 
   try {
-    const trade = await paperTrader.openTrade(thesis, (quantity as number) || 10);
+    const trade = await paperTrader.openTrade(thesis, (quantity as number) || 10, ctx.idempotencyKey);
+    ctx.throwIfCancelled();
     await ctx.emit('PAPER_TRADE_OPENED', { tradeId: trade.id, thesisId, symbol: trade.symbol });
 
     return {
@@ -1648,14 +1678,17 @@ bot.registerTaskHandler('EXECUTE_PAPER_TRADE', async (task: TaskDefinition, ctx:
 });
 
 bot.registerTaskHandler('UPDATE_PAPER_TRADES', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   ctx.logger.info('Updating open paper trades');
   try {
     const openTrades = paperTrader.getOpenTrades();
     const updated: PaperTrade[] = [];
 
     for (const trade of openTrades) {
+      ctx.throwIfCancelled();
       const thesis = activeTheses.get(trade.thesisId);
       const updatedTrade = await paperTrader.updateTrade(trade.id, thesis);
+      ctx.throwIfCancelled();
       updated.push(updatedTrade);
 
       if (updatedTrade.status === 'CLOSED') {
@@ -1695,27 +1728,10 @@ app.get('/health/live', (_req: Request, res: Response) => {
   });
 });
 
-// Primary health check - returns 200 with degraded status if orchestrator not connected
-app.get('/health', (_req: Request, res: Response) => {
-  const checks = {
-    alpaca: USE_ALPACA ? 'enabled' : 'disabled',
-    nexus: nexusTrader.isInitialized() ? 'initialized' : 'not_initialized',
-    database: 'ok', // Would check DB if needed
-  };
-  
-  res.json({
-    status: 'healthy',
-    service: 'tradebot',
-    mode: USE_ALPACA ? 'live' : 'paper',
-    checks,
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    version: '0.1.0',
-  });
-});
-
-// Full readiness with orchestrator (optional)
 const healthRoutes = createBotHealthRoutes({ bot });
+// Primary health is fail-closed on orchestrator registration/heartbeats. Keep
+// /health/live as the explicit listener-only probe.
+app.get('/health', healthRoutes.healthHandler);
 app.get('/health/full', healthRoutes.healthHandler);
 app.get('/ready', healthRoutes.readyHandler);
 app.get('/metrics', healthRoutes.metricsHandler);
@@ -2067,7 +2083,7 @@ app.get('/api/alpaca/status', async (_req: Request, res: Response) => {
   res.json({
     success: true,
     data: {
-      enabled: alpaca.isEnabled(),
+      ...providerEffectCapabilities(alpaca.isEnabled()),
       endpoint: ALPACA_ENDPOINT,
     },
   });
@@ -2102,6 +2118,12 @@ app.get('/api/alpaca/orders', async (req: Request, res: Response) => {
 });
 
 app.post('/api/alpaca/orders', async (req: Request, res: Response) => {
+  if (!liveProviderWritesEnabled()) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: PROVIDER_WRITES_DISABLED_REASON,
+    });
+  }
   if (!alpaca.isEnabled()) {
     return res.status(400).json({ success: false, error: 'Alpaca not configured' });
   }
@@ -2130,6 +2152,9 @@ app.post('/api/alpaca/orders', async (req: Request, res: Response) => {
 });
 
 app.delete('/api/alpaca/orders/:orderId', async (req: Request, res: Response) => {
+  if (!liveProviderWritesEnabled()) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: PROVIDER_WRITES_DISABLED_REASON });
+  }
   if (!alpaca.isEnabled()) {
     return res.status(400).json({ success: false, error: 'Alpaca not configured' });
   }
@@ -2138,6 +2163,9 @@ app.delete('/api/alpaca/orders/:orderId', async (req: Request, res: Response) =>
 });
 
 app.delete('/api/alpaca/positions/:symbol', async (req: Request, res: Response) => {
+  if (!liveProviderWritesEnabled()) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: PROVIDER_WRITES_DISABLED_REASON });
+  }
   if (!alpaca.isEnabled()) {
     return res.status(400).json({ success: false, error: 'Alpaca not configured' });
   }
@@ -2149,6 +2177,9 @@ app.delete('/api/alpaca/positions/:symbol', async (req: Request, res: Response) 
 });
 
 app.delete('/api/alpaca/positions', async (_req: Request, res: Response) => {
+  if (!liveProviderWritesEnabled()) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({ success: false, error: PROVIDER_WRITES_DISABLED_REASON });
+  }
   if (!alpaca.isEnabled()) {
     return res.status(400).json({ success: false, error: 'Alpaca not configured' });
   }
@@ -2158,6 +2189,12 @@ app.delete('/api/alpaca/positions', async (_req: Request, res: Response) => {
 
 // Execute thesis via Alpaca (real paper trade)
 app.post('/api/alpaca/execute-thesis', async (req: Request, res: Response) => {
+  if (!liveProviderWritesEnabled()) {
+    return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
+      success: false,
+      error: PROVIDER_WRITES_DISABLED_REASON,
+    });
+  }
   if (!alpaca.isEnabled()) {
     return res.status(400).json({ success: false, error: 'Alpaca not configured' });
   }
@@ -2860,38 +2897,26 @@ app.post('/api/nexus/stop', async (_req: Request, res: Response) => {
 // ============================================================================
 
 async function main() {
-  try {
-    // Start Express server first
-    app.listen(PORT, () => {
-      logger.info(`TradeBot API server started on port ${PORT}`);
-    });
-
-    // Try to connect to orchestrator (graceful if not available)
-    try {
-      await bot.start();
-      logger.info('TradeBot connected to orchestrator');
-    } catch (error) {
-      logger.warn('Could not connect to orchestrator, running in standalone mode', { error });
-    }
-  } catch (error) {
-    logger.error('Failed to start TradeBot', error as Error);
-    process.exit(1);
-  }
+  // Registration is mandatory: PM2/Railway must never treat standalone mode as
+  // a usable task worker.
+  await startRegisteredBotHttpService(bot, () => new Promise<void>((resolve, reject) => {
+    const httpServer = app.listen(PORT);
+    httpServer.once('error', reject);
+    httpServer.once('listening', () => resolve());
+  }));
+  logger.info(`TradeBot API server started on port ${PORT}`);
+  logger.info('TradeBot connected to orchestrator');
 }
 
-// Graceful shutdown
-process.on('SIGTERM', async () => {
-  logger.info('Received SIGTERM, shutting down...');
-  await bot.stop();
-  process.exit(0);
-});
+if (process.env.NODE_ENV !== 'test') {
+  void main().catch(async error => {
+    logger.error('Failed to start TradeBot', error as Error);
+    await bot.stop().catch(stopError => logger.warn('TradeBot startup cleanup failed', { error: stopError }));
+    process.exit(1);
+  });
+}
 
-process.on('SIGINT', async () => {
-  logger.info('Received SIGINT, shutting down...');
-  await bot.stop();
-  process.exit(0);
-});
-
-main();
+// Graceful shutdown waits for/cancels an active SDK task within the PM2 budget.
+installBotShutdownHandlers(bot, { logger });
 
 export default app;

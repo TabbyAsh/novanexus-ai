@@ -40,7 +40,8 @@ async function runMigrations() {
     const proc = spawn('node', [path.join(__dirname, 'run-migrations.js')], {
       cwd: ROOT,
       stdio: 'inherit',
-      env: process.env,
+      // A production startup may never opt into a stop-the-world migration.
+      env: { ...process.env, NOVA_ROLLING_STARTUP: '1' },
     });
     proc.on('close', (code) => {
       if (code === 0) resolve();

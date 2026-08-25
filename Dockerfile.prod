@@ -164,13 +164,15 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=90s --retries=5 \
   CMD wget --spider -q http://localhost:${PORT:-3000}/health || exit 1
 
-# Create startup script that validates env, runs migrations, then starts PM2
+# Create startup script that validates env, runs only rolling-safe migrations,
+# then starts PM2. Maintenance migrations fail this startup and must be applied
+# separately after the old monolith is fully stopped.
 RUN echo '#!/bin/sh' > /app/start.sh && \
     echo 'set -e' >> /app/start.sh && \
     echo 'echo "=== Validating Environment ==="' >> /app/start.sh && \
     echo 'node /app/scripts/validate-env.js' >> /app/start.sh && \
     echo 'echo "=== Running Migrations ==="' >> /app/start.sh && \
-    echo 'node /app/scripts/run-migrations.js' >> /app/start.sh && \
+    echo 'NOVA_ROLLING_STARTUP=1 node /app/scripts/run-migrations.js' >> /app/start.sh && \
     echo 'echo "=== Starting Services ==="' >> /app/start.sh && \
     echo 'exec pm2-runtime ecosystem.config.js' >> /app/start.sh && \
     chmod +x /app/start.sh
