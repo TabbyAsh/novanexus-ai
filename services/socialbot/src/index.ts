@@ -11,6 +11,7 @@
 import express, { Request, Response } from 'express';
 import cors from 'cors';
 import OpenAI from 'openai';
+import type { Server } from 'node:http';
 import {
   BotClient,
   createBotConfig,
@@ -25,6 +26,7 @@ import { ContentManager } from './content-manager';
 
 const PORT = parseInt(process.env.PORT || '3012', 10);
 const ORCHESTRATOR_URL = process.env.ORCHESTRATOR_URL || 'http://localhost:3002';
+const HTTP_SHUTDOWN_TIMEOUT_MS = 3000;
 const logger = createLogger('socialbot');
 
 const app = express();
@@ -140,9 +142,11 @@ const botConfig = createBotConfig('socialbot', [
 const bot = new BotClient(botConfig);
 
 bot.registerTaskHandler('GENERATE_CONTENT', async (task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   ctx.logger.info('Generating content via OpenAI');
   const { topic, platform, tone, niche } = task.inputJson as Record<string, string>;
   const result = await generateContent({ topic, platform, tone, niche });
+  ctx.throwIfCancelled();
   return {
     success: true,
     output: { content: result, generatedAt: nowTimestamp() },
@@ -151,6 +155,7 @@ bot.registerTaskHandler('GENERATE_CONTENT', async (task: TaskDefinition, ctx: Ta
 });
 
 bot.registerTaskHandler('MONITOR_MENTIONS', async (_task: TaskDefinition, ctx: TaskContext): Promise<TaskResult> => {
+  ctx.throwIfCancelled();
   ctx.logger.info('Monitoring social mentions');
   return {
     success: true,
@@ -573,8 +578,162 @@ app.get('/api/alerts', (_req: Request, res: Response) => {
 // Start
 // ============================================================================
 
-app.listen(PORT, () => {
-  logger.info(`SocialBot running on port ${PORT}${openai ? ' (OpenAI connected)' : ' (no OpenAI key — content generation disabled)'}`);
-});
+let server: Server | null = null;
+let startPromise: Promise<Server> | null = null;
+let stopPromise: Promise<void> | null = null;
+let lifecycleVersion = 0;
+
+function listen(port: number): Promise<Server> {
+  return new Promise((resolve, reject) => {
+    const candidate = app.listen(port);
+
+    const onError = (error: Error) => {
+      candidate.off('listening', onListening);
+      reject(error);
+    };
+    const onListening = () => {
+      candidate.off('error', onError);
+      resolve(candidate);
+    };
+
+    candidate.once('error', onError);
+    candidate.once('listening', onListening);
+  });
+}
+
+function closeServer(activeServer: Server): Promise<void> {
+  if (!activeServer.listening) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    let settled = false;
+    const finish = (error?: Error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (error) reject(error);
+      else resolve();
+    };
+    const timeout = setTimeout(() => {
+      logger.warn('Forcing HTTP connections closed after shutdown deadline');
+      activeServer.closeAllConnections();
+      finish();
+    }, HTTP_SHUTDOWN_TIMEOUT_MS);
+
+    activeServer.close(error => finish(error ?? undefined));
+    activeServer.closeIdleConnections();
+  });
+}
+
+/** Register the bot before exposing an HTTP listener, so a live process cannot
+ * advertise the permanently-unhealthy STOPPED/unregistered state. */
+export function startSocialBot(port = PORT): Promise<Server> {
+  if (startPromise) return startPromise;
+  if (stopPromise) return Promise.reject(new Error('Cannot start SocialBot while it is stopping'));
+  if (server?.listening || bot.getStatus() !== 'STOPPED') {
+    return Promise.reject(new Error(`Cannot start SocialBot in status: ${bot.getStatus()}`));
+  }
+
+  const operationVersion = ++lifecycleVersion;
+  const operation = (async () => {
+    let candidate: Server | null = null;
+    try {
+      await bot.start();
+      if (operationVersion !== lifecycleVersion) throw new Error('SocialBot startup cancelled');
+
+      candidate = await listen(port);
+      if (operationVersion !== lifecycleVersion || !bot.getReadinessStatus().ready) {
+        throw new Error('SocialBot startup cancelled');
+      }
+      server = candidate;
+
+      const address = candidate.address();
+      const listeningPort = typeof address === 'object' && address ? address.port : port;
+      logger.info(`SocialBot running on port ${listeningPort}${openai ? ' (OpenAI connected)' : ' (no OpenAI key — content generation disabled)'}`);
+      logger.info('SocialBot connected to orchestrator');
+      if (typeof process.send === 'function') process.send('ready');
+
+      return candidate;
+    } catch (error) {
+      if (candidate?.listening) await closeServer(candidate);
+      if (server === candidate) server = null;
+
+      // A concurrent stop owns SDK cleanup. Avoid recursively waiting on it.
+      if (operationVersion === lifecycleVersion && !stopPromise) {
+        try {
+          await bot.stop();
+        } catch (stopError) {
+          logger.warn('Failed to clean up SocialBot after startup error', { error: stopError });
+        }
+      }
+      throw error;
+    }
+  })();
+
+  startPromise = operation;
+  void operation.then(
+    () => { if (startPromise === operation) startPromise = null; },
+    () => { if (startPromise === operation) startPromise = null; },
+  );
+  return operation;
+}
+
+/** Stop accepting traffic and deregister exactly once, including concurrent signals. */
+export function stopSocialBot(): Promise<void> {
+  if (stopPromise) return stopPromise;
+  if (!startPromise && !server?.listening && bot.getStatus() === 'STOPPED') return Promise.resolve();
+
+  ++lifecycleVersion;
+  const pendingStart = startPromise;
+  const activeServer = server;
+  server = null;
+
+  const operation = (async () => {
+    let shutdownError: unknown;
+
+    const [httpResult, botResult] = await Promise.allSettled([
+      activeServer ? closeServer(activeServer) : Promise.resolve(),
+      bot.stop(),
+    ]);
+    if (httpResult.status === 'rejected') shutdownError = httpResult.reason;
+    if (botResult.status === 'rejected') shutdownError ??= botResult.reason;
+
+    // startSocialBot checks lifecycleVersion before and after listen, so waiting
+    // here guarantees no delayed startup can expose a listener after stop.
+    if (pendingStart) {
+      await Promise.allSettled([pendingStart]);
+    }
+
+    if (shutdownError) throw shutdownError;
+    logger.info('SocialBot stopped');
+  })();
+
+  stopPromise = operation;
+  void operation.then(
+    () => { if (stopPromise === operation) stopPromise = null; },
+    () => { if (stopPromise === operation) stopPromise = null; },
+  );
+  return operation;
+}
+
+async function handleShutdown(signal: 'SIGTERM' | 'SIGINT'): Promise<void> {
+  logger.info(`Received ${signal}, shutting down SocialBot`);
+  try {
+    await stopSocialBot();
+    process.exit(0);
+  } catch (error) {
+    logger.error('SocialBot shutdown failed', error as Error);
+    process.exit(1);
+  }
+}
+
+if (process.env.NODE_ENV !== 'test') {
+  process.once('SIGTERM', () => { void handleShutdown('SIGTERM'); });
+  process.once('SIGINT', () => { void handleShutdown('SIGINT'); });
+
+  void startSocialBot().catch(error => {
+    logger.error('SocialBot startup failed', error as Error);
+    process.exit(1);
+  });
+}
 
 export default app;
