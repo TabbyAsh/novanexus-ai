@@ -1,10 +1,11 @@
 name: CI
 
 on:
+  workflow_dispatch:
   push:
-    branches: [master]
+    branches: [master, codex/revenue-doorway-hardening]
   pull_request:
-    branches: [master]
+    branches: [master, codex/revenue-doorway-hardening]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -49,10 +50,10 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
           node-version: 20
           cache: npm
@@ -64,7 +65,7 @@ jobs:
         run: |
           for f in infra/migrations/*.sql; do
             echo "Running migration: $f"
-            psql "$DATABASE_URL" -f "$f" 2>&1 || true
+            psql -X "$DATABASE_URL" -v ON_ERROR_STOP=1 -f "$f"
           done
         env:
           PGPASSWORD: nova_ci_password
@@ -79,11 +80,9 @@ jobs:
 
       - name: Lint
         run: npx turbo run lint
-        continue-on-error: true  # Don't block on lint initially — fix incrementally
 
       - name: Test
         run: npx turbo run test
-        continue-on-error: true  # Don't block on tests initially — add coverage incrementally
 
       - name: Verify production bundles (esbuild)
         run: |

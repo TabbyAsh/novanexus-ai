@@ -101,7 +101,6 @@ export default function WorldClient() {
     returning.current = evaluateReturning();
     visitorId.current = getVisitorId();
     fetchMyAgents();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // ── The pulse — poll real activity every 20s ────────────────────────
