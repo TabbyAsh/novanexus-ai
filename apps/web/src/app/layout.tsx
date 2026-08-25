@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { Analytics } from '@vercel/analytics/next';
 import { organizationStructuredData, serializeStructuredData } from '@/lib/public-structured-data';
 import './globals.css';
 
@@ -39,6 +40,7 @@ export default function RootLayout({
           dangerouslySetInnerHTML={{ __html: serializeStructuredData(organizationStructuredData) }}
         />
         {children}
+        <Analytics />
       </body>
     </html>
   );
