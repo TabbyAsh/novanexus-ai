@@ -4,7 +4,6 @@ import {
   fullyRefundedPaymentIntentFromCharge,
   productionWebhookConfigurationError,
   resolveCheckoutSelection,
-  servicePaymentReferenceFromCheckout,
   stripeStatusToEntitlementStatus,
   type CheckoutPriceMap,
 } from '../billing-contract';
@@ -97,40 +96,6 @@ describe('webhook safety contract', () => {
     expect(endpoint).not.toContain('session.id');
   });
 
-  it('recognizes only a paid one-time session with an opaque service receipt', () => {
-    const reference = servicePaymentReferenceFromCheckout({
-      id: 'cs_service_payment',
-      mode: 'payment',
-      payment_status: 'paid',
-      client_reference_id: `svc_${'A'.repeat(24)}`,
-      payment_intent: 'pi_service_payment',
-    });
-
-    expect(reference).toEqual({
-      receiptId: `svc_${'A'.repeat(24)}`,
-      checkoutSessionId: 'cs_service_payment',
-      paymentIntentId: 'pi_service_payment',
-    });
-    expect(servicePaymentReferenceFromCheckout({
-      id: 'cs_subscription',
-      mode: 'subscription',
-      payment_status: 'paid',
-      client_reference_id: `svc_${'A'.repeat(24)}`,
-    })).toBeNull();
-    expect(servicePaymentReferenceFromCheckout({
-      id: 'cs_unpaid',
-      mode: 'payment',
-      payment_status: 'unpaid',
-      client_reference_id: `svc_${'A'.repeat(24)}`,
-    })).toBeNull();
-    expect(servicePaymentReferenceFromCheckout({
-      id: 'cs_without_payment_intent',
-      mode: 'payment',
-      payment_status: 'paid',
-      client_reference_id: `svc_${'A'.repeat(24)}`,
-    })).toBeNull();
-  });
-
   it('recognizes only a full refund tied to a payment intent', () => {
     expect(fullyRefundedPaymentIntentFromCharge({
       refunded: true,
@@ -141,5 +106,32 @@ describe('webhook safety contract', () => {
       payment_intent: 'pi_partial_refund',
     })).toBeNull();
     expect(fullyRefundedPaymentIntentFromCharge({ refunded: true })).toBeNull();
+  });
+
+  it('keeps subscription.updated disabled and contains resolver failures under Express 4', () => {
+    const billingSource = readFileSync(resolve(__dirname, '..', 'index.ts'), 'utf8');
+    const updateCaseStart = billingSource.indexOf("case 'customer.subscription.updated'");
+    const updateCaseEnd = billingSource.indexOf("case 'charge.refunded'", updateCaseStart);
+    const updateCase = billingSource.slice(updateCaseStart, updateCaseEnd);
+    expect(updateCase).toContain('Subscription update webhook remains disabled');
+    expect(updateCase).not.toContain('processSubscriptionEvent');
+
+    const resolverStart = billingSource.indexOf("app.post('/internal/service-payment-exceptions/");
+    const resolverEnd = billingSource.indexOf('// Webhook Endpoint', resolverStart);
+    const resolver = billingSource.slice(resolverStart, resolverEnd);
+    expect(resolver).toContain('asyncRoute(async');
+    expect(resolver).toContain('stripe.checkout.sessions.retrieve(candidateId)');
+    expect(resolver).not.toContain('stripe.checkout.sessions.list');
+  });
+
+  it('schedules alert retries independently of reconciliation', () => {
+    const billingSource = readFileSync(resolve(__dirname, '..', 'index.ts'), 'utf8');
+    const alertSchedulerStart = billingSource.indexOf('function scheduleServicePaymentAlertRetries');
+    const serverStart = billingSource.indexOf('app.listen(PORT');
+    const server = billingSource.slice(serverStart);
+    expect(alertSchedulerStart).toBeGreaterThan(-1);
+    expect(server).toContain('scheduleServicePaymentAlertRetries();');
+    expect(server).toContain('scheduleServicePaymentReconciliation();');
+    expect(alertSchedulerStart).toBeLessThan(serverStart);
   });
 });

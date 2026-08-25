@@ -25,6 +25,11 @@ export const ROUTE_SCOPE_RULES: RouteScopeRule[] = [
     path,
     scopes: ['ops.admin'] as Scope[],
   })),
+  {
+    methods: ['POST'],
+    path: '/v1/admin/billing/payment-exceptions',
+    scopes: ['ops.admin'],
+  },
   { methods: ['POST'], path: '/v1/trade/backtest', scopes: ['trade.backtest'] },
   { methods: ['POST'], path: '/v1/trade/paper', scopes: ['trade.paper.execute'] },
   { methods: ['POST'], path: '/v1/trade/live', scopes: ['trade.live.execute'] },

@@ -5,6 +5,8 @@
  * Called at startup of production entrypoint.
  */
 
+const { isStrictServiceToken } = require('../libs/shared/runtime/service-token');
+
 const REQUIRED_VARS = [
   { name: 'DATABASE_URL', description: 'PostgreSQL connection string' },
   { name: 'JWT_SECRET', description: 'JWT signing secret (min 32 chars)' },
@@ -13,6 +15,10 @@ const REQUIRED_VARS = [
 const RECOMMENDED_VARS = [
   { name: 'REDIS_URL', description: 'Redis connection string (caching/rate limiting)' },
   { name: 'STRIPE_SECRET_KEY', description: 'Stripe API key for billing' },
+  { name: 'STRIPE_WEBHOOK_SECRET', description: 'Stripe webhook signing secret' },
+  { name: 'RESEND_API_KEY', description: 'Resend API key for durable billing exception alerts' },
+  { name: 'SERVICE_INQUIRY_OPERATOR_EMAIL', description: 'Operator mailbox for billing exceptions' },
+  { name: 'SERVICE_PAYMENT_RESOLVER_TOKEN', description: 'Strong base64url internal billing resolver token (32-128 chars)' },
   { name: 'POLYGON_API_KEY', description: 'Polygon.io API key for market data' },
 ];
 
@@ -43,6 +49,25 @@ function validateEnv(options = {}) {
   // Validate DATABASE_URL format
   if (process.env.DATABASE_URL && !process.env.DATABASE_URL.startsWith('postgres')) {
     missing.push('  - DATABASE_URL: Must be a valid PostgreSQL connection string');
+  }
+
+  // Revenue operations expose a dedicated failing readiness endpoint instead
+  // of blocking unrelated services in the monolith. Surface invalid values at
+  // startup as warnings as well as missing values above.
+  if (process.env.RESEND_API_KEY && !/^re_[A-Za-z0-9_-]{3,}$/.test(process.env.RESEND_API_KEY)) {
+    warnings.push('  - RESEND_API_KEY: Invalid Resend API key format; billing operations readiness will fail');
+  }
+  if (
+    process.env.SERVICE_INQUIRY_OPERATOR_EMAIL
+    && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(process.env.SERVICE_INQUIRY_OPERATOR_EMAIL)
+  ) {
+    warnings.push('  - SERVICE_INQUIRY_OPERATOR_EMAIL: Invalid email; billing operations readiness will fail');
+  }
+  if (
+    process.env.SERVICE_PAYMENT_RESOLVER_TOKEN
+    && !isStrictServiceToken(process.env.SERVICE_PAYMENT_RESOLVER_TOKEN)
+  ) {
+    warnings.push('  - SERVICE_PAYMENT_RESOLVER_TOKEN: Must be a strong 32-128 character base64url token; billing operations readiness will fail');
   }
 
   // Report results

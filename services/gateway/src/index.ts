@@ -35,10 +35,17 @@ import {
   contactRateLimitKey,
   isPublicContactPath,
 } from './contact-rate-limit';
+import {
+  BillingResolverForwardingError,
+  forwardBillingExceptionResolution,
+  normalizeBillingResolverForwardingError,
+} from './billing-exception-resolver-forward';
 
 const app = express();
+app.disable('x-powered-by');
 const logger = createLogger('gateway-service');
 const PORT = process.env.PORT || SERVICE_PORTS.GATEWAY;
+const SERVICE_PAYMENT_RESOLVER_TOKEN = process.env.SERVICE_PAYMENT_RESOLVER_TOKEN || '';
 
 // Service URLs
 const SERVICE_URLS = {
@@ -761,6 +768,32 @@ async function proxyStripeWebhook(req: Request, res: Response): Promise<void> {
   }
 }
 
+async function proxyBillingExceptionResolution(req: Request, res: Response): Promise<void> {
+  const eventHash = req.params.eventHash || '';
+  try {
+    const result = await forwardBillingExceptionResolution({
+      billingUrl: SERVICE_URLS.billing,
+      eventHash,
+      requestBody: req.body,
+      resolverToken: SERVICE_PAYMENT_RESOLVER_TOKEN,
+      requestId: req.headers['x-request-id'],
+      forwardedFor: sanitizedClientIp(req),
+    });
+    for (const [header, value] of Object.entries(result.headers)) res.setHeader(header, value);
+    res.status(result.status).json(result.body);
+  } catch (error) {
+    const forwardingError = error instanceof BillingResolverForwardingError ? error : null;
+    const normalized = normalizeBillingResolverForwardingError(error);
+    logger.error('Billing payment-exception resolver proxy failed', error as Error, {
+      eventHash: /^[a-f0-9]{64}$/.test(eventHash) ? eventHash : 'invalid',
+      requestId: req.headers['x-request-id'],
+      failureCode: forwardingError?.code || 'UPSTREAM_UNAVAILABLE',
+    });
+    for (const [header, value] of Object.entries(normalized.headers)) res.setHeader(header, value);
+    res.status(normalized.status).json(normalized.body);
+  }
+}
+
 async function proxyRequest(targetUrl: string, req: Request, res: Response): Promise<void> {
   try {
     const url = `${targetUrl}${req.originalUrl}`;
@@ -1171,6 +1204,14 @@ app.all('/v1/ops/*', requireScopes(['ops.read']), (req: Request, res: Response) 
 });
 
 // Admin routes -> Nova Hub (founder-only: requires ops.admin scope)
+app.post(
+  '/v1/admin/billing/payment-exceptions/:eventHash/resolve',
+  requireScopes(['ops.admin']),
+  (req: Request, res: Response) => {
+    void proxyBillingExceptionResolution(req, res);
+  },
+);
+
 app.all('/v1/admin/*', requireScopes(['ops.admin']), (req: Request, res: Response) => {
   proxyRequest(SERVICE_URLS.novaHub, req, res);
 });

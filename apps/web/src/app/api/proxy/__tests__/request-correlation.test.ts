@@ -14,7 +14,7 @@ describe('same-origin proxy request correlation', () => {
     process.env.BACKEND_URL = 'https://api.example.test';
     const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('{"success":true}', {
       status: 200,
-      headers: { 'content-type': 'application/json' },
+      headers: { 'content-type': 'application/json', 'x-powered-by': 'Express' },
     }));
     const request = new NextRequest('https://novanexus-ai.com/api/proxy/v1/contact', {
       method: 'POST',
@@ -29,6 +29,7 @@ describe('same-origin proxy request correlation', () => {
     const forwarded = fetchMock.mock.calls[0][1]?.headers as Record<string, string>;
     expect(forwarded['x-request-id']).toBe('req_01HZX3M2QX9Y2K7P');
     expect(response.headers.get('x-request-id')).toBe('req_01HZX3M2QX9Y2K7P');
+    expect(response.headers.get('x-powered-by')).toBeNull();
   });
 
   it('does not disclose an upstream network error to the browser', async () => {
