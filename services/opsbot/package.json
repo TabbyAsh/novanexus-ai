@@ -15,7 +15,7 @@
     "@nova/shared": "*",
     "@nova/telemetry": "*",
     "@types/cors": "^2.8.19",
-    "axios": "^1.19.0",
+    "axios": "^1.20.0",
     "cors": "^2.8.6",
     "express": "^4.22.2"
   },
