@@ -15,7 +15,7 @@
     "@nova/policy": "*",
     "@nova/shared": "*",
     "@nova/telemetry": "*",
-    "express": "^4.22.2"
+    "express": "^5.2.1"
   },
   "devDependencies": {
     "@types/express": "^4.17.21",
