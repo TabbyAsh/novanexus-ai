@@ -61,6 +61,9 @@ export default function HomePage() {
             <Link href="/loop" className="underline-offset-4 hover:underline">
               Try Nova
             </Link>
+            <Link href="/lab/contrast" className="underline-offset-4 hover:underline">
+              Contrast Lab
+            </Link>
             <Link href="/services/workflow-setup" className="underline-offset-4 hover:underline">
               Guided setup
             </Link>

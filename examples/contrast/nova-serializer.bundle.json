@@ -1,0 +1,502 @@
+{
+  "bundleVersion": "nova-contrast-bundle/1",
+  "project": {
+    "schemaVersion": "nova-contrast/1",
+    "name": "Nova structured-data contract",
+    "cases": [
+      {
+        "id": "literal",
+        "name": "Literal angle bracket",
+        "input": "{\"label\":\"<script>\"}"
+      },
+      {
+        "id": "escaped",
+        "name": "Literal escape text",
+        "input": "{\"label\":\"\\\\u003cscript>\"}"
+      }
+    ],
+    "channels": [
+      {
+        "id": "html",
+        "name": "Raw HTML boundary"
+      },
+      {
+        "id": "value",
+        "name": "Round-trip label"
+      }
+    ],
+    "observations": [
+      {
+        "id": "angle",
+        "name": "Contains a literal <",
+        "cost": 1,
+        "enabled": true,
+        "channels": [
+          "html"
+        ],
+        "kind": "categorical",
+        "source": "adapter",
+        "adapter": "nova-structured-data",
+        "operation": "contains-literal-angle",
+        "values": {}
+      },
+      {
+        "id": "label",
+        "name": "Decoded label",
+        "cost": 1,
+        "enabled": true,
+        "channels": [
+          "value"
+        ],
+        "kind": "categorical",
+        "source": "adapter",
+        "adapter": "nova-structured-data",
+        "operation": "roundtrip-label",
+        "values": {}
+      }
+    ],
+    "requirements": [
+      {
+        "id": "safe-boundary",
+        "channel": "html",
+        "kind": "same",
+        "left": "literal",
+        "right": "escaped"
+      },
+      {
+        "id": "preserve-value",
+        "channel": "value",
+        "kind": "different",
+        "left": "literal",
+        "right": "escaped"
+      }
+    ]
+  },
+  "analysis": {
+    "engineVersion": "contrast-compiler/1.0.0",
+    "project": {
+      "schemaVersion": "nova-contrast/1",
+      "name": "Nova structured-data contract",
+      "cases": [
+        {
+          "id": "literal",
+          "name": "Literal angle bracket",
+          "input": "{\"label\":\"<script>\"}"
+        },
+        {
+          "id": "escaped",
+          "name": "Literal escape text",
+          "input": "{\"label\":\"\\\\u003cscript>\"}"
+        }
+      ],
+      "channels": [
+        {
+          "id": "html",
+          "name": "Raw HTML boundary"
+        },
+        {
+          "id": "value",
+          "name": "Round-trip label"
+        }
+      ],
+      "observations": [
+        {
+          "id": "angle",
+          "name": "Contains a literal <",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "html"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "nova-structured-data",
+          "operation": "contains-literal-angle",
+          "values": {}
+        },
+        {
+          "id": "label",
+          "name": "Decoded label",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "value"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "nova-structured-data",
+          "operation": "roundtrip-label",
+          "values": {}
+        }
+      ],
+      "requirements": [
+        {
+          "id": "safe-boundary",
+          "channel": "html",
+          "kind": "same",
+          "left": "literal",
+          "right": "escaped"
+        },
+        {
+          "id": "preserve-value",
+          "channel": "value",
+          "kind": "different",
+          "left": "literal",
+          "right": "escaped"
+        }
+      ]
+    },
+    "values": {
+      "angle": {
+        "literal": false,
+        "escaped": false
+      },
+      "label": {
+        "literal": "<script>",
+        "escaped": "\\u003cscript>"
+      }
+    },
+    "rawValues": {
+      "angle": {
+        "literal": false,
+        "escaped": false
+      },
+      "label": {
+        "literal": "<script>",
+        "escaped": "\\u003cscript>"
+      }
+    },
+    "adapterErrors": [],
+    "channels": [
+      {
+        "channel": "html",
+        "contradictions": [],
+        "equivalenceClasses": [
+          [
+            "literal",
+            "escaped"
+          ]
+        ],
+        "candidates": [
+          {
+            "id": "angle",
+            "status": "admissible",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [],
+            "collisions": [],
+            "incomplete": []
+          },
+          {
+            "id": "label",
+            "status": "not-on-channel",
+            "violations": [
+              {
+                "left": "literal",
+                "right": "escaped",
+                "leftValue": "<script>",
+                "rightValue": "\\u003cscript>",
+                "chain": [
+                  "safe-boundary"
+                ]
+              }
+            ],
+            "unknownEquivalences": [],
+            "separates": [],
+            "collisions": [],
+            "incomplete": []
+          }
+        ],
+        "selected": [],
+        "cost": 0,
+        "selection": "exact",
+        "covered": [],
+        "uncovered": [],
+        "decoder": {
+          "observationIds": [],
+          "rows": [
+            {
+              "caseId": "literal",
+              "values": []
+            },
+            {
+              "caseId": "escaped",
+              "values": []
+            }
+          ]
+        },
+        "collisions": [
+          {
+            "vector": [],
+            "caseIds": [
+              "literal",
+              "escaped"
+            ]
+          }
+        ],
+        "incompleteCases": []
+      },
+      {
+        "channel": "value",
+        "contradictions": [],
+        "equivalenceClasses": [
+          [
+            "literal"
+          ],
+          [
+            "escaped"
+          ]
+        ],
+        "candidates": [
+          {
+            "id": "angle",
+            "status": "not-on-channel",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [],
+            "collisions": [
+              "preserve-value"
+            ],
+            "incomplete": []
+          },
+          {
+            "id": "label",
+            "status": "admissible",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [
+              "preserve-value"
+            ],
+            "collisions": [],
+            "incomplete": []
+          }
+        ],
+        "selected": [
+          "label"
+        ],
+        "cost": 1,
+        "selection": "exact",
+        "covered": [
+          "preserve-value"
+        ],
+        "uncovered": [],
+        "decoder": {
+          "observationIds": [
+            "label"
+          ],
+          "rows": [
+            {
+              "caseId": "literal",
+              "values": [
+                "<script>"
+              ]
+            },
+            {
+              "caseId": "escaped",
+              "values": [
+                "\\u003cscript>"
+              ]
+            }
+          ]
+        },
+        "collisions": [],
+        "incompleteCases": []
+      }
+    ],
+    "execution": {
+      "adapterCalls": 4,
+      "mode": "built-in-adapters-and-model",
+      "tests": "not-executed"
+    }
+  },
+  "provenance": {
+    "engineVersion": "contrast-compiler/1.0.0",
+    "schemaVersion": "nova-contrast/1",
+    "exportedAt": "2026-09-12T15:44:39.970Z",
+    "observations": [
+      {
+        "id": "angle",
+        "source": "adapter",
+        "adapter": "nova-structured-data"
+      },
+      {
+        "id": "label",
+        "source": "adapter",
+        "adapter": "nova-structured-data"
+      }
+    ],
+    "execution": {
+      "adapterCalls": 4,
+      "mode": "built-in-adapters-and-model",
+      "tests": "not-executed"
+    },
+    "scope": "Finite supplied model; adapters executed locally; exported tests not executed by export."
+  },
+  "decoders": [
+    {
+      "channel": "html",
+      "observationIds": [],
+      "rows": [
+        {
+          "caseId": "literal",
+          "values": []
+        },
+        {
+          "caseId": "escaped",
+          "values": []
+        }
+      ]
+    },
+    {
+      "channel": "value",
+      "observationIds": [
+        "label"
+      ],
+      "rows": [
+        {
+          "caseId": "literal",
+          "values": [
+            "<script>"
+          ]
+        },
+        {
+          "caseId": "escaped",
+          "values": [
+            "\\u003cscript>"
+          ]
+        }
+      ]
+    }
+  ],
+  "unresolved": [
+    {
+      "channel": "html",
+      "contradictions": [],
+      "uncovered": [],
+      "collisions": [
+        {
+          "vector": [],
+          "caseIds": [
+            "literal",
+            "escaped"
+          ]
+        }
+      ],
+      "incompleteCases": []
+    },
+    {
+      "channel": "value",
+      "contradictions": [],
+      "uncovered": [],
+      "collisions": [],
+      "incompleteCases": []
+    }
+  ],
+  "testSpecification": {
+    "version": "contrast-tests/1",
+    "project": {
+      "schemaVersion": "nova-contrast/1",
+      "name": "Nova structured-data contract",
+      "cases": [
+        {
+          "id": "literal",
+          "name": "Literal angle bracket",
+          "input": "{\"label\":\"<script>\"}"
+        },
+        {
+          "id": "escaped",
+          "name": "Literal escape text",
+          "input": "{\"label\":\"\\\\u003cscript>\"}"
+        }
+      ],
+      "channels": [
+        {
+          "id": "html",
+          "name": "Raw HTML boundary"
+        },
+        {
+          "id": "value",
+          "name": "Round-trip label"
+        }
+      ],
+      "observations": [
+        {
+          "id": "angle",
+          "name": "Contains a literal <",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "html"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "nova-structured-data",
+          "operation": "contains-literal-angle",
+          "values": {}
+        },
+        {
+          "id": "label",
+          "name": "Decoded label",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "value"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "nova-structured-data",
+          "operation": "roundtrip-label",
+          "values": {}
+        }
+      ],
+      "requirements": [
+        {
+          "id": "safe-boundary",
+          "channel": "html",
+          "kind": "same",
+          "left": "literal",
+          "right": "escaped"
+        },
+        {
+          "id": "preserve-value",
+          "channel": "value",
+          "kind": "different",
+          "left": "literal",
+          "right": "escaped"
+        }
+      ]
+    },
+    "checks": [
+      {
+        "id": "safe-boundary",
+        "kind": "same",
+        "left": "literal",
+        "right": "escaped",
+        "channel": "html",
+        "observationIds": [
+          "angle"
+        ],
+        "executable": true,
+        "modelStatus": "review candidate evidence"
+      },
+      {
+        "id": "preserve-value",
+        "kind": "different",
+        "left": "literal",
+        "right": "escaped",
+        "channel": "value",
+        "observationIds": [
+          "label"
+        ],
+        "executable": true,
+        "modelStatus": "covered"
+      }
+    ]
+  },
+  "files": {
+    "requirements.test.ts": "/** Generated by contrast-compiler/1.0.0. NOT EXECUTED by export.\n * Place in apps/web/src/lib/contrast/__tests__/exported.test.ts.\n * Run npm test --workspace=@nova/web -- --runInBand exported.test.ts\n * Adapter inputs are data. Assertions come from separately declared requirements.\n * Model-only checks are pending, not passing. Uncovered executable requirements fail. */\nimport { observe } from '../adapters';\nimport { normalize } from '../schema';\nimport type { TestSpec } from '../bundle';\nconst spec: TestSpec = {\n  \"version\": \"contrast-tests/1\",\n  \"project\": {\n    \"schemaVersion\": \"nova-contrast/1\",\n    \"name\": \"Nova structured-data contract\",\n    \"cases\": [\n      {\n        \"id\": \"literal\",\n        \"name\": \"Literal angle bracket\",\n        \"input\": \"{\\\"label\\\":\\\"\\u003cscript>\\\"}\"\n      },\n      {\n        \"id\": \"escaped\",\n        \"name\": \"Literal escape text\",\n        \"input\": \"{\\\"label\\\":\\\"\\\\\\\\u003cscript>\\\"}\"\n      }\n    ],\n    \"channels\": [\n      {\n        \"id\": \"html\",\n        \"name\": \"Raw HTML boundary\"\n      },\n      {\n        \"id\": \"value\",\n        \"name\": \"Round-trip label\"\n      }\n    ],\n    \"observations\": [\n      {\n        \"id\": \"angle\",\n        \"name\": \"Contains a literal \\u003c\",\n        \"cost\": 1,\n        \"enabled\": true,\n        \"channels\": [\n          \"html\"\n        ],\n        \"kind\": \"categorical\",\n        \"source\": \"adapter\",\n        \"adapter\": \"nova-structured-data\",\n        \"operation\": \"contains-literal-angle\",\n        \"values\": {}\n      },\n      {\n        \"id\": \"label\",\n        \"name\": \"Decoded label\",\n        \"cost\": 1,\n        \"enabled\": true,\n        \"channels\": [\n          \"value\"\n        ],\n        \"kind\": \"categorical\",\n        \"source\": \"adapter\",\n        \"adapter\": \"nova-structured-data\",\n        \"operation\": \"roundtrip-label\",\n        \"values\": {}\n      }\n    ],\n    \"requirements\": [\n      {\n        \"id\": \"safe-boundary\",\n        \"channel\": \"html\",\n        \"kind\": \"same\",\n        \"left\": \"literal\",\n        \"right\": \"escaped\"\n      },\n      {\n        \"id\": \"preserve-value\",\n        \"channel\": \"value\",\n        \"kind\": \"different\",\n        \"left\": \"literal\",\n        \"right\": \"escaped\"\n      }\n    ]\n  },\n  \"checks\": [\n    {\n      \"id\": \"safe-boundary\",\n      \"kind\": \"same\",\n      \"left\": \"literal\",\n      \"right\": \"escaped\",\n      \"channel\": \"html\",\n      \"observationIds\": [\n        \"angle\"\n      ],\n      \"executable\": true,\n      \"modelStatus\": \"review candidate evidence\"\n    },\n    {\n      \"id\": \"preserve-value\",\n      \"kind\": \"different\",\n      \"left\": \"literal\",\n      \"right\": \"escaped\",\n      \"channel\": \"value\",\n      \"observationIds\": [\n        \"label\"\n      ],\n      \"executable\": true,\n      \"modelStatus\": \"covered\"\n    }\n  ]\n};\ndescribe('Exported Contrast requirements', () => {\n  for (const check of spec.checks) {\n    if (!check.executable) { test.todo(check.id + ': missing executable observation/adapter integration'); continue; }\n    test(check.id + ': ' + check.left + ' ' + check.kind + ' ' + check.right + ' on ' + check.channel, () => {\n      const vector = (caseId: string) => check.observationIds.map(id => {\n        const o = spec.project.observations.find(item => item.id === id)!;\n        const c = spec.project.cases.find(item => item.id === caseId)!;\n        const value = normalize(o, observe(o.adapter!, c.input ?? '', o.operation!));\n        expect(value).not.toBeNull();\n        return value;\n      });\n      const left = vector(check.left), right = vector(check.right);\n      if (check.kind === 'same') expect(left).toEqual(right);\n      else expect(left).not.toEqual(right);\n    });\n  }\n});\n",
+    "decoder.cjs": "// Standalone lookup for supplied cases only. Inputs are normalized categorical/bin vectors.\nconst decoders = [\n  {\n    \"channel\": \"html\",\n    \"observationIds\": [],\n    \"rows\": [\n      {\n        \"caseId\": \"literal\",\n        \"values\": []\n      },\n      {\n        \"caseId\": \"escaped\",\n        \"values\": []\n      }\n    ]\n  },\n  {\n    \"channel\": \"value\",\n    \"observationIds\": [\n      \"label\"\n    ],\n    \"rows\": [\n      {\n        \"caseId\": \"literal\",\n        \"values\": [\n          \"\\u003cscript>\"\n        ]\n      },\n      {\n        \"caseId\": \"escaped\",\n        \"values\": [\n          \"\\\\u003cscript>\"\n        ]\n      }\n    ]\n  }\n];\nfunction decode(channel, vector) {\n const decoder = decoders.find(d => d.channel === channel);\n if (!decoder || !Array.isArray(vector) || vector.length !== decoder.observationIds.length || vector.some(v => v === null || !['string', 'boolean'].includes(typeof v))) return { status: 'unknown', candidateCaseIds: [] };\n const compatible = decoder.rows.filter(row => row.values.every((v, i) => v === null || v === vector[i]));\n const complete = compatible.filter(row => !row.values.includes(null));\n return { status: !complete.length ? 'unknown' : compatible.length === 1 ? 'unique' : 'ambiguous', candidateCaseIds: compatible.map(row => row.caseId) };\n}\nmodule.exports = { decoders, decode };\n",
+    "report.md": "# Nova structured-data contract\n\nEngine: contrast-compiler/1.0.0. Schema: nova-contrast/1.\nAnalysis mode: built-in-adapters-and-model; 4 built-in adapter observations executed. Exported tests: NOT EXECUTED.\n\nResults apply only to supplied finite cases, exact categories, and explicit numeric bins. No tolerance relation, physical validation, universal correctness, or unseen-state guarantee.\n\n## Raw HTML boundary\nSelection: exact. Cost: 0. Selected: (none).\nExact means minimum cost for coverable declared distinctions using admissible enabled observations, not full coverage of impossible requirements. Costs are independent per channel; not a joint acquisition optimization.\nangle: admissible; separates []; collisions []; incomplete [].\nDECODER COLLISION []: literal, escaped.\nIncomplete decoder rows: none.\n\n## Round-trip label\nSelection: exact. Cost: 1. Selected: label.\nExact means minimum cost for coverable declared distinctions using admissible enabled observations, not full coverage of impossible requirements. Costs are independent per channel; not a joint acquisition optimization.\nlabel: admissible; separates [preserve-value]; collisions []; incomplete [].\nIncomplete decoder rows: none.\n",
+    "adapter-contract.md": "Adapter interface: observe(adapterId, caseInput, observationId) -> string | boolean | number | null. Implement integrations in trusted repository code. Do not execute uploaded code. Return null for unavailable measurements. Numeric observations require declared bins. Supply independent relation requirements; do not calculate expectations using the implementation being tested. Imported tables without a built-in adapter are model analysis only. No external system was tested."
+  }
+}

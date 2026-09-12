@@ -1,0 +1,120 @@
+{
+  "schemaVersion": "nova-contrast/1",
+  "name": "Sequence Witness · logic simulation",
+  "cases": [
+    {
+      "id": "AB",
+      "name": "AB",
+      "input": "AB"
+    },
+    {
+      "id": "BA",
+      "name": "BA",
+      "input": "BA"
+    },
+    {
+      "id": "ABA",
+      "name": "ABA",
+      "input": "ABA"
+    },
+    {
+      "id": "BAB",
+      "name": "BAB",
+      "input": "BAB"
+    }
+  ],
+  "channels": [
+    {
+      "id": "inspection",
+      "name": "Inspection"
+    }
+  ],
+  "observations": [
+    {
+      "id": "a-seen",
+      "name": "A seen",
+      "cost": 1,
+      "enabled": true,
+      "channels": [
+        "inspection"
+      ],
+      "kind": "categorical",
+      "source": "adapter",
+      "adapter": "sequence-witness",
+      "operation": "a-seen",
+      "values": {}
+    },
+    {
+      "id": "b-seen",
+      "name": "B seen",
+      "cost": 1,
+      "enabled": true,
+      "channels": [
+        "inspection"
+      ],
+      "kind": "categorical",
+      "source": "adapter",
+      "adapter": "sequence-witness",
+      "operation": "b-seen",
+      "values": {}
+    },
+    {
+      "id": "a-before-b",
+      "name": "A before B",
+      "cost": 1,
+      "enabled": false,
+      "channels": [
+        "inspection"
+      ],
+      "kind": "categorical",
+      "source": "adapter",
+      "adapter": "sequence-witness",
+      "operation": "a-before-b",
+      "values": {}
+    },
+    {
+      "id": "b-before-a",
+      "name": "B before A",
+      "cost": 1,
+      "enabled": false,
+      "channels": [
+        "inspection"
+      ],
+      "kind": "categorical",
+      "source": "adapter",
+      "adapter": "sequence-witness",
+      "operation": "b-before-a",
+      "values": {}
+    }
+  ],
+  "requirements": [
+    {
+      "id": "r1",
+      "channel": "inspection",
+      "kind": "different",
+      "left": "AB",
+      "right": "BA"
+    },
+    {
+      "id": "r2",
+      "channel": "inspection",
+      "kind": "different",
+      "left": "AB",
+      "right": "ABA"
+    },
+    {
+      "id": "r3",
+      "channel": "inspection",
+      "kind": "different",
+      "left": "BA",
+      "right": "ABA"
+    },
+    {
+      "id": "r4",
+      "channel": "inspection",
+      "kind": "different",
+      "left": "ABA",
+      "right": "BAB"
+    }
+  ]
+}
