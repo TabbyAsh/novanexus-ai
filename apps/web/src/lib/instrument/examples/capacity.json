@@ -1,0 +1,134 @@
+{
+  "schemaVersion": "nova-instrument/1",
+  "id": "process-capacity",
+  "title": "How much can this process produce?",
+  "description": "Change a stage's speed to see what limits the whole process and how much output fits in a shift.",
+  "assumptions": [
+    "Every unit passes through all three stages, with one unit leaving each stage for every unit entering it.",
+    "Steady flow: enough work and buffering keep the slowest stage supplied. Startup time, downtime, defects and transfer delays are excluded.",
+    "Shift output is a theoretical capacity, rounded down to whole units. It is not a delivery promise."
+  ],
+  "inputs": [
+    {
+      "id": "prepare",
+      "label": "Prepare",
+      "type": "number",
+      "unit": "item/h",
+      "default": 6,
+      "min": 0,
+      "max": 10000,
+      "step": 1,
+      "help": "How many units the first stage can handle each hour."
+    },
+    {
+      "id": "assemble",
+      "label": "Assemble",
+      "type": "number",
+      "unit": "item/h",
+      "default": 4,
+      "min": 0,
+      "max": 10000,
+      "step": 1,
+      "help": "How many units the second stage can handle each hour."
+    },
+    {
+      "id": "pack",
+      "label": "Pack",
+      "type": "number",
+      "unit": "item/h",
+      "default": 5,
+      "min": 0,
+      "max": 10000,
+      "step": 1,
+      "help": "How many units the third stage can handle each hour."
+    },
+    {
+      "id": "shift",
+      "label": "Shift length",
+      "type": "number",
+      "unit": "h",
+      "default": 8,
+      "min": 0,
+      "max": 24,
+      "step": 0.5,
+      "help": "Available operating hours, after any planned breaks."
+    },
+    {
+      "id": "target",
+      "label": "Units needed",
+      "type": "integer",
+      "unit": "item",
+      "default": 36,
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "help": "Compare the theoretical capacity with a target."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "bottleneck",
+      "label": "Process capacity",
+      "unit": "item/h",
+      "expression": {
+        "op": "min",
+        "args": [{ "ref": "prepare" }, { "ref": "assemble" }, { "ref": "pack" }]
+      },
+      "precision": 2,
+      "help": "The slowest stage limits the whole process. Improving another stage alone does not increase this number."
+    },
+    {
+      "id": "shiftOutput",
+      "label": "Possible in this shift",
+      "unit": "item",
+      "expression": {
+        "op": "floor",
+        "args": [
+          {
+            "op": "multiply",
+            "args": [{ "ref": "bottleneck" }, { "ref": "shift" }]
+          }
+        ]
+      },
+      "precision": 0,
+      "help": "Process capacity × shift hours, rounded down to whole units."
+    },
+    {
+      "id": "shortfall",
+      "label": "Units short of target",
+      "unit": "item",
+      "expression": {
+        "op": "max",
+        "args": [
+          { "value": 0, "unit": "item" },
+          {
+            "op": "subtract",
+            "args": [{ "ref": "target" }, { "ref": "shiftOutput" }]
+          }
+        ]
+      },
+      "precision": 0,
+      "help": "Zero means the stated target fits within this model's capacity."
+    }
+  ],
+  "constraints": [
+    {
+      "id": "targetFits",
+      "left": { "ref": "target" },
+      "operator": "lte",
+      "right": { "ref": "shiftOutput" },
+      "message": "The target exceeds this shift's theoretical capacity. Increase the limiting stage, extend the shift, or reduce the target.",
+      "severity": "warning"
+    }
+  ],
+  "chart": {
+    "title": "Stage speeds and process limit",
+    "unit": "item/h",
+    "series": [
+      { "label": "Prepare", "ref": "prepare" },
+      { "label": "Assemble", "ref": "assemble" },
+      { "label": "Pack", "ref": "pack" },
+      { "label": "Whole process", "ref": "bottleneck" }
+    ]
+  }
+}

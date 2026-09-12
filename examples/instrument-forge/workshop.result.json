@@ -1,0 +1,31 @@
+{
+  "ok": true,
+  "inputs": {
+    "attendees": 40,
+    "price": 25,
+    "variableCost": 10,
+    "fixedCost": 300
+  },
+  "values": {
+    "remaining": 300,
+    "breakEven": 20,
+    "revenue": 1000,
+    "totalCost": 700
+  },
+  "errors": [],
+  "warnings": [],
+  "constraints": [
+    {
+      "id": "positiveContribution",
+      "passed": true,
+      "message": "Ticket price must exceed cost per attendee to calculate a break-even attendance. Raise the price or lower the per-person cost.",
+      "severity": "error"
+    },
+    {
+      "id": "covered",
+      "passed": true,
+      "message": "This attendance does not cover the stated costs. The negative remaining budget is the shortfall.",
+      "severity": "warning"
+    }
+  ]
+}

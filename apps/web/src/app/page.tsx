@@ -64,6 +64,9 @@ export default function HomePage() {
             <Link href="/lab/contrast" className="underline-offset-4 hover:underline">
               Contrast Lab
             </Link>
+            <Link href="/lab/forge" className="underline-offset-4 hover:underline">
+              Instrument Forge
+            </Link>
             <Link href="/services/workflow-setup" className="underline-offset-4 hover:underline">
               Guided setup
             </Link>

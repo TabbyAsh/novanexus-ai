@@ -1,0 +1,146 @@
+{
+  "schemaVersion": "nova-instrument/1",
+  "id": "workshop-budget",
+  "title": "Will this workshop cover its costs?",
+  "description": "Change attendance, ticket price and costs. See the remaining budget and how many attendees are needed to break even.",
+  "assumptions": [
+    "One paid ticket per attendee; everyone pays the same price in USD.",
+    "Per-person costs scale with attendance. Fixed costs do not change within the modeled range.",
+    "Taxes, refunds, payment fees and unpaid labor are excluded unless already included in the entered costs."
+  ],
+  "inputs": [
+    {
+      "id": "attendees",
+      "label": "Paid attendees",
+      "type": "integer",
+      "unit": "item",
+      "default": 40,
+      "min": 0,
+      "max": 100000,
+      "step": 1,
+      "help": "Number of people buying a ticket."
+    },
+    {
+      "id": "price",
+      "label": "Ticket price",
+      "type": "number",
+      "unit": "USD/item",
+      "default": 25,
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "help": "Price paid by each attendee, in USD."
+    },
+    {
+      "id": "variableCost",
+      "label": "Cost per attendee",
+      "type": "number",
+      "unit": "USD/item",
+      "default": 10,
+      "min": 0,
+      "max": 1000000,
+      "step": 1,
+      "help": "Materials, food and other costs that scale with attendance."
+    },
+    {
+      "id": "fixedCost",
+      "label": "Fixed costs",
+      "type": "number",
+      "unit": "USD",
+      "default": 300,
+      "min": 0,
+      "max": 100000000,
+      "step": 25,
+      "help": "Room hire and other costs paid regardless of attendance."
+    }
+  ],
+  "outputs": [
+    {
+      "id": "remaining",
+      "label": "Budget remaining",
+      "unit": "USD",
+      "expression": {
+        "op": "subtract",
+        "args": [{ "ref": "revenue" }, { "ref": "totalCost" }]
+      },
+      "precision": 2,
+      "help": "Revenue minus total costs. A negative value is a shortfall."
+    },
+    {
+      "id": "breakEven",
+      "label": "Attendees to break even",
+      "unit": "item",
+      "expression": {
+        "op": "ceil",
+        "args": [
+          {
+            "op": "divide",
+            "args": [
+              { "ref": "fixedCost" },
+              {
+                "op": "subtract",
+                "args": [{ "ref": "price" }, { "ref": "variableCost" }]
+              }
+            ]
+          }
+        ]
+      },
+      "precision": 0,
+      "help": "Fixed costs ÷ contribution per attendee, rounded up to the next whole attendee."
+    },
+    {
+      "id": "revenue",
+      "label": "Ticket revenue",
+      "unit": "USD",
+      "expression": {
+        "op": "multiply",
+        "args": [{ "ref": "attendees" }, { "ref": "price" }]
+      },
+      "precision": 2,
+      "help": "Paid attendees × ticket price."
+    },
+    {
+      "id": "totalCost",
+      "label": "Total costs",
+      "unit": "USD",
+      "expression": {
+        "op": "add",
+        "args": [
+          { "ref": "fixedCost" },
+          {
+            "op": "multiply",
+            "args": [{ "ref": "attendees" }, { "ref": "variableCost" }]
+          }
+        ]
+      },
+      "precision": 2,
+      "help": "Fixed costs + (attendees × cost per attendee)."
+    }
+  ],
+  "constraints": [
+    {
+      "id": "positiveContribution",
+      "left": { "ref": "price" },
+      "operator": "gt",
+      "right": { "ref": "variableCost" },
+      "message": "Ticket price must exceed cost per attendee to calculate a break-even attendance. Raise the price or lower the per-person cost.",
+      "severity": "error"
+    },
+    {
+      "id": "covered",
+      "left": { "ref": "remaining" },
+      "operator": "gte",
+      "right": { "value": 0, "unit": "USD" },
+      "message": "This attendance does not cover the stated costs. The negative remaining budget is the shortfall.",
+      "severity": "warning"
+    }
+  ],
+  "chart": {
+    "title": "Revenue and costs",
+    "unit": "USD",
+    "series": [
+      { "label": "Ticket revenue", "ref": "revenue" },
+      { "label": "Total costs", "ref": "totalCost" }
+    ]
+  }
+}

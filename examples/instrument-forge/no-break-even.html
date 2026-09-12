@@ -1,0 +1,679 @@
+<!doctype html><html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; connect-src 'none'; img-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'"><title>Will this workshop cover its costs?</title><style>:root{color-scheme:light}*{box-sizing:border-box}body{margin:0;background:#f2f0e9;color:#141713;font:16px/1.5 system-ui,sans-serif}main{max-width:1120px;margin:auto;padding:40px 24px}h1{font-size:clamp(30px,5vw,52px);line-height:1.06;letter-spacing:-.04em;max-width:800px}h2{font-size:19px}h3{font-size:16px}.eyebrow{font-size:11px;font-weight:800;letter-spacing:.17em}.lead{font-size:18px;max-width:760px}.local,.warning{padding:12px 16px;background:#e7eddc}.grid{display:grid;grid-template-columns:1fr 1.1fr;gap:40px;margin:32px 0}.help{font-size:13px;color:#58614f;line-height:1.6}label{display:block;font-weight:650;margin-top:18px}input{width:100%;padding:12px;margin-top:5px;border:1px solid #929a87;background:#fffef8;font:inherit;font-size:23px;color:inherit}button{min-height:42px;border:1px solid #526148;background:transparent;padding:10px 16px;color:inherit;font:inherit;cursor:pointer}button:disabled{opacity:.45;cursor:not-allowed}.toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:25px}.result{border:1px solid #bdc4b3;background:#fffdf7;padding:18px 22px;margin:12px 0}.result h2{margin:0;font-size:15px}.primary{background:#19271b;color:#f2f0e9}.primary .help{color:#c4d4ba}.primary .value{color:#b9ef9a}.value{font-size:36px;font-weight:850;letter-spacing:-.03em}.primary .value{font-size:62px}.unit{margin:0}.error{padding:14px;border-left:4px solid #923c25;background:#f6e3db;color:#752d1b}.warning{border-left:4px solid #997d34}.chart{margin:25px 0}.bar-row{display:grid;grid-template-columns:1fr auto;gap:5px;margin:14px 0;font-size:13px}.track{position:relative;grid-column:1/-1;height:12px;background:linear-gradient(90deg,#e1e6d9 49.8%,#7c8673 49.8%,#7c8673 50.2%,#e1e6d9 50.2%)}.bar{position:absolute;height:100%;background:#417047}.negative{background:#a65336}.assumptions,details{border-top:1px solid #929a87;margin-top:30px;padding-top:15px}li{margin:8px 0}summary{cursor:pointer;font-weight:700}button:hover{background:#dce7cf}:is(input,button,summary):focus-visible{outline:3px solid #467e52;outline-offset:3px}@media(max-width:650px){.grid{grid-template-columns:1fr;gap:20px}main{padding:25px 18px}.value{overflow-wrap:anywhere}}</style></head><body><main id="app"></main><noscript>This calculator needs JavaScript enabled; it does not need a network connection.</noscript><script id="instrument-data" type="application/json">{"documentVersion":"nova-instrument-document/1","spec":{"schemaVersion":"nova-instrument/1","id":"workshop-budget","title":"Will this workshop cover its costs?","description":"Change attendance, ticket price and costs. See the remaining budget and how many attendees are needed to break even.","assumptions":["One paid ticket per attendee; everyone pays the same price in USD.","Per-person costs scale with attendance. Fixed costs do not change within the modeled range.","Taxes, refunds, payment fees and unpaid labor are excluded unless already included in the entered costs."],"inputs":[{"id":"attendees","label":"Paid attendees","type":"integer","unit":"item","default":40,"min":0,"max":100000,"step":1,"help":"Number of people buying a ticket."},{"id":"price","label":"Ticket price","type":"number","unit":"USD/item","default":25,"min":0,"max":1000000,"step":1,"help":"Price paid by each attendee, in USD."},{"id":"variableCost","label":"Cost per attendee","type":"number","unit":"USD/item","default":10,"min":0,"max":1000000,"step":1,"help":"Materials, food and other costs that scale with attendance."},{"id":"fixedCost","label":"Fixed costs","type":"number","unit":"USD","default":300,"min":0,"max":100000000,"step":25,"help":"Room hire and other costs paid regardless of attendance."}],"outputs":[{"id":"remaining","label":"Budget remaining","unit":"USD","expression":{"op":"subtract","args":[{"ref":"revenue"},{"ref":"totalCost"}]},"precision":2,"help":"Revenue minus total costs. A negative value is a shortfall."},{"id":"breakEven","label":"Attendees to break even","unit":"item","expression":{"op":"ceil","args":[{"op":"divide","args":[{"ref":"fixedCost"},{"op":"subtract","args":[{"ref":"price"},{"ref":"variableCost"}]}]}]},"precision":0,"help":"Fixed costs ÷ contribution per attendee, rounded up to the next whole attendee."},{"id":"revenue","label":"Ticket revenue","unit":"USD","expression":{"op":"multiply","args":[{"ref":"attendees"},{"ref":"price"}]},"precision":2,"help":"Paid attendees × ticket price."},{"id":"totalCost","label":"Total costs","unit":"USD","expression":{"op":"add","args":[{"ref":"fixedCost"},{"op":"multiply","args":[{"ref":"attendees"},{"ref":"variableCost"}]}]},"precision":2,"help":"Fixed costs + (attendees × cost per attendee)."}],"constraints":[{"id":"positiveContribution","left":{"ref":"price"},"operator":"gt","right":{"ref":"variableCost"},"message":"Ticket price must exceed cost per attendee to calculate a break-even attendance. Raise the price or lower the per-person cost.","severity":"error"},{"id":"covered","left":{"ref":"remaining"},"operator":"gte","right":{"value":0,"unit":"USD"},"message":"This attendance does not cover the stated costs. The negative remaining budget is the shortfall.","severity":"warning"}],"chart":{"title":"Revenue and costs","unit":"USD","series":[{"label":"Ticket revenue","ref":"revenue"},{"label":"Total costs","ref":"totalCost"}]}},"values":{"attendees":40,"price":10,"variableCost":10,"fixedCost":300}}</script><script>"use strict";const engine=(function createInstrumentEngine() {
+    const units = {
+        "1": { label: "", dimension: [0, 0, 0], scale: 1 },
+        item: { label: "units", dimension: [1, 0, 0], scale: 1 },
+        h: { label: "hours", dimension: [0, 1, 0], scale: 1 },
+        min: { label: "minutes", dimension: [0, 1, 0], scale: 1 / 60 },
+        "item/h": { label: "units / hour", dimension: [1, -1, 0], scale: 1 },
+        "item/min": { label: "units / minute", dimension: [1, -1, 0], scale: 60 },
+        USD: { label: "USD", dimension: [0, 0, 1], scale: 1 },
+        "USD/item": { label: "USD / unit", dimension: [-1, 0, 1], scale: 1 },
+        "USD/h": { label: "USD / hour", dimension: [0, -1, 1], scale: 1 },
+    };
+    const limits = {
+        bytes: 200000,
+        inputs: 24,
+        outputs: 24,
+        constraints: 24,
+        nodes: 1000,
+        depth: 16,
+    };
+    const own = (o, key) => Object.prototype.hasOwnProperty.call(o, key);
+    const fail = (where, message) => {
+        throw new Error(where + ": " + message);
+    };
+    function object(v, where) {
+        if (!v || typeof v !== "object" || Array.isArray(v))
+            return fail(where, "Expected an object.");
+        return v;
+    }
+    function keys(v, allowed, where) {
+        Object.keys(v).forEach((key) => {
+            if (!allowed.includes(key))
+                fail(where, "Unsupported field " + key + ".");
+        });
+    }
+    function text(v, where, max = 160) {
+        if (typeof v !== "string" || !v.trim() || v.length > max)
+            return fail(where, "Use nonempty text up to " + max + " characters.");
+        return v;
+    }
+    function id(v, where) {
+        const s = text(v, where, 64);
+        if (!/^[A-Za-z][A-Za-z0-9_-]*$/.test(s) ||
+            ["constructor", "prototype", "__proto__"].includes(s))
+            return fail(where, "Use a safe ID starting with a letter.");
+        return s;
+    }
+    function number(v, where) {
+        if (typeof v !== "number" || !Number.isFinite(v) || Math.abs(v) > 1e9)
+            return fail(where, "Use a finite number between -1 billion and 1 billion.");
+        return v;
+    }
+    function unit(v, where) {
+        if (typeof v !== "string" || !own(units, v))
+            return fail(where, "Unsupported unit. Supported: " + Object.keys(units).join(", ") + ".");
+        return v;
+    }
+    function list(v, where, min, max) {
+        if (!Array.isArray(v) || v.length < min || v.length > max)
+            return fail(where, "Expected " + min + "–" + max + " entries.");
+        return v;
+    }
+    const sameDimension = (a, b) => a.every((n, i) => n === b[i]);
+    const zero = BigInt(0), one = BigInt(1), ten = BigInt(10);
+    const absInteger = (v) => (v < zero ? -v : v);
+    function fraction(n, d = one) {
+        if (d === zero)
+            return fail("Formula", "Cannot divide by zero. Change the inputs.");
+        if (d < zero) {
+            n = -n;
+            d = -d;
+        }
+        let a = absInteger(n), b = d;
+        while (b !== zero) {
+            const remainder = a % b;
+            a = b;
+            b = remainder;
+        }
+        n /= a;
+        d /= a;
+        if (absInteger(n) > d * BigInt(1e15))
+            return fail("Formula", "Result exceeds the supported finite magnitude of 10^15.");
+        if (absInteger(n).toString().length > 240 || d.toString().length > 240)
+            return fail("Formula", "Exact arithmetic exceeds its 240-digit precision limit.");
+        return { n, d };
+    }
+    function decimal(value) {
+        const pieces = value.toString().toLowerCase().split("e"), decimalPlaces = (pieces[0].split(".")[1] || "").length;
+        const exponent = Number(pieces[1] || 0) - decimalPlaces;
+        let power = one;
+        for (let i = 0; i < Math.abs(exponent); i++)
+            power *= ten;
+        const n = BigInt(pieces[0].replace(".", ""));
+        return exponent >= 0 ? fraction(n * power) : fraction(n, power);
+    }
+    function convert(value, unit, reverse = false) {
+        if (unit === "min")
+            return reverse
+                ? fraction(value.n * BigInt(60), value.d)
+                : fraction(value.n, value.d * BigInt(60));
+        if (unit === "item/min")
+            return reverse
+                ? fraction(value.n, value.d * BigInt(60))
+                : fraction(value.n * BigInt(60), value.d);
+        return value;
+    }
+    function compare(a, b) {
+        const difference = a.n * b.d - b.n * a.d;
+        return difference < zero ? -1 : difference > zero ? 1 : 0;
+    }
+    function checkInput(input, value) {
+        const n = number(value, input.label);
+        if (n < input.min || n > input.max)
+            return fail(input.label, "Enter a value from " + input.min + " to " + input.max + ".");
+        if (input.type === "integer" && !Number.isInteger(n))
+            return fail(input.label, "Enter a whole number.");
+        return n;
+    }
+    function validate(raw) {
+        const p = object(raw, "Instrument");
+        keys(p, [
+            "schemaVersion",
+            "id",
+            "title",
+            "description",
+            "assumptions",
+            "inputs",
+            "outputs",
+            "constraints",
+            "chart",
+        ], "Instrument");
+        if (p.schemaVersion !== "nova-instrument/1")
+            fail("Instrument", "Unsupported schemaVersion. Expected nova-instrument/1.");
+        let nodes = 0;
+        function expression(rawExpr, where, depth = 0) {
+            if (++nodes > limits.nodes || depth > limits.depth)
+                return fail(where, "Expression limit exceeded (1000 nodes, depth 16).");
+            const e = object(rawExpr, where);
+            if (own(e, "ref")) {
+                keys(e, ["ref"], where);
+                return { ref: id(e.ref, where) };
+            }
+            if (own(e, "value")) {
+                keys(e, ["value", "unit"], where);
+                return { value: number(e.value, where), unit: unit(e.unit, where) };
+            }
+            keys(e, ["op", "args"], where);
+            if (typeof e.op !== "string" ||
+                ![
+                    "add",
+                    "subtract",
+                    "multiply",
+                    "divide",
+                    "min",
+                    "max",
+                    "abs",
+                    "ceil",
+                    "floor",
+                ].includes(e.op))
+                return fail(where, "Unsupported operation. Formulas must use the restricted expression tree, never JavaScript or prose.");
+            const unary = ["abs", "ceil", "floor"].includes(e.op);
+            const binary = ["subtract", "divide"].includes(e.op);
+            return {
+                op: e.op,
+                args: list(e.args, where, unary ? 1 : 2, unary ? 1 : binary ? 2 : 16).map((x, i) => expression(x, where + ".args[" + i + "]", depth + 1)),
+            };
+        }
+        const inputs = list(p.inputs, "inputs", 1, limits.inputs).map((rawInput, i) => {
+            const where = "inputs[" + i + "]", a = object(rawInput, where);
+            keys(a, [
+                "id",
+                "label",
+                "type",
+                "unit",
+                "default",
+                "min",
+                "max",
+                "step",
+                "help",
+            ], where);
+            if (a.type !== "number" && a.type !== "integer")
+                fail(where, "Input type must be number or integer.");
+            const result = {
+                id: id(a.id, where),
+                label: text(a.label, where),
+                type: a.type,
+                unit: unit(a.unit, where),
+                default: number(a.default, where),
+                min: number(a.min, where),
+                max: number(a.max, where),
+                step: number(a.step, where),
+                help: text(a.help, where, 240),
+            };
+            if (result.min > result.max || result.step <= 0)
+                fail(where, "Minimum must not exceed maximum; step must be positive.");
+            if (result.type === "integer" &&
+                (!Number.isInteger(result.min) ||
+                    !Number.isInteger(result.max) ||
+                    !Number.isInteger(result.step)))
+                fail(where, "Integer input bounds and step must be whole numbers.");
+            checkInput(result, result.default);
+            return result;
+        });
+        const outputs = list(p.outputs, "outputs", 1, limits.outputs).map((rawOutput, i) => {
+            const where = "outputs[" + i + "]", a = object(rawOutput, where);
+            keys(a, ["id", "label", "unit", "expression", "precision", "help"], where);
+            const precision = number(a.precision, where);
+            if (!Number.isInteger(precision) || precision < 0 || precision > 6)
+                fail(where, "Output precision must be an integer from 0 to 6.");
+            return {
+                id: id(a.id, where),
+                label: text(a.label, where),
+                unit: unit(a.unit, where),
+                expression: expression(a.expression, where + ".expression"),
+                precision,
+                help: text(a.help, where, 240),
+            };
+        });
+        const constraints = list(p.constraints, "constraints", 0, limits.constraints).map((rawConstraint, i) => {
+            const where = "constraints[" + i + "]", c = object(rawConstraint, where);
+            keys(c, ["id", "left", "operator", "right", "message", "severity"], where);
+            if (typeof c.operator !== "string" ||
+                !["lt", "lte", "gt", "gte", "eq"].includes(c.operator))
+                fail(where, "Unsupported comparison.");
+            if (c.severity !== "error" && c.severity !== "warning")
+                fail(where, "Severity must be error or warning.");
+            return {
+                id: id(c.id, where),
+                left: expression(c.left, where + ".left"),
+                operator: c.operator,
+                right: expression(c.right, where + ".right"),
+                message: text(c.message, where, 240),
+                severity: c.severity,
+            };
+        });
+        const allIds = [];
+        inputs
+            .map((i) => i.id)
+            .concat(outputs.map((o) => o.id))
+            .forEach((itemId) => {
+            if (allIds.includes(itemId))
+                fail(itemId, "Duplicate input/output ID.");
+            allIds.push(itemId);
+        });
+        const constraintIds = [];
+        constraints.forEach((c) => {
+            if (constraintIds.includes(c.id))
+                fail(c.id, "Duplicate constraint ID.");
+            constraintIds.push(c.id);
+        });
+        const dimensions = Object.create(null);
+        const active = [];
+        inputs.forEach((input) => {
+            dimensions[input.id] = units[input.unit].dimension;
+        });
+        function referenceDimension(ref) {
+            if (own(dimensions, ref))
+                return dimensions[ref];
+            const output = outputs.find((o) => o.id === ref);
+            if (!output)
+                return fail(ref, "Unknown reference.");
+            if (active.includes(ref))
+                return fail(ref, "Circular formula: " + active.concat(ref).join(" → ") + ".");
+            active.push(ref);
+            const d = expressionDimension(output.expression);
+            active.pop();
+            if (!sameDimension(d, units[output.unit].dimension))
+                return fail(output.label, "Formula units do not match declared output unit " +
+                    output.unit +
+                    ".");
+            dimensions[ref] = d;
+            return d;
+        }
+        function expressionDimension(e) {
+            if ("ref" in e)
+                return referenceDimension(e.ref);
+            if ("value" in e)
+                return units[e.unit].dimension;
+            const ds = e.args.map(expressionDimension);
+            if (e.op === "multiply" || e.op === "divide")
+                return ds
+                    .slice(1)
+                    .reduce((a, b) => a.map((n, i) => n + (e.op === "divide" ? -b[i] : b[i])), ds[0]);
+            if (!ds.every((d) => sameDimension(d, ds[0])))
+                return fail(e.op, "Incompatible units. Addition, subtraction, min and max require matching dimensions.");
+            if ((e.op === "ceil" || e.op === "floor") &&
+                !sameDimension(ds[0], [0, 0, 0]) &&
+                !sameDimension(ds[0], [1, 0, 0]))
+                return fail(e.op, "Rounding is supported only for dimensionless numbers or item counts.");
+            return ds[0];
+        }
+        outputs.forEach((o) => referenceDimension(o.id));
+        constraints.forEach((c) => {
+            if (!sameDimension(expressionDimension(c.left), expressionDimension(c.right)))
+                fail(c.id, "Constraint compares incompatible units.");
+        });
+        const result = {
+            schemaVersion: "nova-instrument/1",
+            id: id(p.id, "id"),
+            title: text(p.title, "title"),
+            description: text(p.description, "description", 500),
+            assumptions: list(p.assumptions, "assumptions", 1, 8).map((a) => text(a, "assumptions", 240)),
+            inputs,
+            outputs,
+            constraints,
+        };
+        if (p.chart !== undefined) {
+            const c = object(p.chart, "chart");
+            keys(c, ["title", "unit", "series"], "chart");
+            const u = unit(c.unit, "chart");
+            result.chart = {
+                title: text(c.title, "chart"),
+                unit: u,
+                series: list(c.series, "chart.series", 1, 24).map((v) => {
+                    const s = object(v, "chart.series");
+                    keys(s, ["label", "ref"], "chart.series");
+                    const ref = id(s.ref, "chart.series");
+                    if (!sameDimension(referenceDimension(ref), units[u].dimension))
+                        fail("chart", "Series units must match the chart unit.");
+                    return { label: text(s.label, "chart.series"), ref };
+                }),
+            };
+        }
+        return result;
+    }
+    function defaults(spec) {
+        const result = {};
+        spec.inputs.forEach((input) => {
+            result[input.id] = input.default;
+        });
+        return result;
+    }
+    function calculate(raw, rawValues) {
+        const result = {
+            ok: false,
+            inputs: {},
+            values: {},
+            errors: [],
+            warnings: [],
+            constraints: [],
+        };
+        try {
+            const spec = validate(raw);
+            keys(object(rawValues, "Values"), spec.inputs.map((i) => i.id), "Values");
+            spec.inputs.forEach((input) => {
+                try {
+                    let value = rawValues[input.id];
+                    if (typeof value === "string") {
+                        if (!/^[-+]?(?:\d+\.?\d*|\.\d+)(?:[eE][-+]?\d+)?$/.test(value.trim()))
+                            fail(input.label, "Enter a number; an empty field is not zero.");
+                        if (Number(value) === 0 &&
+                            /[1-9]/.test(value.toLowerCase().split("e")[0]))
+                            fail(input.label, "Number is too small to represent; it was not treated as zero.");
+                        value = Number(value);
+                    }
+                    result.inputs[input.id] = checkInput(input, value);
+                }
+                catch (error) {
+                    result.errors.push(error.message);
+                }
+            });
+            if (result.errors.length)
+                return result;
+            const canonical = Object.create(null);
+            spec.inputs.forEach((input) => {
+                canonical[input.id] = convert(decimal(result.inputs[input.id]), input.unit);
+            });
+            const reference = (ref) => {
+                if (own(canonical, ref))
+                    return canonical[ref];
+                const output = spec.outputs.find((o) => o.id === ref);
+                canonical[ref] = evaluate(output.expression);
+                return canonical[ref];
+            };
+            const evaluate = (e) => {
+                if ("ref" in e)
+                    return reference(e.ref);
+                if ("value" in e)
+                    return convert(decimal(e.value), e.unit);
+                const a = e.args.map(evaluate);
+                switch (e.op) {
+                    case "add":
+                        return a.reduce((x, y) => fraction(x.n * y.d + y.n * x.d, x.d * y.d), fraction(zero));
+                    case "subtract":
+                        return fraction(a[0].n * a[1].d - a[1].n * a[0].d, a[0].d * a[1].d);
+                    case "multiply":
+                        return a.reduce((x, y) => fraction(x.n * y.n, x.d * y.d), fraction(one));
+                    case "divide":
+                        return fraction(a[0].n * a[1].d, a[0].d * a[1].n);
+                    case "min":
+                        return a.reduce((x, y) => (compare(x, y) <= 0 ? x : y));
+                    case "max":
+                        return a.reduce((x, y) => (compare(x, y) >= 0 ? x : y));
+                    case "abs":
+                        return fraction(absInteger(a[0].n), a[0].d);
+                    case "ceil":
+                        return fraction(a[0].n / a[0].d +
+                            (a[0].n > zero && a[0].n % a[0].d !== zero ? one : zero));
+                    case "floor":
+                        return fraction(a[0].n / a[0].d -
+                            (a[0].n < zero && a[0].n % a[0].d !== zero ? one : zero));
+                }
+            };
+            // Input-only constraints run first, so useful messages precede arithmetic failures.
+            const onlyInputs = (e) => {
+                if ("ref" in e)
+                    return spec.inputs.some((i) => i.id === e.ref);
+                return "value" in e || e.args.every(onlyInputs);
+            };
+            const check = (c) => {
+                const comparison = compare(evaluate(c.left), evaluate(c.right));
+                const passed = c.operator === "lt"
+                    ? comparison < 0
+                    : c.operator === "lte"
+                        ? comparison <= 0
+                        : c.operator === "gt"
+                            ? comparison > 0
+                            : c.operator === "gte"
+                                ? comparison >= 0
+                                : comparison === 0;
+                result.constraints.push({
+                    id: c.id,
+                    passed,
+                    message: c.message,
+                    severity: c.severity,
+                });
+                if (!passed)
+                    (c.severity === "error" ? result.errors : result.warnings).push(c.message);
+            };
+            const early = spec.constraints.filter((c) => onlyInputs(c.left) && onlyInputs(c.right));
+            early.forEach(check);
+            if (result.errors.length)
+                return result;
+            spec.outputs.forEach((output) => {
+                const value = convert(reference(output.id), output.unit, true);
+                result.values[output.id] = Number(value.n) / Number(value.d);
+            });
+            spec.constraints.filter((c) => !early.includes(c)).forEach(check);
+            if (result.errors.length)
+                result.values = {};
+            result.ok = result.errors.length === 0;
+        }
+        catch (error) {
+            result.errors.push(error.message);
+            result.values = {};
+        }
+        return result;
+    }
+    function document(raw) {
+        const p = object(raw, "Import");
+        if (own(p, "schemaVersion")) {
+            const spec = validate(p);
+            return {
+                documentVersion: "nova-instrument-document/1",
+                spec,
+                values: defaults(spec),
+            };
+        }
+        keys(p, ["documentVersion", "spec", "values"], "Document");
+        if (p.documentVersion !== "nova-instrument-document/1")
+            return fail("Import", "Expected InstrumentSpec nova-instrument/1 or document nova-instrument-document/1. Arbitrary prose is not supported.");
+        const spec = validate(p.spec), values = object(p.values, "values"), normalized = {};
+        keys(values, spec.inputs.map((i) => i.id), "values");
+        spec.inputs.forEach((i) => {
+            normalized[i.id] = checkInput(i, values[i.id]);
+        });
+        return {
+            documentVersion: "nova-instrument-document/1",
+            spec,
+            values: normalized,
+        };
+    }
+    function parse(json) {
+        if (json.length > limits.bytes ||
+            new TextEncoder().encode(json).byteLength > limits.bytes)
+            return fail("Import", "File exceeds 200 KB limit.");
+        let raw;
+        try {
+            raw = JSON.parse(json);
+        }
+        catch {
+            return fail("Import", "Invalid JSON. Import the structured specification, not an explanation or code fence.");
+        }
+        return document(raw);
+    }
+    function describe(e, spec) {
+        if ("ref" in e)
+            return (spec.inputs.find((i) => i.id === e.ref)?.label ||
+                spec.outputs.find((o) => o.id === e.ref)?.label ||
+                e.ref);
+        if ("value" in e)
+            return e.value + (units[e.unit].label ? " " + units[e.unit].label : "");
+        const args = e.args.map((a) => describe(a, spec));
+        const symbols = {
+            add: "+",
+            subtract: "−",
+            multiply: "×",
+            divide: "÷",
+        };
+        return own(symbols, e.op)
+            ? "(" + args.join(" " + symbols[e.op] + " ") + ")"
+            : e.op + "(" + args.join(", ") + ")";
+    }
+    function format(value, precision) {
+        return value.toLocaleString("en-US", { maximumFractionDigits: precision });
+    }
+    function chartValues(spec, calculation) {
+        if (!spec.chart || !calculation.ok)
+            return [];
+        const target = units[spec.chart.unit];
+        return spec.chart.series.map((s) => {
+            const input = spec.inputs.find((i) => i.id === s.ref), output = spec.outputs.find((o) => o.id === s.ref);
+            const value = input
+                ? calculation.inputs[s.ref] * units[input.unit].scale
+                : calculation.values[s.ref] * units[output.unit].scale;
+            return { label: s.label, value: value / target.scale };
+        });
+    }
+    return {
+        units,
+        limits,
+        validate,
+        defaults,
+        calculate,
+        document,
+        parse,
+        describe,
+        format,
+        chartValues,
+    };
+})();(function mountStandalone(project, engine) {
+    const root = document.getElementById("app");
+    const data = engine.document(project), spec = data.spec;
+    let values = Object.assign({}, data.values);
+    function el(tag, text, className) {
+        const node = document.createElement(tag);
+        if (text !== undefined)
+            node.textContent = text;
+        if (className)
+            node.className = className;
+        return node;
+    }
+    function download(filename, text) {
+        const url = URL.createObjectURL(new Blob([text], { type: "application/json" }));
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = filename;
+        link.click();
+        setTimeout(() => URL.revokeObjectURL(url), 1000);
+    }
+    root.append(el("p", "NOVA INSTRUMENT FORGE · OFFLINE FILE", "eyebrow"));
+    root.append(el("h1", spec.title), el("p", spec.description, "lead"));
+    root.append(el("p", "This file computes on this device. No account, network connection or Nova server is needed.", "local"));
+    const grid = el("div", undefined, "grid"), controls = el("section"), results = el("section");
+    controls.append(el("h2", "Change the inputs"));
+    const inputs = {};
+    spec.inputs.forEach((input) => {
+        const label = document.createElement("label");
+        label.htmlFor = "input-" + input.id;
+        label.textContent =
+            input.label +
+                (engine.units[input.unit].label
+                    ? " · " + engine.units[input.unit].label
+                    : "");
+        const field = document.createElement("input");
+        field.type = "number";
+        field.id = label.htmlFor;
+        field.value = String(values[input.id]);
+        field.min = String(input.min);
+        field.max = String(input.max);
+        field.step = String(input.step);
+        field.setAttribute("aria-describedby", "help-" + input.id);
+        const help = el("p", input.help, "help");
+        help.id = "help-" + input.id;
+        field.addEventListener("input", () => {
+            values[input.id] = field.value;
+            render();
+        });
+        inputs[input.id] = field;
+        controls.append(label, field, help);
+    });
+    const reset = document.createElement("button");
+    reset.textContent = "Reset defaults";
+    reset.addEventListener("click", () => {
+        values = engine.defaults(spec);
+        spec.inputs.forEach((i) => {
+            inputs[i.id].value = String(values[i.id]);
+        });
+        render();
+    });
+    const save = document.createElement("button");
+    save.textContent = "Export JSON";
+    save.addEventListener("click", () => {
+        const calculation = engine.calculate(spec, values);
+        if (calculation.ok)
+            download(spec.id + ".instrument.json", JSON.stringify({
+                documentVersion: "nova-instrument-document/1",
+                spec,
+                values: calculation.inputs,
+            }, null, 2));
+    });
+    const toolbar = el("div", undefined, "toolbar");
+    toolbar.append(reset, save);
+    controls.append(toolbar);
+    const status = el("div");
+    status.setAttribute("role", "status");
+    status.setAttribute("aria-live", "polite");
+    const outputList = el("div");
+    results.append(status, outputList);
+    grid.append(controls, results);
+    root.append(grid);
+    const assumptions = el("section", undefined, "assumptions");
+    assumptions.append(el("h2", "What this assumes"));
+    const assumptionList = el("ul");
+    spec.assumptions.forEach((a) => assumptionList.append(el("li", a)));
+    assumptions.append(assumptionList);
+    root.append(assumptions);
+    const formulas = document.createElement("details");
+    formulas.append(el("summary", "Inspect the formulas"));
+    spec.outputs.forEach((o) => {
+        formulas.append(el("h3", o.label), el("p", engine.describe(o.expression, spec)), el("p", o.help, "help"));
+    });
+    spec.constraints.forEach((c) => {
+        formulas.append(el("p", c.severity +
+            ": " +
+            engine.describe(c.left, spec) +
+            " " +
+            c.operator +
+            " " +
+            engine.describe(c.right, spec) +
+            " — " +
+            c.message));
+    });
+    root.append(formulas, el("p", "Finite arithmetic model · display values are rounded; formulas use exact fractions of the accepted decimal numbers. No hidden AI or uploaded code execution.", "help"));
+    function render() {
+        const calculation = engine.calculate(spec, values);
+        status.replaceChildren();
+        outputList.replaceChildren();
+        save.disabled = !calculation.ok;
+        calculation.errors.forEach((message) => status.append(el("p", message, "error")));
+        calculation.warnings.forEach((message) => status.append(el("p", message, "warning")));
+        spec.outputs.forEach((output, index) => {
+            const card = el("article", undefined, index === 0 ? "result primary" : "result");
+            card.append(el("h2", output.label));
+            const value = el("div", calculation.ok
+                ? engine.format(calculation.values[output.id], output.precision)
+                : "—", "value");
+            value.setAttribute("data-output", output.id);
+            card.append(value, el("p", engine.units[output.unit].label, "unit"), el("p", output.help, "help"));
+            outputList.append(card);
+        });
+        if (spec.chart && calculation.ok) {
+            const chart = el("div", undefined, "chart");
+            chart.append(el("h3", spec.chart.title));
+            const series = engine.chartValues(spec, calculation), max = Math.max.apply(null, series.map((s) => Math.abs(s.value)).concat(1)), signed = series.some((s) => s.value < 0);
+            series.forEach((s) => {
+                const row = el("div", undefined, "bar-row");
+                row.append(el("span", s.label), el("strong", engine.format(s.value, 2) +
+                    " " +
+                    engine.units[spec.chart.unit].label));
+                const track = el("div", undefined, "track"), bar = el("div", undefined, s.value < 0 ? "bar negative" : "bar");
+                bar.style.width = (Math.abs(s.value) / max) * (signed ? 50 : 100) + "%";
+                bar.style.left = signed
+                    ? s.value < 0
+                        ? 50 - (Math.abs(s.value) / max) * 50 + "%"
+                        : "50%"
+                    : "0";
+                if (!signed)
+                    track.style.background = "#e1e6d9";
+                track.setAttribute("aria-hidden", "true");
+                track.append(bar);
+                row.append(track);
+                chart.append(row);
+            });
+            outputList.append(chart);
+        }
+    }
+    render();
+})(JSON.parse(document.getElementById("instrument-data").textContent),engine);</script></body></html>
