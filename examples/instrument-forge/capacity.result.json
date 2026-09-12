@@ -1,0 +1,27 @@
+{
+  "ok": true,
+  "inputs": {
+    "prepare": 6,
+    "assemble": 4,
+    "pack": 5,
+    "shift": 8,
+    "target": 36
+  },
+  "values": {
+    "bottleneck": 4,
+    "shiftOutput": 32,
+    "shortfall": 4
+  },
+  "errors": [],
+  "warnings": [
+    "The target exceeds this shift's theoretical capacity. Increase the limiting stage, extend the shift, or reduce the target."
+  ],
+  "constraints": [
+    {
+      "id": "targetFits",
+      "passed": false,
+      "message": "The target exceeds this shift's theoretical capacity. Increase the limiting stage, extend the shift, or reduce the target.",
+      "severity": "warning"
+    }
+  ]
+}

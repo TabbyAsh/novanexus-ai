@@ -1,0 +1,35 @@
+name: Instrument Forge
+on:
+  workflow_dispatch:
+  push:
+    branches: [codex/nova-instrument-forge]
+  pull_request:
+    paths:
+      - "apps/web/src/lib/instrument/**"
+      - "apps/web/src/app/lab/forge/**"
+      - "apps/web/e2e/forge.spec.ts"
+      - "scripts/instrument-export.cjs"
+      - ".github/workflows/instrument-forge.yml"
+permissions:
+  contents: read
+jobs:
+  forge:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci --legacy-peer-deps --ignore-scripts
+      - run: npm test --workspace=@nova/web -- --runInBand
+      - run: npx tsc --noEmit -p apps/web/tsconfig.json
+      - run: npm run lint --workspace=@nova/web
+      - run: npm run build --workspace=@nova/web
+      - run: npx playwright install --with-deps chromium
+      - run: npx playwright test e2e/forge.spec.ts e2e/contrast.spec.ts --workers=1 --reporter=list
+        working-directory: apps/web
+        env:
+          PROD_WEB_URL: http://127.0.0.1:4000
+          CONTRAST_START_SERVER: "1"
