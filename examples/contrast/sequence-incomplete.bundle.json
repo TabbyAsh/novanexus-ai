@@ -1,0 +1,763 @@
+{
+  "bundleVersion": "nova-contrast-bundle/1",
+  "project": {
+    "schemaVersion": "nova-contrast/1",
+    "name": "Sequence Witness · logic simulation",
+    "cases": [
+      {
+        "id": "AB",
+        "name": "AB",
+        "input": "AB"
+      },
+      {
+        "id": "BA",
+        "name": "BA",
+        "input": "BA"
+      },
+      {
+        "id": "ABA",
+        "name": "ABA",
+        "input": "ABA"
+      },
+      {
+        "id": "BAB",
+        "name": "BAB",
+        "input": "BAB"
+      }
+    ],
+    "channels": [
+      {
+        "id": "inspection",
+        "name": "Inspection"
+      }
+    ],
+    "observations": [
+      {
+        "id": "a-seen",
+        "name": "A seen",
+        "cost": 1,
+        "enabled": true,
+        "channels": [
+          "inspection"
+        ],
+        "kind": "categorical",
+        "source": "adapter",
+        "adapter": "sequence-witness",
+        "operation": "a-seen",
+        "values": {}
+      },
+      {
+        "id": "b-seen",
+        "name": "B seen",
+        "cost": 1,
+        "enabled": true,
+        "channels": [
+          "inspection"
+        ],
+        "kind": "categorical",
+        "source": "adapter",
+        "adapter": "sequence-witness",
+        "operation": "b-seen",
+        "values": {}
+      },
+      {
+        "id": "a-before-b",
+        "name": "A before B",
+        "cost": 1,
+        "enabled": false,
+        "channels": [
+          "inspection"
+        ],
+        "kind": "categorical",
+        "source": "adapter",
+        "adapter": "sequence-witness",
+        "operation": "a-before-b",
+        "values": {}
+      },
+      {
+        "id": "b-before-a",
+        "name": "B before A",
+        "cost": 1,
+        "enabled": false,
+        "channels": [
+          "inspection"
+        ],
+        "kind": "categorical",
+        "source": "adapter",
+        "adapter": "sequence-witness",
+        "operation": "b-before-a",
+        "values": {}
+      }
+    ],
+    "requirements": [
+      {
+        "id": "r1",
+        "channel": "inspection",
+        "kind": "different",
+        "left": "AB",
+        "right": "BA"
+      },
+      {
+        "id": "r2",
+        "channel": "inspection",
+        "kind": "different",
+        "left": "AB",
+        "right": "ABA"
+      },
+      {
+        "id": "r3",
+        "channel": "inspection",
+        "kind": "different",
+        "left": "BA",
+        "right": "ABA"
+      },
+      {
+        "id": "r4",
+        "channel": "inspection",
+        "kind": "different",
+        "left": "ABA",
+        "right": "BAB"
+      }
+    ]
+  },
+  "analysis": {
+    "engineVersion": "contrast-compiler/1.0.0",
+    "project": {
+      "schemaVersion": "nova-contrast/1",
+      "name": "Sequence Witness · logic simulation",
+      "cases": [
+        {
+          "id": "AB",
+          "name": "AB",
+          "input": "AB"
+        },
+        {
+          "id": "BA",
+          "name": "BA",
+          "input": "BA"
+        },
+        {
+          "id": "ABA",
+          "name": "ABA",
+          "input": "ABA"
+        },
+        {
+          "id": "BAB",
+          "name": "BAB",
+          "input": "BAB"
+        }
+      ],
+      "channels": [
+        {
+          "id": "inspection",
+          "name": "Inspection"
+        }
+      ],
+      "observations": [
+        {
+          "id": "a-seen",
+          "name": "A seen",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "a-seen",
+          "values": {}
+        },
+        {
+          "id": "b-seen",
+          "name": "B seen",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "b-seen",
+          "values": {}
+        },
+        {
+          "id": "a-before-b",
+          "name": "A before B",
+          "cost": 1,
+          "enabled": false,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "a-before-b",
+          "values": {}
+        },
+        {
+          "id": "b-before-a",
+          "name": "B before A",
+          "cost": 1,
+          "enabled": false,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "b-before-a",
+          "values": {}
+        }
+      ],
+      "requirements": [
+        {
+          "id": "r1",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "AB",
+          "right": "BA"
+        },
+        {
+          "id": "r2",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "AB",
+          "right": "ABA"
+        },
+        {
+          "id": "r3",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "BA",
+          "right": "ABA"
+        },
+        {
+          "id": "r4",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "ABA",
+          "right": "BAB"
+        }
+      ]
+    },
+    "values": {
+      "a-seen": {
+        "AB": true,
+        "BA": true,
+        "ABA": true,
+        "BAB": true
+      },
+      "b-seen": {
+        "AB": true,
+        "BA": true,
+        "ABA": true,
+        "BAB": true
+      },
+      "a-before-b": {
+        "AB": true,
+        "BA": false,
+        "ABA": true,
+        "BAB": true
+      },
+      "b-before-a": {
+        "AB": false,
+        "BA": true,
+        "ABA": true,
+        "BAB": true
+      }
+    },
+    "rawValues": {
+      "a-seen": {
+        "AB": true,
+        "BA": true,
+        "ABA": true,
+        "BAB": true
+      },
+      "b-seen": {
+        "AB": true,
+        "BA": true,
+        "ABA": true,
+        "BAB": true
+      },
+      "a-before-b": {
+        "AB": true,
+        "BA": false,
+        "ABA": true,
+        "BAB": true
+      },
+      "b-before-a": {
+        "AB": false,
+        "BA": true,
+        "ABA": true,
+        "BAB": true
+      }
+    },
+    "adapterErrors": [],
+    "channels": [
+      {
+        "channel": "inspection",
+        "contradictions": [],
+        "equivalenceClasses": [
+          [
+            "AB"
+          ],
+          [
+            "BA"
+          ],
+          [
+            "ABA"
+          ],
+          [
+            "BAB"
+          ]
+        ],
+        "candidates": [
+          {
+            "id": "a-seen",
+            "status": "admissible",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [],
+            "collisions": [
+              "r1",
+              "r2",
+              "r3",
+              "r4"
+            ],
+            "incomplete": []
+          },
+          {
+            "id": "b-seen",
+            "status": "admissible",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [],
+            "collisions": [
+              "r1",
+              "r2",
+              "r3",
+              "r4"
+            ],
+            "incomplete": []
+          },
+          {
+            "id": "a-before-b",
+            "status": "disabled",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [
+              "r1",
+              "r3"
+            ],
+            "collisions": [
+              "r2",
+              "r4"
+            ],
+            "incomplete": []
+          },
+          {
+            "id": "b-before-a",
+            "status": "disabled",
+            "violations": [],
+            "unknownEquivalences": [],
+            "separates": [
+              "r1",
+              "r2"
+            ],
+            "collisions": [
+              "r3",
+              "r4"
+            ],
+            "incomplete": []
+          }
+        ],
+        "selected": [],
+        "cost": 0,
+        "selection": "exact",
+        "covered": [],
+        "uncovered": [
+          {
+            "requirement": {
+              "id": "r1",
+              "channel": "inspection",
+              "kind": "different",
+              "left": "AB",
+              "right": "BA"
+            },
+            "reason": "Collision: identical recorded values under every admissible observation."
+          },
+          {
+            "requirement": {
+              "id": "r2",
+              "channel": "inspection",
+              "kind": "different",
+              "left": "AB",
+              "right": "ABA"
+            },
+            "reason": "Collision: identical recorded values under every admissible observation."
+          },
+          {
+            "requirement": {
+              "id": "r3",
+              "channel": "inspection",
+              "kind": "different",
+              "left": "BA",
+              "right": "ABA"
+            },
+            "reason": "Collision: identical recorded values under every admissible observation."
+          },
+          {
+            "requirement": {
+              "id": "r4",
+              "channel": "inspection",
+              "kind": "different",
+              "left": "ABA",
+              "right": "BAB"
+            },
+            "reason": "Collision: identical recorded values under every admissible observation."
+          }
+        ],
+        "decoder": {
+          "observationIds": [],
+          "rows": [
+            {
+              "caseId": "AB",
+              "values": []
+            },
+            {
+              "caseId": "BA",
+              "values": []
+            },
+            {
+              "caseId": "ABA",
+              "values": []
+            },
+            {
+              "caseId": "BAB",
+              "values": []
+            }
+          ]
+        },
+        "collisions": [
+          {
+            "vector": [],
+            "caseIds": [
+              "AB",
+              "BA",
+              "ABA",
+              "BAB"
+            ]
+          }
+        ],
+        "incompleteCases": []
+      }
+    ],
+    "execution": {
+      "adapterCalls": 16,
+      "mode": "built-in-adapters-and-model",
+      "tests": "not-executed"
+    }
+  },
+  "provenance": {
+    "engineVersion": "contrast-compiler/1.0.0",
+    "schemaVersion": "nova-contrast/1",
+    "exportedAt": "2026-09-12T15:44:39.958Z",
+    "observations": [
+      {
+        "id": "a-seen",
+        "source": "adapter",
+        "adapter": "sequence-witness"
+      },
+      {
+        "id": "b-seen",
+        "source": "adapter",
+        "adapter": "sequence-witness"
+      },
+      {
+        "id": "a-before-b",
+        "source": "adapter",
+        "adapter": "sequence-witness"
+      },
+      {
+        "id": "b-before-a",
+        "source": "adapter",
+        "adapter": "sequence-witness"
+      }
+    ],
+    "execution": {
+      "adapterCalls": 16,
+      "mode": "built-in-adapters-and-model",
+      "tests": "not-executed"
+    },
+    "scope": "Finite supplied model; adapters executed locally; exported tests not executed by export."
+  },
+  "decoders": [
+    {
+      "channel": "inspection",
+      "observationIds": [],
+      "rows": [
+        {
+          "caseId": "AB",
+          "values": []
+        },
+        {
+          "caseId": "BA",
+          "values": []
+        },
+        {
+          "caseId": "ABA",
+          "values": []
+        },
+        {
+          "caseId": "BAB",
+          "values": []
+        }
+      ]
+    }
+  ],
+  "unresolved": [
+    {
+      "channel": "inspection",
+      "contradictions": [],
+      "uncovered": [
+        {
+          "requirement": {
+            "id": "r1",
+            "channel": "inspection",
+            "kind": "different",
+            "left": "AB",
+            "right": "BA"
+          },
+          "reason": "Collision: identical recorded values under every admissible observation."
+        },
+        {
+          "requirement": {
+            "id": "r2",
+            "channel": "inspection",
+            "kind": "different",
+            "left": "AB",
+            "right": "ABA"
+          },
+          "reason": "Collision: identical recorded values under every admissible observation."
+        },
+        {
+          "requirement": {
+            "id": "r3",
+            "channel": "inspection",
+            "kind": "different",
+            "left": "BA",
+            "right": "ABA"
+          },
+          "reason": "Collision: identical recorded values under every admissible observation."
+        },
+        {
+          "requirement": {
+            "id": "r4",
+            "channel": "inspection",
+            "kind": "different",
+            "left": "ABA",
+            "right": "BAB"
+          },
+          "reason": "Collision: identical recorded values under every admissible observation."
+        }
+      ],
+      "collisions": [
+        {
+          "vector": [],
+          "caseIds": [
+            "AB",
+            "BA",
+            "ABA",
+            "BAB"
+          ]
+        }
+      ],
+      "incompleteCases": []
+    }
+  ],
+  "testSpecification": {
+    "version": "contrast-tests/1",
+    "project": {
+      "schemaVersion": "nova-contrast/1",
+      "name": "Sequence Witness · logic simulation",
+      "cases": [
+        {
+          "id": "AB",
+          "name": "AB",
+          "input": "AB"
+        },
+        {
+          "id": "BA",
+          "name": "BA",
+          "input": "BA"
+        },
+        {
+          "id": "ABA",
+          "name": "ABA",
+          "input": "ABA"
+        },
+        {
+          "id": "BAB",
+          "name": "BAB",
+          "input": "BAB"
+        }
+      ],
+      "channels": [
+        {
+          "id": "inspection",
+          "name": "Inspection"
+        }
+      ],
+      "observations": [
+        {
+          "id": "a-seen",
+          "name": "A seen",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "a-seen",
+          "values": {}
+        },
+        {
+          "id": "b-seen",
+          "name": "B seen",
+          "cost": 1,
+          "enabled": true,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "b-seen",
+          "values": {}
+        },
+        {
+          "id": "a-before-b",
+          "name": "A before B",
+          "cost": 1,
+          "enabled": false,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "a-before-b",
+          "values": {}
+        },
+        {
+          "id": "b-before-a",
+          "name": "B before A",
+          "cost": 1,
+          "enabled": false,
+          "channels": [
+            "inspection"
+          ],
+          "kind": "categorical",
+          "source": "adapter",
+          "adapter": "sequence-witness",
+          "operation": "b-before-a",
+          "values": {}
+        }
+      ],
+      "requirements": [
+        {
+          "id": "r1",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "AB",
+          "right": "BA"
+        },
+        {
+          "id": "r2",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "AB",
+          "right": "ABA"
+        },
+        {
+          "id": "r3",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "BA",
+          "right": "ABA"
+        },
+        {
+          "id": "r4",
+          "channel": "inspection",
+          "kind": "different",
+          "left": "ABA",
+          "right": "BAB"
+        }
+      ]
+    },
+    "checks": [
+      {
+        "id": "r1",
+        "kind": "different",
+        "left": "AB",
+        "right": "BA",
+        "channel": "inspection",
+        "observationIds": [
+          "a-seen",
+          "b-seen"
+        ],
+        "executable": true,
+        "modelStatus": "uncovered"
+      },
+      {
+        "id": "r2",
+        "kind": "different",
+        "left": "AB",
+        "right": "ABA",
+        "channel": "inspection",
+        "observationIds": [
+          "a-seen",
+          "b-seen"
+        ],
+        "executable": true,
+        "modelStatus": "uncovered"
+      },
+      {
+        "id": "r3",
+        "kind": "different",
+        "left": "BA",
+        "right": "ABA",
+        "channel": "inspection",
+        "observationIds": [
+          "a-seen",
+          "b-seen"
+        ],
+        "executable": true,
+        "modelStatus": "uncovered"
+      },
+      {
+        "id": "r4",
+        "kind": "different",
+        "left": "ABA",
+        "right": "BAB",
+        "channel": "inspection",
+        "observationIds": [
+          "a-seen",
+          "b-seen"
+        ],
+        "executable": true,
+        "modelStatus": "uncovered"
+      }
+    ]
+  },
+  "files": {
+    "requirements.test.ts": "/** Generated by contrast-compiler/1.0.0. NOT EXECUTED by export.\n * Place in apps/web/src/lib/contrast/__tests__/exported.test.ts.\n * Run npm test --workspace=@nova/web -- --runInBand exported.test.ts\n * Adapter inputs are data. Assertions come from separately declared requirements.\n * Model-only checks are pending, not passing. Uncovered executable requirements fail. */\nimport { observe } from '../adapters';\nimport { normalize } from '../schema';\nimport type { TestSpec } from '../bundle';\nconst spec: TestSpec = {\n  \"version\": \"contrast-tests/1\",\n  \"project\": {\n    \"schemaVersion\": \"nova-contrast/1\",\n    \"name\": \"Sequence Witness · logic simulation\",\n    \"cases\": [\n      {\n        \"id\": \"AB\",\n        \"name\": \"AB\",\n        \"input\": \"AB\"\n      },\n      {\n        \"id\": \"BA\",\n        \"name\": \"BA\",\n        \"input\": \"BA\"\n      },\n      {\n        \"id\": \"ABA\",\n        \"name\": \"ABA\",\n        \"input\": \"ABA\"\n      },\n      {\n        \"id\": \"BAB\",\n        \"name\": \"BAB\",\n        \"input\": \"BAB\"\n      }\n    ],\n    \"channels\": [\n      {\n        \"id\": \"inspection\",\n        \"name\": \"Inspection\"\n      }\n    ],\n    \"observations\": [\n      {\n        \"id\": \"a-seen\",\n        \"name\": \"A seen\",\n        \"cost\": 1,\n        \"enabled\": true,\n        \"channels\": [\n          \"inspection\"\n        ],\n        \"kind\": \"categorical\",\n        \"source\": \"adapter\",\n        \"adapter\": \"sequence-witness\",\n        \"operation\": \"a-seen\",\n        \"values\": {}\n      },\n      {\n        \"id\": \"b-seen\",\n        \"name\": \"B seen\",\n        \"cost\": 1,\n        \"enabled\": true,\n        \"channels\": [\n          \"inspection\"\n        ],\n        \"kind\": \"categorical\",\n        \"source\": \"adapter\",\n        \"adapter\": \"sequence-witness\",\n        \"operation\": \"b-seen\",\n        \"values\": {}\n      },\n      {\n        \"id\": \"a-before-b\",\n        \"name\": \"A before B\",\n        \"cost\": 1,\n        \"enabled\": false,\n        \"channels\": [\n          \"inspection\"\n        ],\n        \"kind\": \"categorical\",\n        \"source\": \"adapter\",\n        \"adapter\": \"sequence-witness\",\n        \"operation\": \"a-before-b\",\n        \"values\": {}\n      },\n      {\n        \"id\": \"b-before-a\",\n        \"name\": \"B before A\",\n        \"cost\": 1,\n        \"enabled\": false,\n        \"channels\": [\n          \"inspection\"\n        ],\n        \"kind\": \"categorical\",\n        \"source\": \"adapter\",\n        \"adapter\": \"sequence-witness\",\n        \"operation\": \"b-before-a\",\n        \"values\": {}\n      }\n    ],\n    \"requirements\": [\n      {\n        \"id\": \"r1\",\n        \"channel\": \"inspection\",\n        \"kind\": \"different\",\n        \"left\": \"AB\",\n        \"right\": \"BA\"\n      },\n      {\n        \"id\": \"r2\",\n        \"channel\": \"inspection\",\n        \"kind\": \"different\",\n        \"left\": \"AB\",\n        \"right\": \"ABA\"\n      },\n      {\n        \"id\": \"r3\",\n        \"channel\": \"inspection\",\n        \"kind\": \"different\",\n        \"left\": \"BA\",\n        \"right\": \"ABA\"\n      },\n      {\n        \"id\": \"r4\",\n        \"channel\": \"inspection\",\n        \"kind\": \"different\",\n        \"left\": \"ABA\",\n        \"right\": \"BAB\"\n      }\n    ]\n  },\n  \"checks\": [\n    {\n      \"id\": \"r1\",\n      \"kind\": \"different\",\n      \"left\": \"AB\",\n      \"right\": \"BA\",\n      \"channel\": \"inspection\",\n      \"observationIds\": [\n        \"a-seen\",\n        \"b-seen\"\n      ],\n      \"executable\": true,\n      \"modelStatus\": \"uncovered\"\n    },\n    {\n      \"id\": \"r2\",\n      \"kind\": \"different\",\n      \"left\": \"AB\",\n      \"right\": \"ABA\",\n      \"channel\": \"inspection\",\n      \"observationIds\": [\n        \"a-seen\",\n        \"b-seen\"\n      ],\n      \"executable\": true,\n      \"modelStatus\": \"uncovered\"\n    },\n    {\n      \"id\": \"r3\",\n      \"kind\": \"different\",\n      \"left\": \"BA\",\n      \"right\": \"ABA\",\n      \"channel\": \"inspection\",\n      \"observationIds\": [\n        \"a-seen\",\n        \"b-seen\"\n      ],\n      \"executable\": true,\n      \"modelStatus\": \"uncovered\"\n    },\n    {\n      \"id\": \"r4\",\n      \"kind\": \"different\",\n      \"left\": \"ABA\",\n      \"right\": \"BAB\",\n      \"channel\": \"inspection\",\n      \"observationIds\": [\n        \"a-seen\",\n        \"b-seen\"\n      ],\n      \"executable\": true,\n      \"modelStatus\": \"uncovered\"\n    }\n  ]\n};\ndescribe('Exported Contrast requirements', () => {\n  for (const check of spec.checks) {\n    if (!check.executable) { test.todo(check.id + ': missing executable observation/adapter integration'); continue; }\n    test(check.id + ': ' + check.left + ' ' + check.kind + ' ' + check.right + ' on ' + check.channel, () => {\n      const vector = (caseId: string) => check.observationIds.map(id => {\n        const o = spec.project.observations.find(item => item.id === id)!;\n        const c = spec.project.cases.find(item => item.id === caseId)!;\n        const value = normalize(o, observe(o.adapter!, c.input ?? '', o.operation!));\n        expect(value).not.toBeNull();\n        return value;\n      });\n      const left = vector(check.left), right = vector(check.right);\n      if (check.kind === 'same') expect(left).toEqual(right);\n      else expect(left).not.toEqual(right);\n    });\n  }\n});\n",
+    "decoder.cjs": "// Standalone lookup for supplied cases only. Inputs are normalized categorical/bin vectors.\nconst decoders = [\n  {\n    \"channel\": \"inspection\",\n    \"observationIds\": [],\n    \"rows\": [\n      {\n        \"caseId\": \"AB\",\n        \"values\": []\n      },\n      {\n        \"caseId\": \"BA\",\n        \"values\": []\n      },\n      {\n        \"caseId\": \"ABA\",\n        \"values\": []\n      },\n      {\n        \"caseId\": \"BAB\",\n        \"values\": []\n      }\n    ]\n  }\n];\nfunction decode(channel, vector) {\n const decoder = decoders.find(d => d.channel === channel);\n if (!decoder || !Array.isArray(vector) || vector.length !== decoder.observationIds.length || vector.some(v => v === null || !['string', 'boolean'].includes(typeof v))) return { status: 'unknown', candidateCaseIds: [] };\n const compatible = decoder.rows.filter(row => row.values.every((v, i) => v === null || v === vector[i]));\n const complete = compatible.filter(row => !row.values.includes(null));\n return { status: !complete.length ? 'unknown' : compatible.length === 1 ? 'unique' : 'ambiguous', candidateCaseIds: compatible.map(row => row.caseId) };\n}\nmodule.exports = { decoders, decode };\n",
+    "report.md": "# Sequence Witness · logic simulation\n\nEngine: contrast-compiler/1.0.0. Schema: nova-contrast/1.\nAnalysis mode: built-in-adapters-and-model; 16 built-in adapter observations executed. Exported tests: NOT EXECUTED.\n\nResults apply only to supplied finite cases, exact categories, and explicit numeric bins. No tolerance relation, physical validation, universal correctness, or unseen-state guarantee.\n\n## Inspection\nSelection: exact. Cost: 0. Selected: (none).\nExact means minimum cost for coverable declared distinctions using admissible enabled observations, not full coverage of impossible requirements. Costs are independent per channel; not a joint acquisition optimization.\nUNCOVERED r1: AB / BA. Collision: identical recorded values under every admissible observation.\nUNCOVERED r2: AB / ABA. Collision: identical recorded values under every admissible observation.\nUNCOVERED r3: BA / ABA. Collision: identical recorded values under every admissible observation.\nUNCOVERED r4: ABA / BAB. Collision: identical recorded values under every admissible observation.\na-seen: admissible; separates []; collisions [r1, r2, r3, r4]; incomplete [].\nb-seen: admissible; separates []; collisions [r1, r2, r3, r4]; incomplete [].\na-before-b: disabled; separates [r1, r3]; collisions [r2, r4]; incomplete [].\nb-before-a: disabled; separates [r1, r2]; collisions [r3, r4]; incomplete [].\nDECODER COLLISION []: AB, BA, ABA, BAB.\nIncomplete decoder rows: none.\n",
+    "adapter-contract.md": "Adapter interface: observe(adapterId, caseInput, observationId) -> string | boolean | number | null. Implement integrations in trusted repository code. Do not execute uploaded code. Return null for unavailable measurements. Numeric observations require declared bins. Supply independent relation requirements; do not calculate expectations using the implementation being tested. Imported tables without a built-in adapter are model analysis only. No external system was tested."
+  }
+}

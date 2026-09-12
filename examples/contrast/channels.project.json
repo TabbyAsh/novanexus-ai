@@ -1,0 +1,73 @@
+{
+  "schemaVersion": "nova-contrast/1",
+  "name": "Public sameness, internal difference",
+  "cases": [
+    {
+      "id": "E",
+      "name": "Earlier time"
+    },
+    {
+      "id": "Q",
+      "name": "Quiet room"
+    }
+  ],
+  "channels": [
+    {
+      "id": "public",
+      "name": "Public arrangement"
+    },
+    {
+      "id": "internal",
+      "name": "Internal planning"
+    }
+  ],
+  "observations": [
+    {
+      "id": "arrangement",
+      "name": "Visible arrangement",
+      "cost": 1,
+      "enabled": true,
+      "channels": [
+        "public"
+      ],
+      "kind": "categorical",
+      "source": "simulated",
+      "values": {
+        "E": "Earlier + quiet",
+        "Q": "Earlier + quiet"
+      }
+    },
+    {
+      "id": "reason",
+      "name": "Private reason",
+      "cost": 1,
+      "enabled": true,
+      "channels": [
+        "public",
+        "internal"
+      ],
+      "kind": "categorical",
+      "source": "simulated",
+      "values": {
+        "E": "time",
+        "Q": "noise"
+      }
+    }
+  ],
+  "requirements": [
+    {
+      "id": "public-same",
+      "channel": "public",
+      "kind": "same",
+      "left": "E",
+      "right": "Q"
+    },
+    {
+      "id": "internal-apart",
+      "channel": "internal",
+      "kind": "different",
+      "left": "E",
+      "right": "Q"
+    }
+  ]
+}

@@ -1,0 +1,72 @@
+{
+  "schemaVersion": "nova-contrast/1",
+  "name": "Nova structured-data contract",
+  "cases": [
+    {
+      "id": "literal",
+      "name": "Literal angle bracket",
+      "input": "{\"label\":\"<script>\"}"
+    },
+    {
+      "id": "escaped",
+      "name": "Literal escape text",
+      "input": "{\"label\":\"\\\\u003cscript>\"}"
+    }
+  ],
+  "channels": [
+    {
+      "id": "html",
+      "name": "Raw HTML boundary"
+    },
+    {
+      "id": "value",
+      "name": "Round-trip label"
+    }
+  ],
+  "observations": [
+    {
+      "id": "angle",
+      "name": "Contains a literal <",
+      "cost": 1,
+      "enabled": true,
+      "channels": [
+        "html"
+      ],
+      "kind": "categorical",
+      "source": "adapter",
+      "adapter": "nova-structured-data",
+      "operation": "contains-literal-angle",
+      "values": {}
+    },
+    {
+      "id": "label",
+      "name": "Decoded label",
+      "cost": 1,
+      "enabled": true,
+      "channels": [
+        "value"
+      ],
+      "kind": "categorical",
+      "source": "adapter",
+      "adapter": "nova-structured-data",
+      "operation": "roundtrip-label",
+      "values": {}
+    }
+  ],
+  "requirements": [
+    {
+      "id": "safe-boundary",
+      "channel": "html",
+      "kind": "same",
+      "left": "literal",
+      "right": "escaped"
+    },
+    {
+      "id": "preserve-value",
+      "channel": "value",
+      "kind": "different",
+      "left": "literal",
+      "right": "escaped"
+    }
+  ]
+}
