@@ -1,0 +1,36 @@
+name: Auction Desk
+
+on:
+  pull_request:
+    branches: [master]
+    paths:
+      - 'apps/web/public/tools/auction-desk/**'
+      - 'apps/web/src/app/analyze/auction/**'
+      - 'scripts/nova-auction.mjs'
+      - 'scripts/build-auction-desk-portable.mjs'
+      - 'tests/auction-desk/**'
+      - '.github/workflows/auction-desk.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  ledger:
+    name: Auction ledger / deterministic tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 20
+      - name: Syntax checks
+        run: |
+          node --check apps/web/public/tools/auction-desk/core.mjs
+          node --check apps/web/public/tools/auction-desk/desk.mjs
+          node --check scripts/nova-auction.mjs
+          node --check scripts/build-auction-desk-portable.mjs
+      - name: Deterministic ledger and CLI checks
+        run: node --test tests/auction-desk/core.test.mjs
+      - name: Build portable interface
+        run: node scripts/build-auction-desk-portable.mjs /tmp/nova-auction-desk.html
