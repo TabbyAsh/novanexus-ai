@@ -17,7 +17,7 @@ const receiptData = {
     state: 'RECORDED_ONLY',
   },
   recovery: {
-    supportEmail: 'hello@novanexus-ai.com',
+    supportEmail: 'wyatt@novanexus-ai.com',
     message: 'Save the receipt and contact support if needed.',
   },
 };

@@ -1,5 +1,5 @@
 const securityText = [
-  'Contact: mailto:hello@novanexus-ai.com',
+  'Contact: mailto:wyatt@novanexus-ai.com',
   'Expires: 2027-08-24T23:59:59.000Z',
   'Preferred-Languages: en',
   'Canonical: https://novanexus-ai.com/.well-known/security.txt',

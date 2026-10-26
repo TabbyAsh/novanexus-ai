@@ -26,7 +26,7 @@ describe('Nexus privacy disclosure', () => {
     expect(markup).toContain('does not use cookies or track visitors across websites');
     expect(markup).toContain('do not send form or lead contents or custom events');
     expect(markup).toContain('href="https://vercel.com/docs/analytics/privacy-policy"');
-    expect(markup).toContain('Last updated: August 25, 2026');
+    expect(markup).toContain('Last updated: October 26, 2026');
   });
 
   it('mounts the official analytics component exactly once without custom events', () => {

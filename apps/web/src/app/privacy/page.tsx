@@ -14,6 +14,10 @@ export const metadata: Metadata = {
 };
 
 const SECTIONS: Array<{ title: string; items: Array<string | LinkedPolicyItem> }> = [
+  {title: 'Public tools and reception', items: [
+    'NovaClean processes your file in the current browser tab without uploading it or requesting AI processing. Download results before leaving. Auction Desk and Nova Loop describe their own local save and export behavior.',
+    'The general reception brief remains in your tab. Opening Email Wyatt prepares a message in your email app; nothing is submitted until you send it. Copy and download are local actions. The separate Workflow Setup Pilot form submits an inquiry to the Nova backend and returns a receipt when recorded.',
+  ]},
   {
     title: '1. Information We Collect',
     items: [
@@ -79,7 +83,7 @@ const SECTIONS: Array<{ title: string; items: Array<string | LinkedPolicyItem> }
       'All data is transmitted over HTTPS.',
       'Passwords are hashed using bcrypt and never stored in plaintext.',
       'Private product routes use account and authority checks. No system can guarantee absolute security.',
-      'If you discover a security vulnerability, contact hello@novanexus-ai.com.',
+      'If you discover a security vulnerability, contact wyatt@novanexus-ai.com.',
     ],
   },
   {
@@ -89,7 +93,7 @@ const SECTIONS: Array<{ title: string; items: Array<string | LinkedPolicyItem> }
       'Correction: update account information through the Settings page.',
       'Deletion: request deletion of your account and associated data.',
       'Portability: request a copy of associated personal information. Some individual tools also provide direct exports.',
-      'To exercise any of these rights, email hello@novanexus-ai.com.',
+      'To exercise any of these rights, email wyatt@novanexus-ai.com.',
     ],
   },
   {
@@ -127,7 +131,7 @@ export default function PrivacyPage() {
       <main className="max-w-2xl mx-auto px-6 py-14 space-y-8">
         <div>
           <h1 className="text-3xl font-bold text-white mb-2">Privacy Policy</h1>
-          <p className="text-gray-500 text-sm">Last updated: August 25, 2026</p>
+          <p className="text-gray-500 text-sm">Last updated: October 26, 2026</p>
           <p className="text-gray-400 text-sm mt-4 leading-relaxed">
             Nova Enterprises operates NovaNexus and related services (the &quot;Platform&quot;). This policy explains what
             information we collect, how we use it, and your rights regarding that information. By using the Platform, you agree
@@ -168,7 +172,7 @@ export default function PrivacyPage() {
           <h2 className="text-base font-semibold text-white mb-2">Contact</h2>
           <div className="text-gray-400 text-sm space-y-1">
             <p>Nova Enterprises</p>
-            <p>Email: <a href="mailto:hello@novanexus-ai.com" className="text-emerald-400 hover:text-emerald-300">hello@novanexus-ai.com</a></p>
+            <p>Email: <a href="mailto:wyatt@novanexus-ai.com" className="text-emerald-400 hover:text-emerald-300">wyatt@novanexus-ai.com</a></p>
             <p>Website: <a href="https://novanexus-ai.com" className="text-emerald-400 hover:text-emerald-300">novanexus-ai.com</a></p>
           </div>
         </div>

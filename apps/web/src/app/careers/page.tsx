@@ -115,7 +115,7 @@ export default function CareersPage() {
                       <span className="text-xs text-emerald-500/80">{role.focus}</span>
                     </div>
                   </div>
-                  <a href={`mailto:hello@novanexus-ai.com?subject=Application: ${role.title}`}
+                  <a href={`mailto:wyatt@novanexus-ai.com?subject=Application: ${role.title}`}
                     className="px-4 py-2 rounded-lg border border-gray-700 hover:border-emerald-500/50 text-xs font-semibold text-gray-400 hover:text-emerald-400 transition shrink-0">
                     Apply
                   </a>
@@ -140,9 +140,9 @@ export default function CareersPage() {
             If you believe in what we&apos;re building and have something to contribute, reach out.
             We hire for value alignment and capability, not just job descriptions.
           </p>
-          <a href="mailto:hello@novanexus-ai.com?subject=General Application — Nova"
+          <a href="mailto:wyatt@novanexus-ai.com?subject=General Application — Nova"
             className="inline-flex items-center gap-2 px-6 py-3 rounded-xl bg-white/5 hover:bg-white/8 border border-white/10 text-sm text-gray-300 hover:text-white transition">
-            hello@novanexus-ai.com
+            wyatt@novanexus-ai.com
           </a>
         </div>
       </main>

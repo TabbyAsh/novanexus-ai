@@ -132,8 +132,8 @@ export default function RiskDisclosurePage() {
           <p className="text-gray-300">
             If you have questions about this Risk Disclosure Statement or our services, 
             please contact us at{' '}
-            <a href="mailto:hello@novanexus-ai.com" className="text-blue-400 hover:underline">
-              hello@novanexus-ai.com
+            <a href="mailto:wyatt@novanexus-ai.com" className="text-blue-400 hover:underline">
+              wyatt@novanexus-ai.com
             </a>
           </p>
         </div>

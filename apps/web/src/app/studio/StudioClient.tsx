@@ -12,7 +12,7 @@
 import { useState } from 'react';
 import Link from 'next/link';
 
-const CONTACT_EMAIL = 'hello@novanexus-ai.com';
+const CONTACT_EMAIL = 'wyatt@novanexus-ai.com';
 
 export default function StudioClient() {
   const [form, setForm] = useState({ name: '', business: '', need: '' });

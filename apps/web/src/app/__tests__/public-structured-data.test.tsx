@@ -12,9 +12,9 @@ describe('public structured data', () => {
     expect(organizationStructuredData).toEqual(expect.objectContaining({
       '@type': 'Organization',
       '@id': 'https://novanexus-ai.com/#organization',
-      name: 'Nova Enterprises',
+      name: 'Nova Enterprises LLC',
       url: 'https://novanexus-ai.com',
-      email: 'hello@novanexus-ai.com',
+      email: 'wyatt@novanexus-ai.com',
     }));
     expect(JSON.stringify(organizationStructuredData)).not.toMatch(/rating|review|sameAs|address/i);
   });

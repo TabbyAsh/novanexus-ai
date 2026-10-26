@@ -46,6 +46,6 @@ describe('terms offer identity', () => {
   it('uses the exact public and Stripe product name throughout the service terms', () => {
     expect(markup.match(/Workflow Setup Pilot/g)?.length).toBeGreaterThanOrEqual(4);
     expect(markup).not.toContain('Starter Pilot');
-    expect(markup).toContain('Last updated: August 25, 2026');
+    expect(markup).toContain('Last updated: October 26, 2026');
   });
 });

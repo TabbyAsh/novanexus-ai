@@ -144,7 +144,7 @@ function BillingSuccessContent() {
 
           {(view.kind === 'processing' || view.kind === 'unable') && (
             <a
-              href="mailto:hello@novanexus-ai.com?subject=Checkout%20verification%20help"
+              href="mailto:wyatt@novanexus-ai.com?subject=Checkout%20verification%20help"
               className="rounded-xl border border-white/15 px-5 py-3 text-center font-medium text-gray-300 hover:bg-white/10"
             >
               Contact support

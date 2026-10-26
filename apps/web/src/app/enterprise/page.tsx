@@ -53,7 +53,7 @@ export default function EnterprisePage() {
             audit trails, and AI assistance within controlled governance frameworks.
           </p>
           <div className="flex flex-col sm:flex-row gap-4 justify-center">
-            <a href="mailto:hello@novanexus-ai.com?subject=Enterprise Inquiry"
+            <a href="mailto:wyatt@novanexus-ai.com?subject=Enterprise Inquiry"
               className="px-8 py-4 rounded-xl bg-gradient-to-r from-emerald-600 to-cyan-600 text-white font-semibold transition hover:shadow-lg hover:shadow-emerald-900/30">
               Contact Sales
             </a>
@@ -99,9 +99,9 @@ export default function EnterprisePage() {
             Enterprise pricing is custom based on team size, modules, and governance requirements.
             Contact us to discuss your organization&apos;s needs.
           </p>
-          <a href="mailto:hello@novanexus-ai.com?subject=Enterprise Inquiry — Nova"
+          <a href="mailto:wyatt@novanexus-ai.com?subject=Enterprise Inquiry — Nova"
             className="inline-flex items-center gap-2 px-8 py-4 rounded-xl bg-emerald-600 hover:bg-emerald-500 text-white font-semibold transition">
-            hello@novanexus-ai.com
+            wyatt@novanexus-ai.com
           </a>
         </div>
       </main>
