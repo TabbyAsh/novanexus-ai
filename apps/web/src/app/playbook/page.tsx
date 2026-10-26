@@ -72,7 +72,7 @@ export default function PlaybookPage() {
               </div>
               <div className="flex items-center gap-4 shrink-0">
                 <span className="text-xl font-bold text-white">{tier.price}</span>
-                <a href="mailto:hello@novanexus-ai.com?subject=Young Operator Playbook"
+                <a href="mailto:wyatt@novanexus-ai.com?subject=Young Operator Playbook"
                   className={`px-4 py-2 rounded-lg text-sm font-semibold transition ${
                     tier.highlight
                       ? 'bg-amber-600 hover:bg-amber-500 text-white'

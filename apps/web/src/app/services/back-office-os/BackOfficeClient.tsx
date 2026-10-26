@@ -274,7 +274,7 @@ export default function BackOfficeClient() {
                   {failureReceipt ? (
                     <p className="mt-1">A record exists as <span className="font-mono font-bold">{failureReceipt.receiptId}</span>, but its delivery status is uncertain. Email support with that receipt.</p>
                   ) : (
-                    <p className="mt-1">Retry once, or <a className="font-bold underline" href="mailto:hello@novanexus-ai.com?subject=Workflow%20Setup%20Pilot%20intake">email support directly</a>. No payment has been requested.</p>
+                    <p className="mt-1">Retry once, or <a className="font-bold underline" href="mailto:wyatt@novanexus-ai.com?subject=Workflow%20Setup%20Pilot%20intake">email support directly</a>. No payment has been requested.</p>
                   )}
                 </div>
               )}
@@ -285,7 +285,7 @@ export default function BackOfficeClient() {
 
       <footer className="border-t border-[#1d211b]">
         <div className="mx-auto max-w-5xl px-5 py-8 text-sm leading-6 text-[#596052] md:px-8">
-          <p>Support: <a className="font-bold underline" href="mailto:hello@novanexus-ai.com">hello@novanexus-ai.com</a>.</p>
+          <p>Support: <a className="font-bold underline" href="mailto:wyatt@novanexus-ai.com">wyatt@novanexus-ai.com</a>.</p>
           <p className="mt-2">If payment has been made, it is refundable on request until work begins. No broader refund promise is made here.</p>
           <p className="mt-2"><Link className="font-bold underline" href="/terms">Terms</Link> · <Link className="font-bold underline" href="/privacy">Privacy</Link></p>
         </div>

@@ -4,13 +4,13 @@ export const organizationStructuredData = {
   '@context': 'https://schema.org',
   '@type': 'Organization',
   '@id': `${canonicalOrigin}/#organization`,
-  name: 'Nova Enterprises',
+  name: 'Nova Enterprises LLC',
   url: canonicalOrigin,
-  email: 'hello@novanexus-ai.com',
+  email: 'wyatt@novanexus-ai.com',
   contactPoint: {
     '@type': 'ContactPoint',
     contactType: 'customer support',
-    email: 'hello@novanexus-ai.com',
+    email: 'wyatt@novanexus-ai.com',
   },
 } as const;
 

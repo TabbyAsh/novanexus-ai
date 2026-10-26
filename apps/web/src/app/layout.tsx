@@ -10,19 +10,19 @@ export const metadata: Metadata = {
   metadataBase: new URL('https://novanexus-ai.com'),
   applicationName: 'Nova',
   icons: { icon: '/favicon.ico' },
-  title: 'Nova — Clear next steps for changing work',
-  description: 'Nova helps turn a changing situation into a clear decision, an owned next action, and an evidence check. Try the local-only Nova Loop.',
+  title: 'Nova Enterprises LLC — Products, sourcing & business tools',
+  description: 'Merchandise sourcing, practical software and scoped business support. Contact Wyatt Kirby in Terre Haute, Indiana.',
   openGraph: {
     type: 'website',
     siteName: 'Nova',
     url: 'https://novanexus-ai.com',
-    title: 'Nova — Clear next steps for changing work',
-    description: 'Turn a changing situation into a clear decision, an owned next action, and an evidence check.',
+    title: 'Nova Enterprises LLC — Products, sourcing & business tools',
+    description: 'Merchandise sourcing, practical software and scoped business support. Work directly with Wyatt Kirby.',
   },
   twitter: {
     card: 'summary',
-    title: 'Nova — Clear next steps for changing work',
-    description: 'Turn a changing situation into a clear decision, an owned next action, and an evidence check.',
+    title: 'Nova Enterprises LLC — Products, sourcing & business tools',
+    description: 'Merchandise sourcing, practical software and scoped business support. Work directly with Wyatt Kirby.',
   },
 };
 

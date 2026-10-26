@@ -8,6 +8,7 @@ module.exports = {
     '^.+\\.(ts|tsx)$': ['ts-jest', { tsconfig: '<rootDir>/tsconfig.jest.json' }],
   },
   moduleNameMapper: {
+    '\\.(css)$': '<rootDir>/src/lib/public/style-test-mock.js',
     '^@/(.*)$': '<rootDir>/src/$1',
   },
 };
