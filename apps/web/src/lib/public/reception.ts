@@ -1,3 +1,5 @@
+import { business } from "./catalog";
+
 export const intents = [
   {
     id: "merchandise",
@@ -87,7 +89,7 @@ export function emailBriefUrl(f: ReceptionForm) {
   const label =
     intents.find((i) => i.id === f.intent)?.label || "Business inquiry";
   return (
-    "mailto:wyatt@novanexus-ai.com?subject=" +
+    "mailto:" + business.email + "?subject=" +
     encodeURIComponent("Nova request: " + label) +
     "&body=" +
     encodeURIComponent(formatBrief(f))

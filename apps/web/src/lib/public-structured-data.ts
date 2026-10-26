@@ -1,3 +1,5 @@
+import { business } from "./public/catalog";
+
 const canonicalOrigin = 'https://novanexus-ai.com';
 
 export const organizationStructuredData = {
@@ -6,11 +8,11 @@ export const organizationStructuredData = {
   '@id': `${canonicalOrigin}/#organization`,
   name: 'Nova Enterprises LLC',
   url: canonicalOrigin,
-  email: 'wyatt@novanexus-ai.com',
+  email: business.email,
   contactPoint: {
     '@type': 'ContactPoint',
     contactType: 'customer support',
-    email: 'wyatt@novanexus-ai.com',
+    email: business.email,
   },
 } as const;
 

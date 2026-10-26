@@ -1,11 +1,7 @@
-export const business = {
-  name: "Nova Enterprises LLC",
-  shortName: "Nova",
-  contact: "Wyatt Kirby",
-  email: "wyatt@novanexus-ai.com",
-  location: "Terre Haute, Indiana",
-  origin: "https://novanexus-ai.com",
-} as const;
+import businessConfig from "@/config/business.json";
+
+// Public company details are configuration, never a signed-in owner identity.
+export const business = { ...businessConfig, email: process.env.NEXT_PUBLIC_BUSINESS_EMAIL || businessConfig.email };
 export const catalog = [
   {
     slug: "merchandise-sourcing",
@@ -65,7 +61,7 @@ export const catalog = [
       "Forecast and outcome records with local export",
     ],
     limits:
-      "This public tool uses your entered evidence. It does not fetch live auctions, establish appraised values or place bids. Nova’s private auction finder is a separate workspace.",
+      "This public tool uses your entered evidence. It does not fetch live auctions, establish appraised values or place bids.",
     action: "Open Auction Desk",
     href: "/tools/auction-desk/index.html",
     art: "auction",

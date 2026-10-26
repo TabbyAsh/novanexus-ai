@@ -5,6 +5,7 @@ import { useRouter } from 'next/navigation';
 import Link from 'next/link';
 import { motion, AnimatePresence } from 'framer-motion';
 import { useAuthStore } from '@/lib/store';
+import { safeReturnPath } from '@/lib/world/access';
 
 // Icons
 const EyeIcon = () => (
@@ -42,7 +43,7 @@ export default function LoginPage() {
   // Redirect if already authenticated
   useEffect(() => {
     if (isAuthenticated) {
-      router.push('/dashboard');
+      router.push(safeReturnPath(new URLSearchParams(window.location.search).get('next')));
     }
   }, [isAuthenticated, router]);
 
@@ -89,7 +90,7 @@ export default function LoginPage() {
       const result = await login(email, password);
       
       if (result.success) {
-        router.push('/dashboard');
+        router.push(safeReturnPath(new URLSearchParams(window.location.search).get('next')));
       } else {
         const newAttempts = attempts + 1;
         setAttempts(newAttempts);

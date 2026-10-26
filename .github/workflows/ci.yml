@@ -89,6 +89,12 @@ jobs:
       - name: Economic Trade tests
         run: npm test --workspace @nova/nova-hub -- --runInBand economic-trade
 
+      - name: Verify private workspace HTTP access
+        run: python tests/world/access-http.py
+
+      - name: Lens and cost engine evidence tests
+        run: node --test tests/auction-desk/core.test.mjs tests/lens/core.test.cjs
+
       - name: Lint
         run: npx turbo run lint
 

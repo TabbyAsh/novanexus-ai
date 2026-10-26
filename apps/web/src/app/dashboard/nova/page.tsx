@@ -11,6 +11,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import Link from 'next/link';
+import { useAuthStore } from '@/lib/store';
+import { takeReview } from '@/lib/world/review-handoff';
 import DashboardLayout from '@/components/dashboard/DashboardLayout';
 import { Send, Sparkles, ArrowRight, Plus, Database, ShieldCheck, Boxes, AlertTriangle } from 'lucide-react';
 
@@ -68,6 +70,13 @@ const SUGGESTIONS = [
 export default function NexusPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [input, setInput] = useState('');
+  const [reviewReady, setReviewReady] = useState(false);
+  const ownerId = useAuthStore(s => s.user?.id);
+  useEffect(() => {
+    if (!ownerId) return;
+    const brief = takeReview(sessionStorage, new URLSearchParams(window.location.search).get('review'), ownerId);
+    if (brief) { setInput(brief); setReviewReady(true); }
+  }, [ownerId]);
   const [loading, setLoading] = useState(false);
   const [conversationId, setConversationId] = useState<string | null>(null);
   const [restoredConversation, setRestoredConversation] = useState(false);
@@ -133,6 +142,7 @@ export default function NexusPage() {
     const userMsg: Message = { role: 'user', content: text };
     setMessages(m => [...m, userMsg]);
     setInput('');
+    setReviewReady(false);
     setLoading(true);
     const epoch = ++requestEpoch.current;
 
@@ -433,6 +443,7 @@ export default function NexusPage() {
         {/* Input */}
         <div className="border-t border-white/5 px-6 py-4 shrink-0">
           <div className="max-w-2xl mx-auto">
+            {reviewReady && <p className="mb-3 text-xs text-emerald-300" role="status">Source review draft ready. Check the evidence and press Send when you want Nova to review it.</p>}
             <div className="flex gap-3 items-end">
               <textarea
                 value={input}

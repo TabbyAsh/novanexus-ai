@@ -4,7 +4,7 @@ import { PublicShell, PageIntro, Arrow } from "@/components/public/PublicShell";
 export const metadata: Metadata = {
   title: "The office — Nova Enterprises",
   description:
-    "A directory for Nova clients, tools, account settings and owner workspaces.",
+    "A directory for Nova clients, public tools and account settings.",
   robots: { index: false, follow: true },
 };
 const rooms = [
@@ -32,26 +32,14 @@ const rooms = [
     "/connections",
     "Check connections",
   ],
-  [
-    "Wyatt’s Deal Desk",
-    "Owner-private business records, auction finder, trade path and evidence. Separate ChatGPT sign-in; no automatic sync is implied.",
-    "https://nova-deal-desk-wyatt.tabbyash.chatgpt.site",
-    "Open private desk",
-  ],
-  [
-    "Wyatt’s Atlas",
-    "Owner-private life and project map. Requires its existing access permissions.",
-    "https://nova-motion-atlas.tabbyash.chatgpt.site",
-    "Open private Atlas",
-  ],
+
 ];
 export default function Office() {
   return (
     <PublicShell>
       <PageIntro eyebrow="Office directory" title="Everything has a place.">
         <p>
-          The front desk is public. Account and owner workspaces keep their own
-          permissions. Choose the room for the job you’re doing.
+          Choose a service or public tool. Your account has its own sign-in.
         </p>
       </PageIntro>
       <section className="office-directory office-wrap">
