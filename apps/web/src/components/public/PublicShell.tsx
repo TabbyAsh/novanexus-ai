@@ -75,7 +75,7 @@ export function PublicShell({
           <a className="office-email" href={"mailto:" + business.email}>
             {business.email}
           </a>
-          <p>You’ll work with Wyatt Kirby.</p>
+          <p>Agree the scope before work begins.</p>
         </div>
         <div className="office-footer-links">
           <Link href="/products">Catalog</Link>

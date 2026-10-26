@@ -303,6 +303,10 @@ class ApiClient {
   }
 
   async logout() {
+    // Clear the server-checked workspace session as well as browser tokens.
+    if (typeof window !== 'undefined') {
+      await fetch('/api/world/session', { method: 'DELETE' }).catch(() => undefined);
+    }
     const result = await this.request('POST', '/v1/auth/logout');
     this.clearTokens();
     return result;

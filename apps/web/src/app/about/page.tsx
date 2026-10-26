@@ -3,9 +3,9 @@ import Link from "next/link";
 import { PublicShell, PageIntro } from "@/components/public/PublicShell";
 import { business } from "@/lib/public/catalog";
 export const metadata: Metadata = {
-  title: "About Nova — Wyatt Kirby",
+  title: "About Nova Enterprises",
   description:
-    "Nova Enterprises LLC brings together merchandise sourcing, research and practical software. Based in Terre Haute, Indiana.",
+    "Nova Enterprises LLC brings together merchandise sourcing, research and practical software. Based in Indiana.",
   alternates: { canonical: "/about" },
 };
 export default function About() {
@@ -16,16 +16,15 @@ export default function About() {
         title="A small company. A direct relationship."
       />
       <section className="office-about office-wrap">
-        <h2>Hi, I’m Wyatt.</h2>
+        <h2>Practical work. Clear agreements.</h2>
         <p>
-          I’m Wyatt Kirby, based in Terre Haute, Indiana. I’m building Nova
-          Enterprises around practical work: finding suitable products and
+          Nova Enterprises brings together practical work: finding suitable products and
           suppliers, organizing messy information, and building tools that make
           the next job easier.
         </p>
         <p>
           This website is the front desk. You can inspect the catalog, use the
-          public tools, prepare a request, and reach me directly. If we work
+          public tools, prepare a request, and reach Nova directly. If we work
           together, we agree the scope, price and delivery before anything
           begins.
         </p>

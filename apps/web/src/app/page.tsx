@@ -9,7 +9,7 @@ import { catalog, business } from "@/lib/public/catalog";
 export const metadata: Metadata = {
   title: "Nova Enterprises LLC — Products, sourcing & business tools",
   description:
-    "Merchandise sourcing, practical software and scoped business support. Work directly with Wyatt Kirby in Terre Haute, Indiana.",
+    "Merchandise sourcing, practical software and scoped business support. Contact Nova about your next project.",
   alternates: { canonical: "/" },
 };
 export default function Home() {
@@ -19,7 +19,7 @@ export default function Home() {
       <section className="office-hero office-wrap">
         <div>
           <span className="office-label">
-            NOVA ENTERPRISES LLC · TERRE HAUTE, INDIANA
+            NOVA ENTERPRISES LLC · PRACTICAL BUSINESS SUPPORT
           </span>
           <h1>
             Good business starts
@@ -178,9 +178,9 @@ export default function Home() {
         </div>
         <div className="office-lead">
           <p>
-            I’m Wyatt Kirby, based in Terre Haute, Indiana. Nova is where I
-            bring together merchandise sourcing, research and the software I use
-            to organize the work.
+            Nova brings together merchandise sourcing, research and practical
+            software to organize the work. Start with a clear brief and a direct
+            conversation about what you need.
           </p>
           <p>
             You can try the public tools without an account. For a project, we
@@ -191,7 +191,7 @@ export default function Home() {
               Meet Nova <Arrow />
             </Link>
             <a className="office-text-link" href={"mailto:" + business.email}>
-              Email Wyatt <Arrow />
+              Email Nova <Arrow />
             </a>
           </div>
         </div>

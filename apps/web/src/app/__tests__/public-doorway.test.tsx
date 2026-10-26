@@ -1,14 +1,21 @@
 import React from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import HomePage from "../page";
+import Office from "../office/page";
+import About from "../about/page";
+import Contact from "../contact/page";
 describe("Nova public office doorway", () => {
   const markup = renderToStaticMarkup(<HomePage />);
   it("routes a business-card visitor to products, reception or office without an account gate", () => {
     for (const href of ["/products", "/start", "/about", "/contact", "/office"])
       expect(markup).toContain('href="' + href + '"');
     expect(markup).toContain("wyatt@novanexus-ai.com");
-    expect(markup).toContain("Wyatt Kirby");
-    expect(markup).toContain("Terre Haute");
+    expect(markup).toContain("Nova Enterprises LLC");
+  });
+  it("keeps personal names and private workspace destinations off public pages", () => {
+    for (const page of [markup, renderToStaticMarkup(<Office/>), renderToStaticMarkup(<About/>), renderToStaticMarkup(<Contact/>)]) {
+      expect(page).not.toMatch(/synthetic-desk|synthetic-atlas|libfile_/i);
+    }
   });
   it("shows a small inspectable catalog rather than unsupported sectors or outcomes", () => {
     expect(markup).toContain("Merchandise sourcing");

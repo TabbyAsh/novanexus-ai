@@ -199,7 +199,7 @@ export default function Connections() {
         <details>
           <summary>I want help with an existing order or invoice</summary>
           <p>
-            Email Wyatt with the receipt or reference number. Payment links or
+            Email Nova with the receipt or reference number. Payment links or
             account billing are used only after the applicable scope is
             accepted. Never send card credentials through a project brief.
           </p>

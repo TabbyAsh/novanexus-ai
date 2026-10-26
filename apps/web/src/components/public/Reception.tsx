@@ -60,7 +60,7 @@ export default function Reception() {
   async function copy() {
     try {
       await navigator.clipboard.writeText(formatBrief(f));
-      setMessage("Brief copied. Paste it into an email to Wyatt.");
+      setMessage("Brief copied. Paste it into an email to Nova.");
     } catch {
       setMessage(
         "Copy was unavailable. Use Download brief or select the text below.",
@@ -238,13 +238,13 @@ export default function Reception() {
           <h2>Your request, in one place.</h2>
           <pre className="office-review">{formatBrief(f)}</pre>
           <p className="office-small" style={{ marginTop: 20 }}>
-            “Email Wyatt” opens your email app with this brief. You review and
+            “Email Nova” opens your email app with this brief. You review and
             send it there. This page does not submit or store it in Nova’s
             inquiry queue.
           </p>
           <div className="office-actions">
             <a className="office-button" href={emailBriefUrl(f)}>
-              Email Wyatt <Arrow />
+              Email Nova <Arrow />
             </a>
             <button className="office-outline" onClick={copy}>
               Copy brief

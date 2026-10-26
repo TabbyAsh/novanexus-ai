@@ -1,18 +1,19 @@
 {
   "manifest_version": 3,
-  "name": "Nova Lens — instant flip verdict",
-  "version": "0.1.0",
-  "description": "Open any eBay listing. Nova reads it, pulls real sold comps, and shows a verdict card: worth, fees, net profit, time to sell. No typing.",
-  "permissions": [],
+  "name": "Nova Lens — appraise and watch",
+  "version": "0.2.1",
+  "description": "Source-linked appraisals and auction watching. Read current pages, retain sold evidence, track changes, and calculate complete costs.",
+  "permissions": ["storage", "activeTab", "scripting", "alarms"],
   "host_permissions": [
-    "https://novanexus-ai.com/*",
-    "https://abackend-production.up.railway.app/*"
+    "https://bid13.com/*"
   ],
+  "action": { "default_popup": "popup.html", "default_title": "Nova Lens" },
+  "options_page": "workspace.html",
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://www.ebay.com/itm/*", "https://ebay.com/itm/*"],
-      "js": ["content.js"],
+      "matches": ["https://www.ebay.com/itm/*", "https://ebay.com/itm/*", "https://www.ebay.com/sch/*", "https://bid13.com/node/*", "https://bid13.com/storage-auctions/*"],
+      "js": ["lens-core.js", "capture.js", "content.js"],
       "css": ["card.css"],
       "run_at": "document_idle"
     }

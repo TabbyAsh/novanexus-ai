@@ -16,7 +16,7 @@ export const metadata: Metadata = {
 const SECTIONS: Array<{ title: string; items: Array<string | LinkedPolicyItem> }> = [
   {title: 'Public tools and reception', items: [
     'NovaClean processes your file in the current browser tab without uploading it or requesting AI processing. Download results before leaving. Auction Desk and Nova Loop describe their own local save and export behavior.',
-    'The general reception brief remains in your tab. Opening Email Wyatt prepares a message in your email app; nothing is submitted until you send it. Copy and download are local actions. The separate Workflow Setup Pilot form submits an inquiry to the Nova backend and returns a receipt when recorded.',
+    'The general reception brief remains in your tab. Opening Email Nova prepares a message in your email app; nothing is submitted until you send it. Copy and download are local actions. The separate Workflow Setup Pilot form submits an inquiry to the Nova backend and returns a receipt when recorded.',
   ]},
   {
     title: '1. Information We Collect',
