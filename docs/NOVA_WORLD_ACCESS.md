@@ -23,7 +23,7 @@ Private destinations are supplied by a server-only resource registry after verif
 
 The recovered extension refit is preserved in `apps/extension`, with `scripts/build-nova-lens-extension.mjs`, `scripts/nova-auction.mjs`, and tests under `tests/lens` and `tests/auction-desk`.
 
-Patch 0.2.1 adds an explicit source-brief copy action that excludes personal ceilings, watch settings and the private cost ledger. Generic source URL normalization preserves query identifiers. The packaged cost engine is the existing Auction Desk engine, not a second calculation implementation.
+Patch 0.2.2 adds an explicit source-brief copy action that excludes personal ceilings, watch settings and the private cost ledger. Generic source URL normalization preserves query identifiers. The packaged cost engine is the existing Auction Desk engine, not a second calculation implementation.
 
 Run `python scripts/package-nova-lens-download.py` after extension edits. It deterministically generates the server-only ZIP module used by the protected download route. No credentials or user records are packaged. Chrome installation still requires downloading, extracting and loading the unpacked folder locally; native permission/wake-up behavior has not been verified here.
 

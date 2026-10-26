@@ -72,8 +72,10 @@ try:
     check(hashlib.sha256(data).hexdigest()==headers.get('X-Content-SHA256'),'Package hash mismatch')
     with zipfile.ZipFile(io.BytesIO(data)) as archive:
         check(all(n.startswith('Nova-Lens/') and '..' not in Path(n).parts for n in archive.namelist()),'Unsafe archive paths')
-        check(json.loads(archive.read('Nova-Lens/manifest.json'))['version']=='0.2.1','Wrong Lens version')
+        check(json.loads(archive.read('Nova-Lens/manifest.json'))['version']=='0.2.2','Wrong Lens version')
         check('Nova-Lens/auction-core.mjs' in archive.namelist(),'Cost engine missing')
+        check(b'nova-lens-watch' in archive.read('Nova-Lens/background.js'),'Watch worker missing from package')
+        check(b'abackend-production' not in archive.read('Nova-Lens/background.js'),'Legacy network worker packaged')
     status,headers,data=fetch('/api/world/session','DELETE',{'Origin':base})
     check(status==200 and 'Max-Age=0' in headers.get('Set-Cookie',''),'Lock did not expire session')
     for asset in (web/'.next/static').rglob('*.js'):

@@ -1,10 +1,10 @@
-# Nova Lens 0.2.1 — appraise and watch
+# Nova Lens 0.2.2 — appraise and watch
 
 A refit of the existing Nova Lens extension in `TabbyAsh/novanexus-ai`. It reuses the exact Auction Desk cost/forecast engine rather than creating a new Nova runtime. This is a development build, not a published Chrome Store release.
 
 ## Install the prepared folder on a desktop PC
 
-1. Extract `Nova-Lens-0.2.1.zip`.
+1. Extract `Nova-Lens-0.2.2.zip`.
 2. In desktop Chrome, open `chrome://extensions`, enable Developer mode, choose **Load unpacked**, and select the `Nova-Lens` folder containing `manifest.json`.
 3. Pin Nova Lens in the extensions menu. Refresh any already-open auction/listing tabs.
 4. Click Lens → **Scan current page**. Open the Lens workspace to review evidence, comparisons, costs and watch settings.
@@ -42,7 +42,7 @@ Workspace data is unencrypted local Chrome extension storage. Export backups. No
 
 ## Verification, October 26, 2026
 
-- The original refit passed 59 checks. Patch 0.2.1 adds source-brief privacy and query-identifier regression checks; run the commands below for current results.
+- The original refit passed 59 checks. Patch 0.2.2 adds source-brief privacy and query-identifier regression checks; run the commands below for current results.
 - DOM tests execute the source extractor and workspace flow with explicit extension/DOM adapters. They verify evidence qualification, unknown costs, source-rich locking and invalidation after changed terms. They do not prove native Chrome permissions, installation, background wake-up or visual layout.
 - A real public M10 source check read its current bid, deposit, closing timestamp and pickup window; it did not appraise contents, bid or spend.
 - Native Chromium integration/visual tests were not run: no browser executable was available and the browser download returned invalid archive data. A separate native test harness is retained in `tests/lens/browser.test.cjs` for an environment with Chromium.

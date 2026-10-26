@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Nova Lens — appraise and watch",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "Source-linked appraisals and auction watching. Read current pages, retain sold evidence, track changes, and calculate complete costs.",
   "permissions": ["storage", "activeTab", "scripting", "alarms"],
   "host_permissions": [

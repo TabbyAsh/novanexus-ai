@@ -18,7 +18,7 @@ describe('private Lens package', () => {
     const data = Buffer.from(await response.arrayBuffer());
     expect(data.subarray(0,2).toString()).toBe('PK');
     expect(createHash('sha256').update(data).digest('hex')).toBe(response.headers.get('x-content-sha256'));
-    expect(response.headers.get('content-disposition')).toContain('Nova-Lens-0.2.1.zip');
+    expect(response.headers.get('content-disposition')).toContain('Nova-Lens-0.2.2.zip');
     expect(response.headers.get('cache-control')).toBe('private, no-store');
   });
 });
