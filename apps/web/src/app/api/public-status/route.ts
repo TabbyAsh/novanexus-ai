@@ -15,7 +15,9 @@ export async function GET() {
       const d = await r.json();
       if (r.ok && d.status === "healthy" && d.service === "gateway")
         gateway = "responding";
-    } catch {}
+    } catch {
+    gateway = "unavailable";
+  }
   return NextResponse.json(
     {
       checkedAt,
