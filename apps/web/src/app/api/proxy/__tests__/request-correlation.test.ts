@@ -1,5 +1,6 @@
 import { NextRequest } from 'next/server';
-import { POST } from '../[...path]/route';
+import { brotliCompressSync, deflateSync, gzipSync } from 'node:zlib';
+import { GET, POST } from '../[...path]/route';
 
 describe('same-origin proxy request correlation', () => {
   const originalBackendUrl = process.env.BACKEND_URL;
@@ -61,5 +62,33 @@ describe('same-origin proxy request correlation', () => {
     expect((options?.headers as Record<string, string>)['idempotency-key']).toBe(key);
     expect((options?.headers as Record<string, string>)['x-request-id']).not.toBe(key);
     expect(options?.body).toBe(body);
+  });
+  it.each(['gzip', 'br', 'deflate'])('returns readable decoded JSON without stale %s response headers', async encoding => {
+    process.env.BACKEND_URL = 'https://api.example.test';
+    const payload = { success: true, data: { version: 'test-version', service: 'gateway' } };
+    const decoded = JSON.stringify(payload);
+    const compressed = encoding === 'br' ? brotliCompressSync(decoded)
+      : encoding === 'deflate' ? deflateSync(decoded) : gzipSync(decoded);
+    // Node fetch exposes decoded body bytes while retaining upstream headers.
+    jest.spyOn(global, 'fetch').mockResolvedValue(new Response(decoded, {
+      status: 200,
+      headers: {
+        'content-type': 'application/json; charset=utf-8',
+        'content-encoding': encoding,
+        'content-length': String(compressed.byteLength),
+        'cache-control': 'private, no-store',
+        'x-request-id': 'upstream-request-12345678',
+      },
+    }));
+    const request = new NextRequest('https://novanexus-ai.com/api/proxy/version');
+    const response = await GET(request, { params: Promise.resolve({ path: ['version'] }) });
+    expect(response.status).toBe(200);
+    expect(response.headers.get('content-encoding')).toBeNull();
+    expect(response.headers.get('content-length')).toBeNull();
+    expect(response.headers.get('content-type')).toBe('application/json; charset=utf-8');
+    expect(response.headers.get('cache-control')).toBe('private, no-store');
+    expect(response.headers.get('x-request-id')).toBe('upstream-request-12345678');
+    expect(response.headers.get('x-nova-proxy')).toBe('same-origin');
+    expect(await response.json()).toEqual(payload);
   });
 });

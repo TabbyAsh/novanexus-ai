@@ -5,8 +5,9 @@ import { requestIdFor } from '@/lib/request-id';
 // Headers to forward from client
 const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id', 'idempotency-key'];
 
-// Headers to NOT forward back (hop-by-hop)
-const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive'];
+// Fetch decodes compressed upstream bodies. Do not describe the decoded bytes
+// with the original encoding or compressed length, or clients decode them twice.
+const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive', 'content-encoding', 'content-length'];
 
 async function proxyRequest(request: NextRequest, params: { path: string[] }) {
   const requestId = requestIdFor(request.headers.get('x-request-id'));
