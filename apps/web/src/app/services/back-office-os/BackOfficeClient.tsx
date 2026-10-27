@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useRef, useState } from 'react';
 import Link from 'next/link';
 import { ArrowRight, CheckCircle, Send } from 'lucide-react';
 import {
@@ -23,14 +23,8 @@ const deliverables = [
 
 const initialForm: PilotIntakeForm = { name: '', email: '', business: '', challenge: '' };
 
-function deliveryMessage(receipt: PilotInquiryReceipt): string {
-  if (receipt.delivery.state === 'PROVIDER_ACCEPTED_BOTH') {
-    return 'The inquiry is in the durable queue. The email provider accepted both notification requests; inbox delivery is not guaranteed.';
-  }
-  if (receipt.delivery.state === 'OPERATOR_PROVIDER_ACCEPTED') {
-    return 'The inquiry is in the durable queue. The provider accepted the operator notification, but a confirmation request was not accepted. Inbox delivery is not guaranteed.';
-  }
-  return 'The inquiry is in the durable queue, but email delivery was not verified. Save the receipt for recovery.';
+function deliveryMessage(): string {
+  return 'Your inquiry is saved. Keep this receipt when contacting Nova. A confirmation email may arrive separately.';
 }
 
 export default function BackOfficeClient() {
@@ -39,6 +33,8 @@ export default function BackOfficeClient() {
   const [attempted, setAttempted] = useState(false);
   const [receipt, setReceipt] = useState<PilotInquiryReceipt | null>(null);
   const [failureReceipt, setFailureReceipt] = useState<PilotInquiryReceipt | null>(null);
+  const attempt = useRef<(PilotIntakeForm & { service: string; requestId: string }) | null>(null);
+  const submitting = useRef(false);
   const complete = isCompletePilotIntake(form);
   const validationErrors = validatePilotIntake(form);
   const hostedPaymentUrl = receipt
@@ -52,14 +48,16 @@ export default function BackOfficeClient() {
       setStatus('invalid');
       return;
     }
-    if (status === 'submitting') return;
+    if (submitting.current) return;
+    submitting.current = true;
     setStatus('submitting');
     setFailureReceipt(null);
     try {
+      if (!attempt.current) attempt.current = { ...form, service: 'Workflow Setup Pilot', requestId: crypto.randomUUID() };
       const response = await fetch('/api/proxy/v1/contact', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ ...form, service: 'Workflow Setup Pilot' }),
+        body: JSON.stringify(attempt.current),
       });
       const payload = await response.json().catch(() => null);
       const acceptedReceipt = parseSuccessfulPilotReceipt(payload);
@@ -69,13 +67,15 @@ export default function BackOfficeClient() {
         return;
       }
       setFailureReceipt(parseFailedPilotReceipt(payload));
+      if (response.status === 400 && !parseFailedPilotReceipt(payload)) attempt.current = null;
       setStatus('error');
     } catch {
       setStatus('error');
-    }
+    } finally { submitting.current = false; }
   };
 
   const updateField = (field: keyof PilotIntakeForm, value: string) => {
+    if (attempt.current) return;
     setForm(previous => ({ ...previous, [field]: value }));
     if (status === 'invalid') setStatus('idle');
   };
@@ -154,7 +154,7 @@ export default function BackOfficeClient() {
             <div role="status" aria-live="polite" aria-atomic="true" className="border-2 border-[#141713] bg-white p-6 md:p-8">
               <CheckCircle className="h-9 w-9" aria-hidden="true" />
               <h3 className="mt-5 text-2xl font-black">Inquiry recorded.</h3>
-              <p className="mt-3 leading-7 text-[#4d5448]">{deliveryMessage(receipt)}</p>
+              <p className="mt-3 leading-7 text-[#4d5448]">{deliveryMessage()}</p>
               <div className="mt-6 border-y border-[#777d70] py-4">
                 <p className="text-xs font-bold uppercase tracking-[0.18em] text-[#596052]">Receipt</p>
                 <p className="mt-2 break-all font-mono text-sm font-bold">{receipt.receiptId}</p>
@@ -198,6 +198,7 @@ export default function BackOfficeClient() {
                   Your name
                   <input
                     value={form.name}
+                    disabled={Boolean(attempt.current)}
                     onChange={event => updateField('name', event.target.value)}
                     minLength={2}
                     maxLength={100}
@@ -213,6 +214,7 @@ export default function BackOfficeClient() {
                   Email
                   <input
                     value={form.email}
+                    disabled={Boolean(attempt.current)}
                     onChange={event => updateField('email', event.target.value)}
                     type="email"
                     maxLength={254}
@@ -229,6 +231,7 @@ export default function BackOfficeClient() {
                 Business name and type
                 <input
                   value={form.business}
+                  disabled={Boolean(attempt.current)}
                   onChange={event => updateField('business', event.target.value)}
                   minLength={2}
                   maxLength={160}
@@ -244,6 +247,7 @@ export default function BackOfficeClient() {
                 Describe the current workflow, the breakdown, and the one result you need
                 <textarea
                   value={form.challenge}
+                  disabled={Boolean(attempt.current)}
                   onChange={event => updateField('challenge', event.target.value)}
                   minLength={20}
                   maxLength={2000}
@@ -274,7 +278,7 @@ export default function BackOfficeClient() {
                   {failureReceipt ? (
                     <p className="mt-1">A record exists as <span className="font-mono font-bold">{failureReceipt.receiptId}</span>, but its delivery status is uncertain. Email support with that receipt.</p>
                   ) : (
-                    <p className="mt-1">Retry once, or <a className="font-bold underline" href="mailto:wyatt@novanexus-ai.com?subject=Workflow%20Setup%20Pilot%20intake">email support directly</a>. No payment has been requested.</p>
+                    <p className="mt-1">Retry the unchanged request to recover its receipt, or <a className="font-bold underline" href="mailto:wyatt@novanexus-ai.com?subject=Workflow%20Setup%20Pilot%20intake">email support directly</a>{attempt.current ? <> with reference <span className="font-mono">{attempt.current.requestId}</span></> : <> after reviewing your details</>}. No payment has been requested.</p>
                   )}
                 </div>
               )}

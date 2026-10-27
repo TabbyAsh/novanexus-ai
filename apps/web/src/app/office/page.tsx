@@ -27,6 +27,18 @@ const rooms = [
     "Sign in",
   ],
   [
+    "Nova Headquarters",
+    "Private lead pipeline, action packets and business records for Nova's owner. Owner sign-in required.",
+    "https://nova-deal-desk-wyatt.tabbyash.chatgpt.site",
+    "Open private headquarters",
+  ],
+  [
+    "Incoming website requests",
+    "Review saved request receipts and buyer or supplier briefs. Private owner access required.",
+    "/office/inquiries",
+    "Review inquiries",
+  ],
+  [
     "Connections & setup",
     "Check the backend and the integrations available to your signed-in account.",
     "/connections",
@@ -39,7 +51,7 @@ export default function Office() {
     <PublicShell>
       <PageIntro eyebrow="Office directory" title="Everything has a place.">
         <p>
-          Choose a service or public tool. Your account has its own sign-in.
+          Choose a service, public tool or private workspace. Each account has its own sign-in.
         </p>
       </PageIntro>
       <section className="office-directory office-wrap">

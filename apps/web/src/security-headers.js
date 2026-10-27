@@ -39,6 +39,7 @@ function securityHeaderRules(nodeEnv = process.env.NODE_ENV) {
   return [
     { source: '/:path*', headers: BASE_SECURITY_HEADERS },
     { source: '/world/:path*', headers: [{ key: 'Cache-Control', value: 'private, no-store' }, { key: 'X-Robots-Tag', value: 'noindex, nofollow' }, { key: 'Referrer-Policy', value: 'no-referrer' }] },
+    { source: '/office/inquiries/:path*', headers: [{ key: 'Cache-Control', value: 'private, no-store' }, { key: 'X-Robots-Tag', value: 'noindex, nofollow' }, { key: 'Referrer-Policy', value: 'no-referrer' }] },
     { source: '/', headers: [contentSecurityPolicy] },
     { source: '/services/workflow-setup', headers: [contentSecurityPolicy] },
   ];

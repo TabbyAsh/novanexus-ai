@@ -38,6 +38,10 @@ describe('pilot intake response contract', () => {
     expect(parseSuccessfulPilotReceipt({ success: false, data: receiptData })).toBeNull();
     expect(parseFailedPilotReceipt({ success: false, data: receiptData })).toMatchObject({ receiptId });
   });
+  it('retains the saved receipt while notification delivery is still pending on an idempotent retry', () => {
+    expect(parseSuccessfulPilotReceipt({ success: true, data: { ...receiptData, replayed: true, delivery: { operatorEmail: 'PENDING', confirmationEmail: 'PENDING', state: 'RECORDED_ONLY' } } }))
+      .toMatchObject({ receiptId, delivery: { operatorEmail: 'PENDING', confirmationEmail: 'PENDING' } });
+  });
 
   it('gates submission on every bounded intake field', () => {
     const complete = {

@@ -7,7 +7,7 @@ export interface PilotIntakeForm {
 
 export type PilotIntakeErrors = Partial<Record<keyof PilotIntakeForm, string>>;
 
-export type EmailDeliveryStatus = 'PROVIDER_ACCEPTED' | 'FAILED' | 'NOT_CONFIGURED' | 'SKIPPED';
+export type EmailDeliveryStatus = 'PENDING' | 'PROVIDER_ACCEPTED' | 'FAILED' | 'NOT_CONFIGURED' | 'SKIPPED';
 
 export interface PilotInquiryReceipt {
   receiptId: string;
@@ -35,7 +35,7 @@ function parseReceiptData(value: unknown): PilotInquiryReceipt | null {
   const data = object(value);
   const delivery = object(data?.delivery);
   const recovery = object(data?.recovery);
-  const emailStatuses = ['PROVIDER_ACCEPTED', 'FAILED', 'NOT_CONFIGURED', 'SKIPPED'];
+  const emailStatuses = ['PENDING', 'PROVIDER_ACCEPTED', 'FAILED', 'NOT_CONFIGURED', 'SKIPPED'];
   const deliveryStates = ['PROVIDER_ACCEPTED_BOTH', 'OPERATOR_PROVIDER_ACCEPTED', 'RECORDED_ONLY'];
   if (
     data?.received !== true
