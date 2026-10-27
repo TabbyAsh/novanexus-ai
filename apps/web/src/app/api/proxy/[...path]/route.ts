@@ -3,7 +3,7 @@ import { resolveBackendUrl } from '@/lib/backend-url';
 import { requestIdFor } from '@/lib/request-id';
 
 // Headers to forward from client
-const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id'];
+const FORWARD_HEADERS = ['authorization', 'content-type', 'accept', 'x-request-id', 'idempotency-key'];
 
 // Headers to NOT forward back (hop-by-hop)
 const STRIP_RESPONSE_HEADERS = ['transfer-encoding', 'connection', 'keep-alive'];

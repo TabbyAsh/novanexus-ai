@@ -36,4 +36,12 @@ describe('production web security headers', () => {
       .headers.find((header: { key: string }) => header.key === 'Content-Security-Policy').value;
     expect(csp).toContain("'unsafe-eval'");
   });
+  it('keeps private incoming-request pages out of shared caches and search indexes', () => {
+    const rule = securityHeaderRules('production').find((entry: { source: string }) => entry.source === '/office/inquiries/:path*');
+    expect(rule.headers).toEqual(expect.arrayContaining([
+      { key: 'Cache-Control', value: 'private, no-store' },
+      { key: 'X-Robots-Tag', value: 'noindex, nofollow' },
+      { key: 'Referrer-Policy', value: 'no-referrer' },
+    ]));
+  });
 });

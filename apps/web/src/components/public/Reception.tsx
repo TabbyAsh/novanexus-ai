@@ -1,13 +1,16 @@
 "use client";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import {
   intents,
   formatBrief,
   emailBriefUrl,
   validateBrief,
+  buildReceptionInquiry,
+  needsDeliveryBrief,
   type ReceptionForm,
 } from "@/lib/public/reception";
+import { parseFailedPilotReceipt, parseSuccessfulPilotReceipt, type PilotInquiryReceipt } from "@/app/services/back-office-os/intake-contract";
 import { Arrow } from "./PublicShell";
 const blank: ReceptionForm = {
   intent: "",
@@ -19,20 +22,67 @@ const blank: ReceptionForm = {
   destination: "",
   budget: "",
   deadline: "",
+  product: "",
+  website: "",
 };
 export default function Reception() {
   const [f, setF] = useState<ReceptionForm>(blank),
     [step, setStep] = useState(1),
     [errors, setErrors] = useState<string[]>([]),
     [message, setMessage] = useState("");
+  const [status, setStatus] = useState<'idle' | 'submitting' | 'received' | 'error'>('idle');
+  const [receipt, setReceipt] = useState<PilotInquiryReceipt | null>(null);
+  const [failureReceipt, setFailureReceipt] = useState<PilotInquiryReceipt | null>(null);
+  const pending = useRef<ReturnType<typeof buildReceptionInquiry> | null>(null);
+  const submitting = useRef(false);
   useEffect(() => {
     const i = new URLSearchParams(window.location.search).get("intent");
     if (intents.some((x) => x.id === i)) setF((v) => ({ ...v, intent: i! }));
   }, []);
   function field(k: keyof ReceptionForm, v: string) {
-    setF((f) => ({ ...f, [k]: v }));
+    setF((f) => ({ ...f, ...(k === 'intent' && f.intent !== v ? { product: '', website: '', quantity: '', destination: '' } : {}), [k]: v }));
     setErrors([]);
     setMessage("");
+  }
+  async function submit() {
+    if (submitting.current || receipt) return;
+    const validation = validateBrief(f);
+    if (validation.length) { setErrors(validation); return; }
+    submitting.current = true;
+    setStatus('submitting');
+    setErrors([]);
+    setMessage('');
+    try {
+      if (!pending.current) pending.current = buildReceptionInquiry(f, crypto.randomUUID());
+      const response = await fetch('/api/proxy/v1/contact', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(pending.current),
+      });
+      const payload = await response.json().catch(() => null);
+      const accepted = parseSuccessfulPilotReceipt(payload);
+      if (response.ok && accepted) {
+        setReceipt(accepted);
+        setStatus('received');
+        return;
+      }
+      setFailureReceipt(parseFailedPilotReceipt(payload));
+      if (response.status === 400 && !parseFailedPilotReceipt(payload)) {
+        pending.current = null;
+        setErrors(['Nova could not accept this brief. Review the details and try again.']);
+        setStatus('idle');
+        setStep(2);
+        return;
+      }
+      setStatus('error');
+    } catch {
+      setStatus('error');
+    } finally { submitting.current = false; }
+  }
+  function newRequest() {
+    pending.current = null;
+    setF(blank); setStep(1); setErrors([]); setMessage('');
+    setReceipt(null); setFailureReceipt(null); setStatus('idle');
   }
   function next() {
     if (step === 1 && !f.intent) {
@@ -55,7 +105,7 @@ export default function Reception() {
     a.download = "Nova-Request.txt";
     a.click();
     URL.revokeObjectURL(url);
-    setMessage("Brief downloaded. It has not been sent.");
+    setMessage("Brief downloaded. Downloading does not submit it.");
   }
   async function copy() {
     try {
@@ -68,7 +118,7 @@ export default function Reception() {
     }
   }
   return (
-    <div className="office-form-panel">
+    <div className="office-form-panel" aria-busy={status === 'submitting'}>
       <div className="office-step" aria-label="Request steps">
         {["Choose", "Details", "Review"].map((t, i) => (
           <span key={t} aria-current={step === i + 1 ? "step" : undefined}>
@@ -83,7 +133,16 @@ export default function Reception() {
           ))}
         </div>
       )}
-      {step === 1 ? (
+      {status === 'received' && receipt ? (
+        <section className="office-success" role="status">
+          <span className="office-label">Request received</span>
+          <h2>Your request is saved.</h2>
+          <p style={{ marginTop: 15 }}>Keep this receipt when contacting Nova: <strong style={{ overflowWrap: 'anywhere' }}>{receipt.receiptId}</strong></p>
+          <p className="office-small" style={{ marginTop: 15 }}>A confirmation email may arrive separately.</p>
+          <p className="office-small" style={{ marginTop: 15 }}>We confirm scope, price and timing before any paid work or product order.</p>
+          <div className="office-actions"><button className="office-outline" onClick={newRequest}>Start another request</button></div>
+        </section>
+      ) : step === 1 ? (
         <>
           <span className="office-label">A useful starting point</span>
           <h2>What do you need?</h2>
@@ -106,8 +165,7 @@ export default function Reception() {
             </button>
           </div>
           <p className="office-small" style={{ marginTop: 20 }}>
-            Your draft stays in this tab. No account is needed and no paid work
-            starts here.
+            Your draft stays in this tab until you submit it. No account is needed and no paid work starts here.
           </p>
         </>
       ) : step === 2 ? (
@@ -153,14 +211,22 @@ export default function Reception() {
             </label>
           </div>
           <label className="office-field">
-            Business or project
+            Business or project *
             <input
-              maxLength={150}
+              maxLength={160}
               autoComplete="organization"
               value={f.business}
               onChange={(e) => field("business", e.target.value)}
             />
           </label>
+          {['merchandise', 'wholesale', 'retail', 'supplier'].includes(f.intent) && <label className="office-field">
+            Product or SKU
+            <input maxLength={160} value={f.product || ''} onChange={e => field('product', e.target.value)} placeholder="Product name, material or item reference" />
+          </label>}
+          {f.intent === 'supplier' && <label className="office-field">
+            Business website
+            <input type="url" maxLength={500} value={f.website || ''} onChange={e => field('website', e.target.value)} placeholder="https://" />
+          </label>}
           <label className="office-field">
             What would a useful result look like? *
             <textarea
@@ -176,13 +242,13 @@ export default function Reception() {
               }
             />
           </label>
-          {f.intent === "merchandise" && (
+          {needsDeliveryBrief(f.intent) && (
             <div className="office-form-grid">
               <label className="office-field">
                 Quantity and variants *
                 <input
                   value={f.quantity}
-                  maxLength={160}
+                  maxLength={120}
                   onChange={(e) => field("quantity", e.target.value)}
                   placeholder="250 units, sizes / colors"
                 />
@@ -191,7 +257,7 @@ export default function Reception() {
                 Delivery destination *
                 <input
                   value={f.destination}
-                  maxLength={180}
+                  maxLength={240}
                   onChange={(e) => field("destination", e.target.value)}
                   placeholder="City, state / country and postal code"
                 />
@@ -202,7 +268,7 @@ export default function Reception() {
             <label className="office-field">
               Budget and currency
               <input
-                maxLength={100}
+                maxLength={160}
                 value={f.budget}
                 onChange={(e) => field("budget", e.target.value)}
                 placeholder="A range is useful"
@@ -211,7 +277,7 @@ export default function Reception() {
             <label className="office-field">
               Deadline or in-hand date
               <input
-                maxLength={100}
+                maxLength={80}
                 value={f.deadline}
                 onChange={(e) => field("deadline", e.target.value)}
                 placeholder="Date, or flexible"
@@ -238,24 +304,28 @@ export default function Reception() {
           <h2>Your request, in one place.</h2>
           <pre className="office-review">{formatBrief(f)}</pre>
           <p className="office-small" style={{ marginTop: 20 }}>
-            “Email Nova” opens your email app with this brief. You review and
-            send it there. This page does not submit or store it in Nova’s
-            inquiry queue.
+            Submit this brief to Nova for review. A receipt confirms it was saved. Scope, price and responsibilities are agreed separately before work begins.
           </p>
           <div className="office-actions">
-            <a className="office-button" href={emailBriefUrl(f)}>
-              Email Nova <Arrow />
-            </a>
-            <button className="office-outline" onClick={copy}>
+            <button className="office-button" onClick={() => void submit()} disabled={status === 'submitting'}>
+              {status === 'submitting' ? 'Submitting…' : status === 'error' ? 'Retry this request' : 'Submit request'} <Arrow />
+            </button>
+            <a className="office-outline" href={emailBriefUrl(f)}>Email a copy</a>
+            <button className="office-outline" onClick={copy} disabled={status === 'submitting'}>
               Copy brief
             </button>
-            <button className="office-outline" onClick={download}>
+            <button className="office-outline" onClick={download} disabled={status === 'submitting'}>
               Download brief
             </button>
-            <button className="office-outline" onClick={() => setStep(2)}>
+            <button className="office-outline" onClick={() => setStep(2)} disabled={Boolean(pending.current)}>
               Edit
             </button>
           </div>
+          {status === 'error' && <div className="office-error" role="alert" style={{ marginTop: 20 }}>
+            {failureReceipt ? <p>A record exists as <strong>{failureReceipt.receiptId}</strong>, but delivery status was not fully verified.</p>
+              : <p>We could not verify a saved receipt. Your brief is still here.</p>}
+            <p>Retry this unchanged request to recover its receipt safely. If you email Nova instead, include this reference: <strong style={{ overflowWrap: 'anywhere' }}>{pending.current?.requestId}</strong>.</p>
+          </div>}
           {message && (
             <p className="office-small" style={{ marginTop: 15 }} role="status">
               {message}

@@ -50,9 +50,13 @@ import {
   buildOperatorInquiryEmail,
   canReadServiceInquiryQueue,
   receiveServiceInquiry,
+  applyInquiryRequestHeader,
+  parseInquiryQueueQuery,
+  inquiryQueueCursor,
   type EmailDeliveryOutcome,
   type NormalizedServiceInquiry,
 } from './service-inquiries';
+import { persistServiceInquiry } from './service-inquiry-store';
 
 const app = express();
 const logger = createLogger('nova-hub');
@@ -13320,16 +13324,15 @@ app.get('/v1/admin/service-inquiries', authMiddleware, async (req: Authenticated
     });
   }
 
-  const allowedStatuses = new Set(['RECEIVED', 'IN_REVIEW', 'SCOPE_ACCEPTED', 'IN_PROGRESS', 'DELIVERED', 'CANCELLED']);
-  const requestedStatus = typeof req.query.status === 'string' ? req.query.status.toUpperCase() : '';
-  if (requestedStatus && !allowedStatuses.has(requestedStatus)) {
+  res.setHeader('Cache-Control','private, no-store');
+  const filters=parseInquiryQueueQuery(req.query);
+  if ('message' in filters) {
     return res.status(HTTP_STATUS.BAD_REQUEST).json({
       success: false,
-      error: { code: ERROR_CODES.INVALID_INPUT, message: 'Unknown inquiry status.' },
+      error: { code: ERROR_CODES.INVALID_INPUT, message: filters.message },
     });
   }
-  const requestedLimit = Number(req.query.limit || 50);
-  const limit = Number.isFinite(requestedLimit) ? Math.min(100, Math.max(1, Math.floor(requestedLimit))) : 50;
+  const {status,serviceCode,limit,after,before,receiptId}=filters.value;
 
   try {
     const result = await query<{
@@ -13346,17 +13349,23 @@ app.get('/v1/admin/service-inquiries', authMiddleware, async (req: Authenticated
       paid_at: string | null;
       created_at: string;
       updated_at: string;
+      details:Record<string,string>;
+      request_key:string|null;
     }>(
       `SELECT receipt_id, service_code, name, email, business, challenge, status,
               operator_email_status, confirmation_email_status, payment_status,
-              paid_at, created_at, updated_at
+              paid_at, created_at, updated_at, details, request_key
        FROM service_inquiries
        WHERE ($1::text = '' OR status = $1)
-       ORDER BY created_at DESC
+         AND ($3::text = '' OR service_code=$3)
+         AND ($4::timestamptz IS NULL OR updated_at>$4)
+         AND ($5::timestamptz IS NULL OR (created_at,receipt_id)<($5::timestamptz,$6::varchar))
+       ORDER BY created_at DESC,receipt_id DESC
        LIMIT $2`,
-      [requestedStatus, limit],
+      [status,limit+1,serviceCode,after,before,receiptId],
     );
-    return res.json({ success: true, data: { inquiries: result.rows, count: result.rows.length } });
+    const inquiries=result.rows.slice(0,limit);
+    return res.json({ success: true, data: { inquiries, count: inquiries.length, nextCursor:result.rows.length>limit?inquiryQueueCursor(inquiries[inquiries.length-1]):null } });
   } catch (error) {
     logger.error('Service inquiry queue unavailable', error as Error);
     return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({
@@ -13367,28 +13376,23 @@ app.get('/v1/admin/service-inquiries', authMiddleware, async (req: Authenticated
 });
 
 app.post('/v1/contact', async (req: Request, res: Response) => {
-  const result = await receiveServiceInquiry(req.body, {
+  res.setHeader('Cache-Control','no-store');
+  const submitted=applyInquiryRequestHeader(req.body,req.headers['idempotency-key']);
+  if('errors' in submitted)return res.status(HTTP_STATUS.BAD_REQUEST).json({success:false,error:{code:ERROR_CODES.INVALID_INPUT,message:'Correct the inquiry request ID.',fields:submitted.errors}});
+  const result = await receiveServiceInquiry(submitted.value, {
     createReceiptId: () => `svc_${randomBytes(18).toString('base64url')}`,
-    persistInquiry: async (inquiry: NormalizedServiceInquiry, receiptId: string) => {
-      const inserted = await query(
-        `INSERT INTO service_inquiries
-          (receipt_id, service_code, name, email, business, challenge)
-         VALUES ($1, $2, $3, $4, $5, $6)`,
-        [receiptId, inquiry.serviceCode, inquiry.name, inquiry.email, inquiry.business, inquiry.challenge],
-      );
-      if (inserted.rowCount !== 1) throw new Error('Inquiry insert did not persist one row.');
-    },
+    persistInquiry: (inquiry:NormalizedServiceInquiry,receiptId:string)=>persistServiceInquiry(query,inquiry,receiptId),
     deliverOperator: async (inquiry: NormalizedServiceInquiry, receiptId: string) => deliverInquiryEmail({
       to: process.env.SERVICE_INQUIRY_OPERATOR_EMAIL || SERVICE_INQUIRY_SUPPORT_EMAIL,
       replyTo: inquiry.email,
-      subject: `New ${SERVICE_INQUIRY_NAME} inquiry — ${receiptId}`,
+      subject: `New ${inquiry.serviceName} inquiry — ${receiptId}`,
       html: buildOperatorInquiryEmail(inquiry, receiptId),
     }),
     deliverConfirmation: async (inquiry: NormalizedServiceInquiry, receiptId: string) => {
       if (process.env.SERVICE_INQUIRY_SEND_CONFIRMATION === 'false') return { status: 'SKIPPED' };
       return deliverInquiryEmail({
         to: inquiry.email,
-        subject: `Nova pilot inquiry receipt ${receiptId}`,
+        subject: `Nova inquiry receipt ${receiptId}`,
         html: buildConfirmationInquiryEmail(inquiry, receiptId),
       });
     },
@@ -13424,6 +13428,7 @@ app.post('/v1/contact', async (req: Request, res: Response) => {
       },
     });
   }
+  if(result.kind==='idempotency_conflict')return res.status(HTTP_STATUS.CONFLICT).json({success:false,error:{code:'INQUIRY_REQUEST_CONFLICT',message:'This request ID already belongs to different inquiry content. Keep its original receipt; start a new request for a different inquiry.'}});
   if (result.kind === 'delivery_persistence_failed') {
     logger.error('Service inquiry delivery outcomes were not durably recorded', undefined, { receiptId: result.receiptId });
     return res.status(HTTP_STATUS.SERVICE_UNAVAILABLE).json({

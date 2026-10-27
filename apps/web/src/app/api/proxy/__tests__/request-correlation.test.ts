@@ -48,4 +48,18 @@ describe('same-origin proxy request correlation', () => {
     expect(payload.error.message).toBe('The Nova backend could not be reached.');
     expect(JSON.stringify(payload)).not.toContain('private upstream detail');
   });
+  it('preserves an inquiry idempotency key separately from request correlation', async () => {
+    process.env.BACKEND_URL = 'https://api.example.test';
+    const fetchMock = jest.spyOn(global, 'fetch').mockResolvedValue(new Response('{"success":true}', { status: 200 }));
+    const key = 'inquiry-request-123456789';
+    const body = JSON.stringify({ requestId: key, serviceCode: 'MERCHANDISE_SOURCING' });
+    const request = new NextRequest('https://novanexus-ai.com/api/proxy/v1/contact', {
+      method: 'POST', headers: { 'content-type': 'application/json', 'idempotency-key': key }, body,
+    });
+    await POST(request, { params: Promise.resolve({ path: ['v1', 'contact'] }) });
+    const options = fetchMock.mock.calls[0][1];
+    expect((options?.headers as Record<string, string>)['idempotency-key']).toBe(key);
+    expect((options?.headers as Record<string, string>)['x-request-id']).not.toBe(key);
+    expect(options?.body).toBe(body);
+  });
 });

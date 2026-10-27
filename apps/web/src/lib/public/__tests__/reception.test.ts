@@ -2,6 +2,7 @@ import {
   validateBrief,
   formatBrief,
   emailBriefUrl,
+  buildReceptionInquiry,
   type ReceptionForm,
 } from "../reception";
 const f: ReceptionForm = {
@@ -57,5 +58,33 @@ describe("reception brief", () => {
     expect(url.searchParams.get("subject")).toBe(
       "Nova request: Source merchandise",
     );
+  });
+  it("keeps service identity and structured buying details in the durable request", () => {
+    const key = 'request-test-123456789';
+    const request = buildReceptionInquiry({ ...f, product: 'Cotton crew socks' }, key);
+    expect(request.serviceCode).toBe('MERCHANDISE_SOURCING');
+    expect(request.requestId).toBe(key);
+    expect(request.challenge).toBe(f.need);
+    expect(request.details).toMatchObject({ role: 'buyer', product: 'Cotton crew socks', quantity: f.quantity, destination: f.destination });
+    expect(request.details).not.toHaveProperty('email');
+    expect(buildReceptionInquiry(f, key)).toEqual(buildReceptionInquiry(f, key));
+  });
+  it("does not relabel general requests as an accepted pilot or a different service", () => {
+    for (const [intent, serviceCode] of Object.entries({ wholesale: 'WHOLESALE_TRADE', retail: 'RETAIL_PRODUCT', supplier: 'SUPPLIER_PARTNERSHIP', cleanup: 'CATALOG_CLEANUP', research: 'RESEARCH_SERVICE', support: 'SUPPORT_REQUEST', other: 'GENERAL_INQUIRY', workflow: 'GENERAL_INQUIRY' })) {
+      expect(buildReceptionInquiry({ ...f, intent }, 'request-test-123456789').serviceCode).toBe(serviceCode);
+    }
+  });
+  it("rejects invalid payloads before a durable submission can begin", () => {
+    expect(() => buildReceptionInquiry({ ...f, business: '' }, 'request-test-123456789')).toThrow();
+    expect(() => buildReceptionInquiry(f, 'short')).toThrow();
+    expect(validateBrief({ ...f, website: 'https://user:password@example.test' })).not.toEqual([]);
+    expect(validateBrief({ ...f, deadline: 'x'.repeat(81) })).not.toEqual([]);
+  });
+  it("does not submit details hidden after changing the request category", () => {
+    const request = buildReceptionInquiry({ ...f, intent: 'support', product: 'Earlier product', website: 'https://example.test' }, 'request-test-123456789');
+    expect(request.details).not.toHaveProperty('product');
+    expect(request.details).not.toHaveProperty('quantity');
+    expect(request.details).not.toHaveProperty('destination');
+    expect(request.details).not.toHaveProperty('website');
   });
 });

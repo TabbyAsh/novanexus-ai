@@ -231,7 +231,7 @@ app.use((req: Request, res: Response, next: NextFunction) => {
   }
   
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, PUT, PATCH, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization, X-Request-ID, Idempotency-Key');
   res.setHeader('Access-Control-Allow-Credentials', 'true');
   res.setHeader('Access-Control-Max-Age', '86400');
 
@@ -774,6 +774,7 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
     if (req.headers.authorization) {
       headers['Authorization'] = req.headers.authorization;
     }
+    if(req.path==='/v1/contact'&&typeof req.headers['idempotency-key']==='string')headers['Idempotency-Key']=req.headers['idempotency-key'];
 
     // Add user context headers
     if (req.auth) {
@@ -789,6 +790,8 @@ async function proxyRequest(targetUrl: string, req: Request, res: Response): Pro
     });
 
     // Copy response headers
+    const cacheControl=response.headers.get('cache-control');
+    if(cacheControl)res.setHeader('Cache-Control',cacheControl);
     const contentType = response.headers.get('content-type');
     if (contentType) {
       res.setHeader('Content-Type', contentType);
