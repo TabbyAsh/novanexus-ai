@@ -1,0 +1,24 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "buildCommand": "",
+  "installCommand": "",
+  "outputDirectory": "public",
+  "headers": [
+    { "source": "/(.*)", "headers": [
+      { "key": "X-Content-Type-Options", "value": "nosniff" },
+      { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
+      { "key": "X-Frame-Options", "value": "DENY" }
+    ] }
+  ],
+  "redirects": [
+    { "source": "/about", "destination": "/#about", "permanent": true },
+    { "source": "/contact", "destination": "/#quote", "permanent": true },
+    { "source": "/catalog/:path*", "destination": "/#products", "permanent": true },
+    { "source": "/products/:path*", "destination": "/#products", "permanent": true },
+    { "source": "/services/:path*", "destination": "/#products", "permanent": true },
+    { "source": "/pricing", "destination": "/#quote", "permanent": true },
+    { "source": "/register", "destination": "/#quote", "permanent": true },
+    { "source": "/tools/:path*", "destination": "/", "permanent": true }
+  ]
+}
