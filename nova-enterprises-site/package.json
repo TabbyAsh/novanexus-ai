@@ -1,0 +1,14 @@
+{
+  "name": "nova-enterprises-site",
+  "private": true,
+  "description": "Public Nova Enterprises site and Vercel intake functions for novanexus-ai.com",
+  "scripts": {
+    "test": "node --test"
+  },
+  "dependencies": {
+    "pg": "8.16.3"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

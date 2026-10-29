@@ -2,14 +2,23 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": null,
   "buildCommand": "",
-  "installCommand": "",
+  "installCommand": "npm ci --omit=dev",
   "outputDirectory": "public",
+  "functions": {
+    "api/**/*.js": {
+      "maxDuration": 10
+    }
+  },
   "headers": [
     { "source": "/(.*)", "headers": [
       { "key": "X-Content-Type-Options", "value": "nosniff" },
       { "key": "Referrer-Policy", "value": "strict-origin-when-cross-origin" },
       { "key": "X-Frame-Options", "value": "DENY" }
     ] }
+  ],
+  "rewrites": [
+    { "source": "/owner", "destination": "/api/owner/queue" },
+    { "source": "/api/owner/export.csv", "destination": "/api/owner/export" }
   ],
   "redirects": [
     { "source": "/about", "destination": "/#about", "permanent": true },

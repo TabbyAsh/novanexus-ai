@@ -1,111 +1,64 @@
-name: Deploy
+name: Production Smoke
 
+# Read-only checks against the public site. This file must not deploy,
+# promote a Vercel build, or call Railway. GitHub runs the schedule from
+# the default branch (master). Updating it here does not change that
+# schedule until the file is on master, which this preview does not do.
 on:
-  workflow_run:
-    workflows: [CI]
-    branches: [master]
-    types: [completed]
+  workflow_dispatch:
+  schedule:
+    - cron: "17 */6 * * *"
+
+permissions:
+  contents: read
 
 concurrency:
-  group: deploy-production
-  cancel-in-progress: false  # Don't cancel in-progress deploys
+  group: production-smoke
+  cancel-in-progress: true
 
 jobs:
-  deploy-backend:
-    name: Deploy Backend (Railway)
+  verify-production:
+    name: Verify Public Revenue Path
     runs-on: ubuntu-latest
-    timeout-minutes: 20
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Install Railway CLI
-        run: npm install -g @railway/cli
-
-      - name: Deploy to Railway
-        run: railway up --detach
-        env:
-          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
-
-      - name: Notify Discord (Success)
-        if: success()
-        run: |
-          curl -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "embeds": [{
-                "title": "🚀 Backend Deployed",
-                "description": "Railway deployment succeeded for commit `${{ github.sha }}`",
-                "color": 65280,
-                "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
-              }]
-            }'
-        continue-on-error: true
-
-      - name: Notify Discord (Failure)
-        if: failure()
-        run: |
-          curl -X POST "${{ secrets.DISCORD_WEBHOOK_URL }}" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "embeds": [{
-                "title": "❌ Backend Deploy Failed",
-                "description": "Railway deployment failed for commit `${{ github.sha }}`",
-                "color": 16711680,
-                "timestamp": "'$(date -u +%Y-%m-%dT%H:%M:%SZ)'"
-              }]
-            }'
-        continue-on-error: true
-
-  deploy-frontend:
-    name: Deploy Frontend (Vercel)
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Deploy to Vercel
-        run: |
-          npm install -g vercel
-          vercel --prod --token=${{ secrets.VERCEL_TOKEN }} --yes
-        env:
-          VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
-          VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
-
-  post-deploy:
-    name: Post-Deploy Verification
-    runs-on: ubuntu-latest
-    needs: [deploy-backend, deploy-frontend]
     timeout-minutes: 5
 
     steps:
-      - name: Wait for services to start
-        run: sleep 60
-
-      - name: Verify backend health
+      - name: Verify canonical site, copy, and intake health
+        shell: bash
         run: |
-          for i in 1 2 3 4 5; do
-            STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://api.novanexus-ai.com/health || echo "000")
-            if [ "$STATUS" = "200" ]; then
-              echo "✅ Backend healthy"
-              exit 0
-            fi
-            echo "Attempt $i: HTTP $STATUS — retrying in 15s..."
-            sleep 15
-          done
-          echo "❌ Backend health check failed after 5 attempts"
-          exit 1
+          set -euo pipefail
 
-      - name: Verify frontend
-        run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" https://nova-enterprises.vercel.app || echo "000")
-          if [ "$STATUS" = "200" ]; then
-            echo "✅ Frontend healthy"
-          else
-            echo "⚠️ Frontend returned HTTP $STATUS"
+          root_html="$(curl --fail --silent --show-error https://novanexus-ai.com/)"
+          grep --fixed-strings --quiet 'Nova Enterprises LLC' <<<"$root_html"
+          grep --fixed-strings --quiet 'Sourcing socks and towels from mills in Turkey and Pakistan.' <<<"$root_html"
+          grep --fixed-strings --quiet 'Written quotes before you commit.' <<<"$root_html"
+          grep --fixed-strings --quiet 'In development' <<<"$root_html"
+          grep --fixed-strings --quiet 'wkirby592@gmail.com' <<<"$root_html"
+          grep --fixed-strings --quiet '812-263-1586' <<<"$root_html"
+          if grep --fixed-strings --quiet 'direct from vetted mills' <<<"$root_html"; then
+            echo 'Homepage still contains a removed claim: direct from vetted mills'
+            exit 1
           fi
+          if grep --fixed-strings --quiet 'Low minimums' <<<"$root_html"; then
+            echo 'Homepage still contains a removed claim: Low minimums'
+            exit 1
+          fi
+
+          privacy_status="$(curl --silent --show-error --output /tmp/privacy.html --write-out '%{http_code}' https://novanexus-ai.com/privacy)"
+          test "$privacy_status" = "200"
+          grep --fixed-strings --quiet 'wkirby592@gmail.com' /tmp/privacy.html
+
+          health_json="$(curl --fail --silent --show-error https://novanexus-ai.com/api/intake/health)"
+          jq --exit-status '.ok == true and .service == "intake" and (.database | type == "string") and (.email | type == "string")' <<<"$health_json" >/dev/null
+
+          robots="$(curl --fail --silent --show-error https://novanexus-ai.com/robots.txt)"
+          grep --fixed-strings --quiet 'Sitemap: https://novanexus-ai.com/sitemap.xml' <<<"$robots"
+          grep --fixed-strings --quiet 'Disallow: /owner' <<<"$robots"
+
+          {
+            echo '## Production smoke passed'
+            echo
+            echo '- Homepage: HTTP 200 with current company copy'
+            echo '- Privacy page: HTTP 200'
+            echo '- Intake health: '"$(jq --compact-output '{ok,service,database,email}' <<<"$health_json")"
+          } >>"$GITHUB_STEP_SUMMARY"
