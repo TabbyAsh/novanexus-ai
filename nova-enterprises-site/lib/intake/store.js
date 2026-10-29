@@ -31,20 +31,34 @@ function sslFor(connectionString) {
   return { rejectUnauthorized: true };
 }
 
+// pg 8 treats sslmode=require as verify-full and emitWarning's that on every
+// process that parses the URL. Rewrite only the string the driver receives.
+// DATABASE_URL itself is left unchanged.
+function normalizeConnectionString(connectionString) {
+  return String(connectionString).replace(
+    /([?&])sslmode=require(?=&|#|$)/gi,
+    '$1sslmode=verify-full',
+  );
+}
+
+function poolConfig(connectionString) {
+  return {
+    connectionString: normalizeConnectionString(connectionString),
+    max: 4,
+    ssl: sslFor(connectionString),
+    idleTimeoutMillis: 5000,
+    connectionTimeoutMillis: 8000,
+    statement_timeout: 8000,
+    application_name: 'nova-intake',
+  };
+}
+
 function getPool(connectionString) {
   if (!connectionString) throw new Error('DATABASE_URL is not set.');
   if (!pool || poolUrl !== connectionString) {
     if (pool) pool.end().catch(() => {});
     poolUrl = connectionString;
-    pool = new Pool({
-      connectionString,
-      max: 4,
-      ssl: sslFor(connectionString),
-      idleTimeoutMillis: 5000,
-      connectionTimeoutMillis: 8000,
-      statement_timeout: 8000,
-      application_name: 'nova-intake',
-    });
+    pool = new Pool(poolConfig(connectionString));
   }
   return pool;
 }
@@ -338,6 +352,8 @@ module.exports = {
   consumeRateLimit,
   deleteInquiryByReceipt,
   getPool,
+  normalizeConnectionString,
+  poolConfig,
   intakeSalt,
   ipHash,
   listInquiries,
