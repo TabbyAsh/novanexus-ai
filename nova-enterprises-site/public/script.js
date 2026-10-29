@@ -1,4 +1,6 @@
-/* All core content and native form submission work without JavaScript. */
+/* All core content and native form submission work without JavaScript.
+   JavaScript adds the menu, product and service preselect, and a request id
+   so a double submit does not create two inquiries. */
 (() => {
   'use strict';
   document.documentElement.classList.add('js');
@@ -33,10 +35,18 @@
       if (product) product.value = link.dataset.product;
     });
   });
-  // Keep successful submissions on the current preview or production origin.
-  const form = document.querySelector('#quote-form');
-  if (form && /^https?:$/.test(location.protocol)) {
-    form.elements.namedItem('_next').value = new URL('thanks.html', location.href).href;
-    form.elements.namedItem('_url').value = location.origin + location.pathname;
-  }
+  const service = document.querySelector('#service-line');
+  document.querySelectorAll('[data-service]').forEach(link => {
+    link.addEventListener('click', () => {
+      if (service) service.value = link.dataset.service;
+    });
+  });
+  const requestId = () => {
+    if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
+    return `rq${Date.now().toString(36)}${Math.random().toString(36).slice(2, 14)}`;
+  };
+  document.querySelectorAll('form.intake-form').forEach(form => {
+    const field = form.elements.namedItem('request_id');
+    if (field && !field.value) field.value = requestId();
+  });
 })();
