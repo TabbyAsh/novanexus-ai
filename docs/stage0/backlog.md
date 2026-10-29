@@ -16,7 +16,8 @@ Ordered from the architecture brief §22. This list is the queue. It is not perm
 - [ ] Create the free Neon Postgres (approved) and attach `DATABASE_URL` to the Vercel project. Preview and production can be separate databases.
 - [ ] Run `infra/migrations/037_public_intake.sql` against that database (command in `nova-enterprises-site/README.md`).
 - [ ] Set `OWNER_ACCESS_SECRET` (16+ characters) on the Vercel environment that should show `/owner`.
-- [ ] Leave `INTAKE_EMAIL_ENABLED` unset. Approve an email provider in a later change before any mail is sent.
+- [ ] Set `INTAKE_IP_SALT` (a long random string). Intake stores nothing if it is missing. There is no built-in default.
+- [ ] Leave `INTAKE_EMAIL_ENABLED` unset. The Resend idea in `docs/stage0/owner-alert-proposal.md` is a proposal only: no account, no DNS change, and no mail.
 - [ ] Decide Vercel Hobby vs Pro for a commercial site (ADR-002). Do not upgrade from this backlog item alone.
 - [ ] Promote a preview only after checking it. Production DNS stays as it is.
 

@@ -84,11 +84,17 @@ function payloadHash(inquiry) {
   return crypto.createHash('sha256').update(JSON.stringify(canonical)).digest('hex');
 }
 
+function intakeSalt(env) {
+  const value = env && env.INTAKE_IP_SALT;
+  return typeof value === 'string' && value.trim() ? value.trim() : '';
+}
+
 function ipHash(req, env) {
+  const salt = intakeSalt(env);
+  if (!salt) return null;
   const forwarded = String((req.headers && req.headers['x-forwarded-for']) || '').split(',')[0].trim();
   const ip = forwarded || String((req.headers && req.headers['x-real-ip']) || 'unknown');
-  const pepper = (env && env.INTAKE_IP_HASH_PEPPER) || 'nova-intake-v1';
-  return crypto.createHash('sha256').update(`${pepper}|${ip}`).digest('hex');
+  return crypto.createHash('sha256').update(`${salt}|${ip}`).digest('hex');
 }
 
 async function consumeRateLimit(db, hash, limit) {
@@ -102,7 +108,7 @@ async function consumeRateLimit(db, hash, limit) {
         WHERE ip_hash = $1 AND created_at > NOW() - INTERVAL '1 hour'`,
       [hash],
     );
-    await client.query(`DELETE FROM intake_rate_events WHERE created_at < NOW() - INTERVAL '2 days'`);
+    await client.query(`DELETE FROM intake_rate_events WHERE created_at < NOW() - INTERVAL '90 days'`);
     await client.query('COMMIT');
     return count.rows[0].n <= limit;
   } catch (error) {
@@ -299,6 +305,7 @@ module.exports = {
   closePool,
   consumeRateLimit,
   getPool,
+  intakeSalt,
   ipHash,
   listInquiries,
   payloadHash,

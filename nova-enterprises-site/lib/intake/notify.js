@@ -5,7 +5,8 @@ const { OWNER_EMAIL } = require('./constants');
  * transaction has committed. A throw or a failed status must not remove the row.
  *
  * TODO(owner): No email provider account is approved. Do not add a provider
- * SDK here until Wyatt approves the account. INTAKE_EMAIL_ENABLED is a flag
+ * SDK here until Wyatt approves the account and the DNS in
+ * docs/stage0/owner-alert-proposal.md. INTAKE_EMAIL_ENABLED is a flag
  * only — setting it does not send mail. When a provider is approved, replace
  * DisabledOwnerNotifier and retry inquiry_notification_outbox rows whose
  * status is pending or failed (POST /api/owner/notifications/retry).

@@ -25,11 +25,11 @@ Set these on the Vercel project (Preview, and later Production). Do not commit t
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | To store inquiries | Neon (or any Postgres) connection string. The owner creates this. If it is unset, the form tells the visitor to email `wkirby592@gmail.com` and stores nothing. |
+| `DATABASE_URL` | To store inquiries | Neon (or any Postgres) connection string. The owner creates this. If it is unset, the form shows “We couldn't save your request” with `mailto:wkirby592@gmail.com` and `tel:+18122631586`, and stores nothing. |
+| `INTAKE_IP_SALT` | To store inquiries | Required secret mixed into the rate-limit hash. There is no default. If it is unset, intake fails the same way as a missing database and does not hash the address. The raw address is not stored. Hashes older than 90 days are deleted on the next submission. |
 | `OWNER_ACCESS_SECRET` | To open `/owner` | Single shared secret, 16+ characters. |
-| `INTAKE_EMAIL_ENABLED` | No | Leave unset or `false`. `true` does **not** send email. No provider is implemented. See the TODO in `lib/intake/notify.js`. |
+| `INTAKE_EMAIL_ENABLED` | No | Leave unset or `false`. `true` does **not** send email. No provider is implemented. See the proposal in `docs/stage0/owner-alert-proposal.md`. |
 | `INTAKE_RATE_LIMIT_PER_HOUR` | No | Default `8` submissions per network address per hour. |
-| `INTAKE_IP_HASH_PEPPER` | No | Optional extra salt for the rate-limit hash. The raw address is not stored on the inquiry. |
 
 Notification is attempted only after the inquiry transaction commits. A failure is stored on `inquiry_notification_outbox` and does not delete the inquiry. The intended recipient, once a provider is approved, is `wkirby592@gmail.com`.
 
@@ -64,6 +64,7 @@ cd nova-enterprises-site
 npm ci --omit=dev
 DATABASE_URL=postgresql://nova:nova_ci_password@127.0.0.1:5432/nova \
   OWNER_ACCESS_SECRET=test-owner-secret-16 \
+  INTAKE_IP_SALT=test-intake-ip-salt \
   node --test
 ```
 

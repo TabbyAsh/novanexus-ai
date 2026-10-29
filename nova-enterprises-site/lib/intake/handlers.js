@@ -5,9 +5,10 @@ const { toCsv } = require('./csv');
 const {
   DIRECT_CONTACT_MESSAGE,
   MAX_BODY_BYTES,
-  UNAVAILABLE_MESSAGE,
+  SAVE_FAILED_MESSAGE,
 } = require('./constants');
 const {
+  fallbackPage,
   honeypotPage,
   messagePage,
   ownerDeniedPage,
@@ -19,6 +20,7 @@ const {
   closePool,
   consumeRateLimit,
   getPool,
+  intakeSalt,
   ipHash,
   listInquiries,
   persistInquiry,
@@ -68,6 +70,10 @@ function sendHtml(res, status, html) {
 function respond(req, res, status, error, message, extra) {
   if (wantsJson(req)) {
     sendJson(res, status, { ok: false, error, message, ...extra });
+    return;
+  }
+  if (error === 'intake_unavailable') {
+    sendHtml(res, status, fallbackPage());
     return;
   }
   if (error === 'invalid' && extra && extra.fields) {
@@ -179,19 +185,21 @@ async function handleIntake(req, res, deps = {}) {
   }
 
   const connectionString = databaseUrl(env);
-  if (!connectionString) {
-    respond(req, res, 503, 'intake_unavailable', UNAVAILABLE_MESSAGE);
+  const addressHash = ipHash(req, env);
+  if (!connectionString || !intakeSalt(env) || !addressHash) {
+    respond(req, res, 503, 'intake_unavailable', SAVE_FAILED_MESSAGE);
     return;
   }
 
   try {
     const db = getPool(connectionString);
-    const allowed = await consumeRateLimit(db, ipHash(req, env), rateLimit(env));
+    const allowed = await consumeRateLimit(db, addressHash, rateLimit(env));
     if (!allowed) {
       respond(req, res, 429, 'rate_limited', `Too many inquiries were sent from this network in the last hour. ${DIRECT_CONTACT_MESSAGE}`);
       return;
     }
-    const saved = await persistInquiry(db, normalized.value, notifier);
+    const save = deps.persistInquiry || persistInquiry;
+    const saved = await save(db, normalized.value, notifier);
     if (saved.kind === 'conflict') {
       respond(req, res, 422, 'idempotency_conflict', `This request id was already used with different details. Nothing new was stored. ${DIRECT_CONTACT_MESSAGE}`);
       return;
@@ -208,7 +216,7 @@ async function handleIntake(req, res, deps = {}) {
     sendHtml(res, 200, thankYouPage(saved.receiptId, saved.kind === 'replay'));
   } catch (error) {
     console.error(JSON.stringify({ event: 'intake_persist_failed', message: error.message }));
-    respond(req, res, 503, 'intake_unavailable', UNAVAILABLE_MESSAGE);
+    respond(req, res, 503, 'intake_unavailable', SAVE_FAILED_MESSAGE);
   }
 }
 

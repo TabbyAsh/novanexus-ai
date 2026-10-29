@@ -83,6 +83,7 @@ jobs:
         env:
           DATABASE_URL: postgresql://nova:nova_ci_password@localhost:5432/nova
           OWNER_ACCESS_SECRET: ci-owner-secret-not-for-production
+          INTAKE_IP_SALT: ci-intake-ip-salt
           INTAKE_EMAIL_ENABLED: "false"
 
       - name: Verify economic Trade migration strictly

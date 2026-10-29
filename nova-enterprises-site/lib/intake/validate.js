@@ -1,11 +1,7 @@
 const crypto = require('crypto');
+const { SERVICE_LINES } = require('./constants');
 
 const TYPES = new Set(['buyer_sourcing', 'supplier', 'services']);
-const SERVICE_LINES = {
-  research_b2b_leads: 'Verified B2B lead lists',
-  research_government_bids: 'Government bid research',
-  software_ai: 'Software and AI operations (in development)',
-};
 const SUPPLIER_ROLES = {
   manufacturer: 'Manufacturer',
   intermediary: 'Intermediary',

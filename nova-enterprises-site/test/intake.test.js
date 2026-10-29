@@ -30,10 +30,10 @@ function mockRes() {
   };
 }
 
-async function invoke(handler, { method = 'GET', headers = {}, body, notifier, env } = {}) {
+async function invoke(handler, { method = 'GET', headers = {}, body, notifier, env, persistInquiry } = {}) {
   const req = { method, headers, body };
   const res = mockRes();
-  await handler(req, res, { env: env || process.env, notifier });
+  await handler(req, res, { env: env || process.env, notifier, persistInquiry });
   let json;
   const type = String(res.headers['content-type'] || '');
   if (type.includes('application/json') && res.body) json = JSON.parse(res.body);
@@ -68,6 +68,7 @@ describe('public intake', { concurrency: 1 }, () => {
   before(async () => {
     process.env.DATABASE_URL = DATABASE_URL;
     process.env.OWNER_ACCESS_SECRET = OWNER_SECRET;
+    process.env.INTAKE_IP_SALT = 'test-intake-ip-salt';
     process.env.INTAKE_EMAIL_ENABLED = 'false';
     delete process.env.VERCEL_ENV;
     const sql = fs.readFileSync(path.join(__dirname, '../../infra/migrations/037_public_intake.sql'), 'utf8');
@@ -77,6 +78,7 @@ describe('public intake', { concurrency: 1 }, () => {
   beforeEach(async () => {
     process.env.DATABASE_URL = DATABASE_URL;
     process.env.OWNER_ACCESS_SECRET = OWNER_SECRET;
+    process.env.INTAKE_IP_SALT = 'test-intake-ip-salt';
     process.env.INTAKE_RATE_LIMIT_PER_HOUR = '30';
     await getPool(DATABASE_URL).query('TRUNCATE public_inquiries, intake_rate_events RESTART IDENTITY CASCADE');
   });
@@ -280,30 +282,126 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(byType.buyer_sourcing, 'Cotton terry towels');
     assert.equal(byType.supplier, 'Cotton terry towels');
     assert.equal(rows.rows.find(row => row.inquiry_type === 'services' && row.product_or_service.includes('Government bid')).product_or_service, 'Government bid research');
+    const leads = await invoke(handleIntake, {
+      method: 'POST',
+      headers,
+      body: {
+        inquiry_type: 'services',
+        request_id: crypto.randomUUID(),
+        name: 'List Buyer',
+        email: 'leads@example.com',
+        service_line: 'research_b2b_leads',
+        notes: 'Please research contacts published on company websites.',
+      },
+    });
+    assert.equal(leads.statusCode, 200);
+    const leadRow = await getPool(DATABASE_URL).query(
+      `SELECT product_or_service FROM public_inquiries WHERE email = 'leads@example.com'`,
+    );
+    assert.equal(leadRow.rows[0].product_or_service, 'Researched B2B lead lists (contacts published on company websites)');
     assert.equal(rows.rows.some(row => row.product_or_service.includes('in development')), true);
     const outbox = await getPool(DATABASE_URL).query(`SELECT status, last_error FROM inquiry_notification_outbox`);
     assert.equal(outbox.rows.every(row => row.status === 'skipped' && row.last_error.includes('Nothing was sent')), true);
   });
 
-  test('returns a visible error and stores nothing when DATABASE_URL is unset', async () => {
-    const previous = process.env.DATABASE_URL;
-    delete process.env.DATABASE_URL;
+  test('returns a visible fallback when DATABASE_URL or INTAKE_IP_SALT is missing', async () => {
+    const fallback = "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.";
+    const previousUrl = process.env.DATABASE_URL;
+    const previousSalt = process.env.INTAKE_IP_SALT;
     try {
-      const response = await invoke(handleIntake, {
+      const missingDatabase = await invoke(handleIntake, {
         method: 'POST',
         headers: { 'content-type': 'application/json', accept: 'application/json' },
         body: buyer(),
         env: { ...process.env, DATABASE_URL: '' },
       });
-      assert.equal(response.statusCode, 503);
-      assert.equal(response.json.error, 'intake_unavailable');
-      assert.match(response.json.message, /wkirby592@gmail.com/);
-      assert.match(response.json.message, /Nothing was stored/);
-      assert.equal(response.json.receipt_id, undefined);
+      assert.equal(missingDatabase.statusCode, 503);
+      assert.equal(missingDatabase.json.error, 'intake_unavailable');
+      assert.equal(missingDatabase.json.message, fallback);
+      assert.equal(missingDatabase.json.receipt_id, undefined);
+
+      const missingSalt = await invoke(handleIntake, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', accept: 'application/json' },
+        body: buyer(),
+        env: { ...process.env, INTAKE_IP_SALT: '   ' },
+      });
+      assert.equal(missingSalt.statusCode, 503);
+      assert.equal(missingSalt.json.message, fallback);
+
+      const form = await invoke(handleIntake, {
+        method: 'POST',
+        headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'text/html' },
+        body: buyer(),
+        env: { ...process.env, DATABASE_URL: '' },
+      });
+      assert.equal(form.statusCode, 503);
+      assert.match(form.body, /We couldn't save your request\. Please email/);
+      assert.match(form.body, /href="mailto:wkirby592@gmail.com"/);
+      assert.match(form.body, /href="tel:\+18122631586"/);
+      assert.match(form.body, /812-263-1586/);
+      assert.equal(form.body.includes('NOVA-'), false);
     } finally {
-      process.env.DATABASE_URL = previous;
+      process.env.DATABASE_URL = previousUrl;
+      process.env.INTAKE_IP_SALT = previousSalt;
     }
     assert.deepEqual(await counts(), { inquiries: 0, outbox: 0 });
+  });
+
+  test('shows the fallback page when the insert fails and stores nothing', async () => {
+    const headers = {
+      'content-type': 'application/x-www-form-urlencoded',
+      accept: 'text/html',
+      'x-forwarded-for': '203.0.113.77',
+    };
+    const response = await invoke(handleIntake, {
+      method: 'POST',
+      headers,
+      body: buyer({ email: 'insert-fail@example.com' }),
+      persistInquiry: async () => {
+        throw new Error('insert failed');
+      },
+    });
+    assert.equal(response.statusCode, 503);
+    assert.match(response.body, /We couldn't save your request\. Please email/);
+    assert.match(response.body, /href="mailto:wkirby592@gmail.com"/);
+    assert.match(response.body, /href="tel:\+18122631586"/);
+    assert.equal(response.body.includes('NOVA-'), false);
+    const json = await invoke(handleIntake, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', 'x-forwarded-for': '203.0.113.78' },
+      body: buyer({ email: 'insert-fail-json@example.com' }),
+      persistInquiry: async () => {
+        throw new Error('insert failed');
+      },
+    });
+    assert.equal(json.statusCode, 503);
+    assert.equal(json.json.message, "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.");
+    const stored = await getPool(DATABASE_URL).query(
+      `SELECT COUNT(*)::int AS n FROM public_inquiries WHERE email IN ('insert-fail@example.com', 'insert-fail-json@example.com')`,
+    );
+    assert.equal(stored.rows[0].n, 0);
+  });
+
+  test('deletes network-address hashes older than 90 days when an inquiry is saved', async () => {
+    const stale = 'a'.repeat(64);
+    const recent = 'b'.repeat(64);
+    await getPool(DATABASE_URL).query(
+      `INSERT INTO intake_rate_events (ip_hash, created_at)
+       VALUES ($1, NOW() - INTERVAL '91 days'), ($2, NOW() - INTERVAL '89 days')`,
+      [stale, recent],
+    );
+    const response = await invoke(handleIntake, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', accept: 'application/json', 'x-forwarded-for': '203.0.113.90' },
+      body: buyer({ email: 'purge@example.com' }),
+    });
+    assert.equal(response.statusCode, 200);
+    const left = await getPool(DATABASE_URL).query(
+      `SELECT ip_hash FROM intake_rate_events WHERE ip_hash IN ($1, $2) ORDER BY ip_hash`,
+      [stale, recent],
+    );
+    assert.deepEqual(left.rows.map(row => row.ip_hash), [recent]);
   });
 
   test('shows the receipt on an HTML form response without a client request id', async () => {

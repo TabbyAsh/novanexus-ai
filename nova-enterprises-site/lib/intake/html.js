@@ -50,6 +50,15 @@ function thankYouPage(receiptId, replay) {
   });
 }
 
+function fallbackPage() {
+  return layout({
+    title: 'Inquiry not saved | Nova Enterprises LLC',
+    heading: "We couldn't save your request.",
+    main: `<p>We couldn't save your request. Please email <a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a> or call <a href="tel:${OWNER_PHONE_TEL}">${OWNER_PHONE_DISPLAY}</a>.</p>
+      <p><a class="button" href="/">Back to the website <span aria-hidden="true">↗</span></a></p>`,
+  });
+}
+
 function messagePage({ title, heading, message }) {
   return layout({
     title,
@@ -122,6 +131,7 @@ function ownerDeniedPage(status) {
 
 module.exports = {
   escapeHtml,
+  fallbackPage,
   honeypotPage,
   messagePage,
   ownerDeniedPage,
