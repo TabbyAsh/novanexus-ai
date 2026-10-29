@@ -6,6 +6,10 @@ Vercel project: `nova-enterprises`. Team recorded in `docs/web/PUBLIC-OFFICE.md`
 
 Preview locally: `python -m http.server 8765 --bind 127.0.0.1 --directory public`. That preview serves the pages only. Intake needs the functions and `DATABASE_URL`.
 
+## Reskin and the hero slot
+
+Colors and type live in `public/brand/tokens.css`. A later visual reskin should change that file and the hero, not the page structure. The homepage and `/nexus` reserve `<div class="hero-visual" data-hero-slot>` with a static SVG. `public/hero.js` loads with `defer` and mounts a canvas only when the visitor has not asked for reduced motion. The canvas pauses when the tab is hidden or the slot is off screen, and it caps `devicePixelRatio` at 2. Only Space Grotesk 700 and Inter 400 are preloaded.
+
 ## What the functions do
 
 | Route | Access | Behavior |
