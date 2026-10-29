@@ -30,7 +30,11 @@ jobs:
 
           root_html="$(curl --fail --silent --show-error https://novanexus-ai.com/)"
           grep --fixed-strings --quiet 'Nova Enterprises LLC' <<<"$root_html"
-          grep --fixed-strings --quiet 'Sourcing socks and towels from mills in Turkey and Pakistan.' <<<"$root_html"
+          grep --fixed-strings --quiet 'Now requesting written quotes from sock mills in Turkey.' <<<"$root_html"
+          if grep --ignore-case --quiet 'pakistan' <<<"$root_html"; then
+            echo 'Homepage still mentions Pakistan'
+            exit 1
+          fi
           grep --fixed-strings --quiet 'Written quotes before you commit.' <<<"$root_html"
           grep --fixed-strings --quiet 'In development' <<<"$root_html"
           grep --fixed-strings --quiet 'wkirby592@gmail.com' <<<"$root_html"

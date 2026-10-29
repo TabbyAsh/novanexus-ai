@@ -16,6 +16,8 @@ Preview locally: `python -m http.server 8765 --bind 127.0.0.1 --directory public
 | `GET /api/owner/inquiries` | Owner secret | JSON queue. |
 | `GET /api/owner/export.csv` | Owner secret | Ledger-shaped CSV. |
 | `POST /api/owner/notifications/retry` | Owner secret | Retries outbox rows in `pending` or `failed`. |
+| `POST /api/owner/migrate` | Owner secret | Applies `037_public_intake.sql` and records version `037`. Safe to repeat. `GET` returns 405. |
+| `GET /api/cron/purge` | `CRON_SECRET` or owner secret | Deletes inquiries older than 24 months (and their notification rows) and rate-limit hashes older than 90 days. Vercel calls it daily at 12:00 UTC. |
 
 Owner auth is required on every owner route. Send `Authorization: Bearer <OWNER_ACCESS_SECRET>` or HTTP Basic with any username and that secret as the password. The secret is rejected when it is missing or shorter than 16 characters. A hidden page is not the control.
 
@@ -30,12 +32,23 @@ Set these on the Vercel project (Preview, and later Production). Do not commit t
 | `OWNER_ACCESS_SECRET` | To open `/owner` | Single shared secret, 16+ characters. |
 | `INTAKE_EMAIL_ENABLED` | No | Leave unset or `false`. `true` does **not** send email. No provider is implemented. See the proposal in `docs/stage0/owner-alert-proposal.md`. |
 | `INTAKE_RATE_LIMIT_PER_HOUR` | No | Default `8` submissions per network address per hour. |
+| `CRON_SECRET` | For the daily purge | When set, Vercel sends it as `Authorization: Bearer` on the cron. The owner secret also works, so the purge can be run by hand. Leave it unset only if you will call the route yourself. |
 
 Notification is attempted only after the inquiry transaction commits. A failure is stored on `inquiry_notification_outbox` and does not delete the inquiry. The intended recipient, once a provider is approved, is `wkirby592@gmail.com`.
 
 ## Run migration 037
 
-Vercel does not run migrations on deploy. Run this once per database after `DATABASE_URL` exists. `037_public_intake.sql` is idempotent and does not modify `service_inquiries`.
+Vercel does not run migrations on deploy, and a Sensitive `DATABASE_URL` cannot be read by `psql` from the dashboard. After `DATABASE_URL` and `OWNER_ACCESS_SECRET` are set on the deployment, migrate from inside Vercel:
+
+```bash
+curl -sS -X POST "https://<deployment>/api/owner/migrate" \
+  -H "Authorization: Bearer $OWNER_ACCESS_SECRET" \
+  -H "Accept: application/json"
+```
+
+A successful response is `{ "ok": true, "tables": ["inquiry_notification_outbox", "intake_rate_events", "public_inquiries"] }`. The route applies `infra/migrations/037_public_intake.sql` (bundled with the function), then inserts version `037` into `schema_migrations`. Repeat calls are safe. `GET` returns 405. A wrong or missing owner secret returns 401. Failures return a generic 500 and do not include the connection string.
+
+If a shell can see `DATABASE_URL`, the same file can be applied directly.
 
 Fresh intake database (this is what the Vercel/Neon project should use):
 

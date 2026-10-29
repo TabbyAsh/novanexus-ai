@@ -14,7 +14,8 @@ Ordered from the architecture brief §22. This list is the queue. It is not perm
 ## Owner must do before intake is live on a deployment
 
 - [ ] Create the free Neon Postgres (approved) and attach `DATABASE_URL` to the Vercel project. Preview and production can be separate databases.
-- [ ] Run `infra/migrations/037_public_intake.sql` against that database (command in `nova-enterprises-site/README.md`).
+- [ ] Run migration 037. If `psql` cannot see `DATABASE_URL`, `POST /api/owner/migrate` with `OWNER_ACCESS_SECRET` (see `nova-enterprises-site/README.md`).
+- [ ] Set `CRON_SECRET` so the daily Vercel cron can call `GET /api/cron/purge`. The owner secret can trigger that route by hand.
 - [ ] Set `OWNER_ACCESS_SECRET` (16+ characters) on the Vercel environment that should show `/owner`.
 - [ ] Set `INTAKE_IP_SALT` (a long random string). Intake stores nothing if it is missing. There is no built-in default.
 - [ ] Leave `INTAKE_EMAIL_ENABLED` unset. The Resend idea in `docs/stage0/owner-alert-proposal.md` is a proposal only: no account, no DNS change, and no mail.

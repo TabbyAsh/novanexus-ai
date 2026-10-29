@@ -8,9 +8,12 @@ const {
   handleIntake,
   handleOwnerExport,
   handleOwnerInquiries,
+  handleOwnerMigrate,
   handleOwnerNotificationRetry,
   handleOwnerQueue,
+  handlePurge,
 } = require('../lib/intake/handlers');
+const { applyPublicIntakeMigration } = require('../lib/intake/migrate');
 const { closePool, getPool } = require('../lib/intake/store');
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://nova:nova_ci_password@127.0.0.1:5432/nova';
@@ -449,6 +452,8 @@ describe('public intake', { concurrency: 1 }, () => {
       [handleOwnerInquiries, { method: 'GET', headers: { accept: 'application/json' } }],
       [handleOwnerExport, { method: 'GET', headers: { accept: 'text/csv' } }],
       [handleOwnerNotificationRetry, { method: 'POST', headers: { accept: 'application/json' } }],
+      [handleOwnerMigrate, { method: 'POST', headers: { accept: 'application/json' } }],
+      [handlePurge, { method: 'GET', headers: { accept: 'application/json' } }],
     ];
     for (const [handler, options] of routes) {
       const response = await invoke(handler, options);
@@ -528,5 +533,136 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(unconfigured.json.database, 'not_configured');
     assert.equal(unconfigured.json.email, 'flag_set_provider_missing');
     assert.equal(unconfigured.json.ok, true);
+  });
+
+  test('owner migration rejects missing or wrong secrets and GET', async () => {
+    const headers = { accept: 'application/json' };
+    const missing = await invoke(handleOwnerMigrate, { method: 'POST', headers });
+    assert.equal(missing.statusCode, 401);
+    assert.equal(missing.json.error, 'unauthorized');
+    const wrong = await invoke(handleOwnerMigrate, {
+      method: 'POST',
+      headers: { ...headers, authorization: 'Bearer not-the-owner-secret' },
+    });
+    assert.equal(wrong.statusCode, 401);
+    const unconfigured = await invoke(handleOwnerMigrate, {
+      method: 'POST',
+      headers: { ...headers, authorization: `Bearer ${OWNER_SECRET}` },
+      env: { ...process.env, OWNER_ACCESS_SECRET: '' },
+    });
+    assert.equal(unconfigured.statusCode, 401);
+    const get = await invoke(handleOwnerMigrate, {
+      method: 'GET',
+      headers: { ...headers, authorization: `Bearer ${OWNER_SECRET}` },
+    });
+    assert.equal(get.statusCode, 405);
+    assert.equal(get.body.includes(DATABASE_URL), false);
+  });
+
+  test('owner migration applies 037 and a second run does not duplicate the record', async () => {
+    const bundled = fs.readFileSync(path.join(__dirname, '../lib/intake/sql/037_public_intake.sql'), 'utf8');
+    const source = fs.readFileSync(path.join(__dirname, '../../infra/migrations/037_public_intake.sql'), 'utf8');
+    assert.equal(bundled, source);
+    const db = getPool(DATABASE_URL);
+    await db.query('DROP TABLE IF EXISTS inquiry_notification_outbox, public_inquiries, intake_rate_events, schema_migrations CASCADE');
+    try {
+      const auth = { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` };
+      const first = await invoke(handleOwnerMigrate, { method: 'POST', headers: auth });
+      assert.equal(first.statusCode, 200);
+      assert.equal(first.json.ok, true);
+      assert.deepEqual(first.json.tables, [
+        'inquiry_notification_outbox',
+        'intake_rate_events',
+        'public_inquiries',
+      ]);
+      assert.equal(first.body.includes('postgresql://'), false);
+      const second = await invoke(handleOwnerMigrate, { method: 'POST', headers: auth });
+      assert.equal(second.statusCode, 200);
+      assert.deepEqual(second.json.tables, first.json.tables);
+      const recorded = await db.query(`SELECT COUNT(*)::int AS n FROM schema_migrations WHERE version = '037'`);
+      assert.equal(recorded.rows[0].n, 1);
+    } finally {
+      await applyPublicIntakeMigration(db);
+    }
+  });
+
+  test('purge deletes inquiries older than 24 months and rate hashes older than 90 days', async () => {
+    const db = getPool(DATABASE_URL);
+    const oldInquiry = await db.query(
+      `INSERT INTO public_inquiries
+         (receipt_id, request_id, payload_hash, inquiry_type, name, email, source, created_at)
+       VALUES ('NOVA-20240101-OLD1', 'purge-old-request001', $1, 'buyer_sourcing', 'Old Buyer',
+               'old-purge@example.com', 'website', NOW() - INTERVAL '25 months')
+       RETURNING id`,
+      ['a'.repeat(64)],
+    );
+    const keptInquiry = await db.query(
+      `INSERT INTO public_inquiries
+         (receipt_id, request_id, payload_hash, inquiry_type, name, email, source, created_at)
+       VALUES ('NOVA-20251001-KEEP', 'purge-new-request001', $1, 'buyer_sourcing', 'Kept Buyer',
+               'kept-purge@example.com', 'website', NOW() - INTERVAL '23 months')
+       RETURNING id`,
+      ['b'.repeat(64)],
+    );
+    await db.query(
+      `INSERT INTO inquiry_notification_outbox (inquiry_id, org_id, recipient)
+       VALUES ($1, 'nova-enterprises-llc', 'wkirby592@gmail.com'),
+              ($2, 'nova-enterprises-llc', 'wkirby592@gmail.com')`,
+      [oldInquiry.rows[0].id, keptInquiry.rows[0].id],
+    );
+    await db.query(
+      `INSERT INTO intake_rate_events (ip_hash, created_at)
+       VALUES ($1, NOW() - INTERVAL '91 days'), ($2, NOW() - INTERVAL '89 days')`,
+      ['c'.repeat(64), 'd'.repeat(64)],
+    );
+    const denied = await invoke(handlePurge, { method: 'GET', headers: { accept: 'application/json' } });
+    assert.equal(denied.statusCode, 401);
+    const wrongCron = await invoke(handlePurge, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: 'Bearer wrong-cron-secret-value' },
+      env: { ...process.env, CRON_SECRET: 'expected-cron-secret' },
+    });
+    assert.equal(wrongCron.statusCode, 401);
+    const post = await invoke(handlePurge, {
+      method: 'POST',
+      headers: { authorization: `Bearer ${OWNER_SECRET}` },
+    });
+    assert.equal(post.statusCode, 405);
+
+    const byOwner = await invoke(handlePurge, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` },
+      env: { ...process.env, CRON_SECRET: 'expected-cron-secret' },
+    });
+    assert.equal(byOwner.statusCode, 200);
+    assert.equal(byOwner.json.ok, true);
+    assert.equal(byOwner.json.inquiries, 1);
+    assert.equal(byOwner.json.outbox, 1);
+    assert.equal(byOwner.json.rate_events, 1);
+
+    const again = await invoke(handlePurge, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: 'Bearer expected-cron-secret' },
+      env: { ...process.env, CRON_SECRET: 'expected-cron-secret' },
+    });
+    assert.equal(again.statusCode, 200);
+    assert.equal(again.json.inquiries, 0);
+    assert.equal(again.json.outbox, 0);
+    assert.equal(again.json.rate_events, 0);
+
+    const left = await db.query(
+      `SELECT email FROM public_inquiries WHERE email IN ('old-purge@example.com', 'kept-purge@example.com') ORDER BY email`,
+    );
+    assert.deepEqual(left.rows.map(row => row.email), ['kept-purge@example.com']);
+    const outbox = await db.query(
+      `SELECT COUNT(*)::int AS n FROM inquiry_notification_outbox WHERE inquiry_id = $1`,
+      [keptInquiry.rows[0].id],
+    );
+    assert.equal(outbox.rows[0].n, 1);
+    const hashes = await db.query(
+      `SELECT ip_hash FROM intake_rate_events WHERE ip_hash IN ($1, $2)`,
+      ['c'.repeat(64), 'd'.repeat(64)],
+    );
+    assert.deepEqual(hashes.rows.map(row => row.ip_hash), ['d'.repeat(64)]);
   });
 });

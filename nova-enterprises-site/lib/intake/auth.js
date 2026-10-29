@@ -37,8 +37,34 @@ function ownerAuthorized(req, env) {
   return { ok: true };
 }
 
+/** Constant-time owner check. Missing and wrong secrets are both rejected. */
+function ownerAccepted(req, env) {
+  const config = ownerConfig(env);
+  const presented = presentedSecret(req);
+  const expected = config.configured ? config.secret : 'owner-secret-not-configured';
+  const match = secretsMatch(presented || 'missing-presented-secret', expected);
+  return Boolean(config.configured && presented && match);
+}
+
+/**
+ * Vercel cron sends Authorization: Bearer CRON_SECRET when that env var is set.
+ * The owner secret is also accepted so the same route can be run by hand.
+ */
+function cronOrOwnerAccepted(req, env) {
+  const presented = presentedSecret(req);
+  const cronSecret = String((env && env.CRON_SECRET) || '').trim();
+  const cronMatch = cronSecret
+    ? secretsMatch(presented || 'missing-presented-secret', cronSecret)
+    : false;
+  if (cronSecret && presented && cronMatch) return true;
+  return ownerAccepted(req, env);
+}
+
 module.exports = {
+  cronOrOwnerAccepted,
+  ownerAccepted,
   ownerAuthorized,
   ownerConfig,
   presentedSecret,
+  secretsMatch,
 };

@@ -1,5 +1,7 @@
 const { createNotifier } = require('./notify');
-const { ownerAuthorized } = require('./auth');
+const { cronOrOwnerAccepted, ownerAccepted, ownerAuthorized } = require('./auth');
+const { applyPublicIntakeMigration, redactSecrets } = require('./migrate');
+const { purgeExpired } = require('./purge');
 const { normalizeInquiry } = require('./validate');
 const { toCsv } = require('./csv');
 const {
@@ -344,12 +346,81 @@ async function handleOwnerNotificationRetry(req, res, deps = {}) {
   }
 }
 
+function rejectOwner(res) {
+  send(res, 401, JSON.stringify({ ok: false, error: 'unauthorized' }), {
+    'Content-Type': 'application/json; charset=utf-8',
+    'WWW-Authenticate': 'Basic realm="Nova owner", charset="UTF-8"',
+  });
+}
+
+async function handleOwnerMigrate(req, res, deps = {}) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+    return;
+  }
+  const env = deps.env || process.env;
+  if (!ownerAccepted(req, env)) {
+    rejectOwner(res);
+    return;
+  }
+  const connectionString = databaseUrl(env);
+  if (!connectionString) {
+    console.error(JSON.stringify({ event: 'owner_migrate_failed', message: 'Database is not configured.' }));
+    sendJson(res, 500, { ok: false, error: 'migration_failed' });
+    return;
+  }
+  try {
+    const tables = await applyPublicIntakeMigration(getPool(connectionString));
+    sendJson(res, 200, { ok: true, tables });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'owner_migrate_failed',
+      message: redactSecrets(error && error.message),
+    }));
+    sendJson(res, 500, { ok: false, error: 'migration_failed' });
+  }
+}
+
+async function handlePurge(req, res, deps = {}) {
+  if (req.method !== 'GET' && req.method !== 'HEAD') {
+    sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+    return;
+  }
+  const env = deps.env || process.env;
+  if (!cronOrOwnerAccepted(req, env)) {
+    rejectOwner(res);
+    return;
+  }
+  const connectionString = databaseUrl(env);
+  if (!connectionString) {
+    console.error(JSON.stringify({ event: 'intake_purge_failed', message: 'Database is not configured.' }));
+    sendJson(res, 500, { ok: false, error: 'purge_failed' });
+    return;
+  }
+  try {
+    const counts = await purgeExpired(getPool(connectionString));
+    if (req.method === 'HEAD') {
+      send(res, 200, '', { 'Content-Type': 'application/json; charset=utf-8' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, ...counts });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'intake_purge_failed',
+      message: redactSecrets(error && error.message),
+    }));
+    sendJson(res, 500, { ok: false, error: 'purge_failed' });
+  }
+}
+
 module.exports = {
   closePool,
   handleHealth,
   handleIntake,
   handleOwnerExport,
   handleOwnerInquiries,
+  handleOwnerMigrate,
   handleOwnerNotificationRetry,
   handleOwnerQueue,
+  handlePurge,
 };
