@@ -13,7 +13,7 @@ const {
   handleOwnerQueue,
   handlePurge,
 } = require('../lib/intake/handlers');
-const { applyPublicIntakeMigration } = require('../lib/intake/migrate');
+const { applyPublicIntakeMigration, loadMigrationSql } = require('../lib/intake/migrate');
 const { closePool, getPool } = require('../lib/intake/store');
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://nova:nova_ci_password@127.0.0.1:5432/nova';
@@ -560,7 +560,7 @@ describe('public intake', { concurrency: 1 }, () => {
   });
 
   test('owner migration applies 037 and a second run does not duplicate the record', async () => {
-    const bundled = fs.readFileSync(path.join(__dirname, '../lib/intake/sql/037_public_intake.sql'), 'utf8');
+    const bundled = loadMigrationSql();
     const source = fs.readFileSync(path.join(__dirname, '../../infra/migrations/037_public_intake.sql'), 'utf8');
     assert.equal(bundled, source);
     const db = getPool(DATABASE_URL);

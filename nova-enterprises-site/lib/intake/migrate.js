@@ -1,5 +1,4 @@
-const fs = require('fs');
-const path = require('path');
+const MIGRATION_037_SQL = require('./migration-037');
 
 const REQUIRED_TABLES = [
   'inquiry_notification_outbox',
@@ -7,12 +6,8 @@ const REQUIRED_TABLES = [
   'public_inquiries',
 ];
 
-function migrationSqlPath() {
-  return path.join(__dirname, 'sql', '037_public_intake.sql');
-}
-
 function loadMigrationSql() {
-  return fs.readFileSync(migrationSqlPath(), 'utf8');
+  return MIGRATION_037_SQL;
 }
 
 function redactSecrets(value) {
@@ -49,6 +44,5 @@ module.exports = {
   REQUIRED_TABLES,
   applyPublicIntakeMigration,
   loadMigrationSql,
-  migrationSqlPath,
   redactSecrets,
 };

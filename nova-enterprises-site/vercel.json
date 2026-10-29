@@ -7,10 +7,6 @@
   "functions": {
     "api/**/*.js": {
       "maxDuration": 10
-    },
-    "api/owner/migrate.js": {
-      "maxDuration": 10,
-      "includeFiles": "lib/intake/sql/037_public_intake.sql"
     }
   },
   "crons": [

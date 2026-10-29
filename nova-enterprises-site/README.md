@@ -46,7 +46,7 @@ curl -sS -X POST "https://<deployment>/api/owner/migrate" \
   -H "Accept: application/json"
 ```
 
-A successful response is `{ "ok": true, "tables": ["inquiry_notification_outbox", "intake_rate_events", "public_inquiries"] }`. The route applies `infra/migrations/037_public_intake.sql` (bundled with the function), then inserts version `037` into `schema_migrations`. Repeat calls are safe. `GET` returns 405. A wrong or missing owner secret returns 401. Failures return a generic 500 and do not include the connection string.
+A successful response is `{ "ok": true, "tables": ["inquiry_notification_outbox", "intake_rate_events", "public_inquiries"] }`. The route applies the same SQL as `infra/migrations/037_public_intake.sql`, inlined in the function so Vercel does not need extra files, then inserts version `037` into `schema_migrations`. Repeat calls are safe. `GET` returns 405. A wrong or missing owner secret returns 401. Failures return a generic 500 and do not include the connection string.
 
 If a shell can see `DATABASE_URL`, the same file can be applied directly.
 
