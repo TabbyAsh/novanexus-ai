@@ -17,6 +17,7 @@ Preview locally: `python -m http.server 8765 --bind 127.0.0.1 --directory public
 | `GET /api/owner/export.csv` | Owner secret | Ledger-shaped CSV. |
 | `POST /api/owner/notifications/retry` | Owner secret | Retries outbox rows in `pending` or `failed`. |
 | `POST /api/owner/migrate` | Owner secret | Applies `037_public_intake.sql` and records version `037`. Safe to repeat. `GET` returns 405. |
+| `POST /api/owner/inquiries/delete` | Owner secret | Deletes one inquiry by `receipt_id`, and its notification rows, in one transaction. |
 | `GET /api/cron/purge` | `CRON_SECRET` or owner secret | Deletes inquiries older than 24 months (and their notification rows) and rate-limit hashes older than 90 days. Vercel calls it daily at 12:00 UTC. |
 
 Owner auth is required on every owner route. Send `Authorization: Bearer <OWNER_ACCESS_SECRET>` or HTTP Basic with any username and that secret as the password. The secret is rejected when it is missing or shorter than 16 characters. A hidden page is not the control.
@@ -35,6 +36,10 @@ Set these on the Vercel project (Preview, and later Production). Do not commit t
 | `CRON_SECRET` | For the daily purge | When set, Vercel sends it as `Authorization: Bearer` on the cron. The owner secret also works, so the purge can be run by hand. Leave it unset only if you will call the route yourself. |
 
 Notification is attempted only after the inquiry transaction commits. A failure is stored on `inquiry_notification_outbox` and does not delete the inquiry. The intended recipient, once a provider is approved, is `wkirby592@gmail.com`.
+
+Owner email is off. Check /owner (or the CSV export) at least daily for new inquiries.
+
+Inquiries are deleted automatically 24 months after they are received. Network-address hashes are deleted after 90 days. The daily purge does that, and a submission also deletes hashes older than 90 days.
 
 ## Run migration 037
 
@@ -67,6 +72,20 @@ done
 ```
 
 Do not point `DATABASE_URL` at a database you are not willing to change. Preview and production should not share one database if preview submissions should stay out of the live queue. Rows record `source` as `website`, `website-preview`, or `website-test`.
+
+## Delete one inquiry
+
+Use this for a test submission or when someone asks you to erase their inquiry. It removes that receipt and its notification rows. It does not send email.
+
+```bash
+curl -sS -X POST "https://<deployment>/api/owner/inquiries/delete" \
+  -H "Authorization: Bearer $OWNER_ACCESS_SECRET" \
+  -H "Content-Type: application/json" \
+  -H "Accept: application/json" \
+  --data '{"receipt_id":"NOVA-YYYYMMDD-XXXX"}'
+```
+
+`{ "ok": true, "deleted": 1 }` means that receipt was removed. A second call, or an unknown receipt, returns 404. A missing or wrong owner secret returns 401. `GET` returns 405. The receipt must look like `NOVA-YYYYMMDD-XXXX`.
 
 ## Tests
 

@@ -8,6 +8,7 @@ const {
   handleIntake,
   handleOwnerExport,
   handleOwnerInquiries,
+  handleOwnerInquiryDelete,
   handleOwnerMigrate,
   handleOwnerNotificationRetry,
   handleOwnerQueue,
@@ -453,6 +454,7 @@ describe('public intake', { concurrency: 1 }, () => {
       [handleOwnerExport, { method: 'GET', headers: { accept: 'text/csv' } }],
       [handleOwnerNotificationRetry, { method: 'POST', headers: { accept: 'application/json' } }],
       [handleOwnerMigrate, { method: 'POST', headers: { accept: 'application/json' } }],
+      [handleOwnerInquiryDelete, { method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' }, body: { receipt_id: 'NOVA-20261029-ZZZZ' } }],
       [handlePurge, { method: 'GET', headers: { accept: 'application/json' } }],
     ];
     for (const [handler, options] of routes) {
@@ -524,8 +526,11 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(healthy.json.ok, true);
     assert.equal(healthy.json.service, 'intake');
     assert.equal(healthy.json.database, 'reachable');
+    assert.equal(healthy.json.tables, 'present');
+    assert.equal(healthy.json.persistence, 'public_inquiries');
     assert.equal(healthy.json.email, 'disabled');
     assert.equal(JSON.stringify(healthy.json).includes(DATABASE_URL), false);
+    assert.equal(JSON.stringify(healthy.json).includes('"postgres"'), false);
     const unconfigured = await invoke(handleHealth, {
       method: 'GET',
       env: { INTAKE_EMAIL_ENABLED: 'true' },
@@ -566,6 +571,10 @@ describe('public intake', { concurrency: 1 }, () => {
     const db = getPool(DATABASE_URL);
     await db.query('DROP TABLE IF EXISTS inquiry_notification_outbox, public_inquiries, intake_rate_events, schema_migrations CASCADE');
     try {
+      const missingTable = await invoke(handleHealth, { method: 'GET' });
+      assert.equal(missingTable.json.database, 'reachable');
+      assert.equal(missingTable.json.tables, 'missing');
+      assert.equal(missingTable.json.persistence, null);
       const auth = { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` };
       const first = await invoke(handleOwnerMigrate, { method: 'POST', headers: auth });
       assert.equal(first.statusCode, 200);
@@ -664,5 +673,82 @@ describe('public intake', { concurrency: 1 }, () => {
       ['c'.repeat(64), 'd'.repeat(64)],
     );
     assert.deepEqual(hashes.rows.map(row => row.ip_hash), ['d'.repeat(64)]);
+  });
+
+  test('owner can delete one inquiry and its notification rows', async () => {
+    const headers = { accept: 'application/json', 'content-type': 'application/json' };
+    const denied = await invoke(handleOwnerInquiryDelete, {
+      method: 'POST',
+      headers,
+      body: { receipt_id: 'NOVA-20261029-ZZZZ' },
+    });
+    assert.equal(denied.statusCode, 401);
+    const wrong = await invoke(handleOwnerInquiryDelete, {
+      method: 'POST',
+      headers: { ...headers, authorization: 'Bearer not-the-owner-secret' },
+      body: { receipt_id: 'NOVA-20261029-ZZZZ' },
+    });
+    assert.equal(wrong.statusCode, 401);
+    const get = await invoke(handleOwnerInquiryDelete, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` },
+    });
+    assert.equal(get.statusCode, 405);
+    const invalid = await invoke(handleOwnerInquiryDelete, {
+      method: 'POST',
+      headers: { ...headers, authorization: `Bearer ${OWNER_SECRET}` },
+      body: { receipt_id: 'not-a-receipt' },
+    });
+    assert.equal(invalid.statusCode, 400);
+    assert.equal(invalid.json.error, 'invalid_receipt');
+
+    const saved = await invoke(handleIntake, {
+      method: 'POST',
+      headers: { ...headers, 'x-forwarded-for': '203.0.113.77' },
+      body: buyer({ email: 'erase-me@example.com', request_id: 'erase-me-request001' }),
+    });
+    assert.equal(saved.statusCode, 200);
+    const keeper = await invoke(handleIntake, {
+      method: 'POST',
+      headers: { ...headers, 'x-forwarded-for': '203.0.113.78' },
+      body: buyer({ email: 'keep-me@example.com', request_id: 'keep-me-request0001' }),
+    });
+    assert.equal(keeper.statusCode, 200);
+
+    const removed = await invoke(handleOwnerInquiryDelete, {
+      method: 'POST',
+      headers: { ...headers, authorization: `Bearer ${OWNER_SECRET}` },
+      body: { receipt_id: saved.json.receipt_id },
+    });
+    assert.equal(removed.statusCode, 200);
+    assert.equal(removed.json.ok, true);
+    assert.equal(removed.json.deleted, 1);
+    const again = await invoke(handleOwnerInquiryDelete, {
+      method: 'POST',
+      headers: { ...headers, authorization: `Bearer ${OWNER_SECRET}` },
+      body: { receipt_id: saved.json.receipt_id },
+    });
+    assert.equal(again.statusCode, 404);
+    assert.equal(again.json.error, 'not_found');
+
+    const db = getPool(DATABASE_URL);
+    const left = await db.query(
+      `SELECT email FROM public_inquiries WHERE email IN ('erase-me@example.com', 'keep-me@example.com')`,
+    );
+    assert.deepEqual(left.rows.map(row => row.email), ['keep-me@example.com']);
+    const outbox = await db.query(
+      `SELECT COUNT(*)::int AS n
+         FROM inquiry_notification_outbox o
+         JOIN public_inquiries i ON i.id = o.inquiry_id
+        WHERE i.email = 'erase-me@example.com'`,
+    );
+    assert.equal(outbox.rows[0].n, 0);
+    const keeperOutbox = await db.query(
+      `SELECT COUNT(*)::int AS n
+         FROM inquiry_notification_outbox o
+         JOIN public_inquiries i ON i.id = o.inquiry_id
+        WHERE i.email = 'keep-me@example.com'`,
+    );
+    assert.equal(keeperOutbox.rows[0].n, 1);
   });
 });

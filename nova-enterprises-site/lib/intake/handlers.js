@@ -19,8 +19,10 @@ const {
   validationPage,
 } = require('./html');
 const {
+  RECEIPT_ID,
   closePool,
   consumeRateLimit,
+  deleteInquiryByReceipt,
   getPool,
   intakeSalt,
   ipHash,
@@ -229,13 +231,25 @@ async function handleHealth(req, res, deps = {}) {
   }
   const env = deps.env || process.env;
   let database = 'not_configured';
+  let tables = null;
+  let persistence = null;
   const connectionString = databaseUrl(env);
   if (connectionString) {
     try {
-      await getPool(connectionString).query('SELECT 1');
+      const found = await getPool(connectionString).query(
+        `SELECT to_regclass('public.public_inquiries') AS relation`,
+      );
       database = 'reachable';
+      const relation = found.rows[0] && found.rows[0].relation;
+      if (relation) {
+        tables = 'present';
+        persistence = String(relation);
+      } else {
+        tables = 'missing';
+        persistence = null;
+      }
     } catch (error) {
-      console.error(JSON.stringify({ event: 'intake_health_db', message: error.message }));
+      console.error(JSON.stringify({ event: 'intake_health_db', message: redactSecrets(error.message) }));
       database = 'unreachable';
     }
   }
@@ -246,7 +260,7 @@ async function handleHealth(req, res, deps = {}) {
     send(res, 200, '', { 'Content-Type': 'application/json; charset=utf-8' });
     return;
   }
-  sendJson(res, 200, { ok: true, service: 'intake', database, email, persistence: 'postgres' });
+  sendJson(res, 200, { ok: true, service: 'intake', database, email, tables, persistence });
 }
 
 async function handleOwnerQueue(req, res, deps = {}) {
@@ -353,6 +367,46 @@ function rejectOwner(res) {
   });
 }
 
+async function handleOwnerInquiryDelete(req, res, deps = {}) {
+  if (req.method !== 'POST') {
+    sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
+    return;
+  }
+  const env = deps.env || process.env;
+  if (!ownerAccepted(req, env)) {
+    rejectOwner(res);
+    return;
+  }
+  const body = readBody(req);
+  const receipt = body.ok && body.value && typeof body.value.receipt_id === 'string'
+    ? body.value.receipt_id.trim()
+    : '';
+  if (!RECEIPT_ID.test(receipt)) {
+    sendJson(res, 400, { ok: false, error: 'invalid_receipt' });
+    return;
+  }
+  const connectionString = databaseUrl(env);
+  if (!connectionString) {
+    console.error(JSON.stringify({ event: 'owner_delete_failed', message: 'Database is not configured.' }));
+    sendJson(res, 500, { ok: false, error: 'delete_failed' });
+    return;
+  }
+  try {
+    const result = await deleteInquiryByReceipt(getPool(connectionString), receipt);
+    if (!result.deleted) {
+      sendJson(res, 404, { ok: false, error: 'not_found' });
+      return;
+    }
+    sendJson(res, 200, { ok: true, deleted: result.deleted });
+  } catch (error) {
+    console.error(JSON.stringify({
+      event: 'owner_delete_failed',
+      message: redactSecrets(error && error.message),
+    }));
+    sendJson(res, 500, { ok: false, error: 'delete_failed' });
+  }
+}
+
 async function handleOwnerMigrate(req, res, deps = {}) {
   if (req.method !== 'POST') {
     sendJson(res, 405, { ok: false, error: 'method_not_allowed' });
@@ -419,6 +473,7 @@ module.exports = {
   handleIntake,
   handleOwnerExport,
   handleOwnerInquiries,
+  handleOwnerInquiryDelete,
   handleOwnerMigrate,
   handleOwnerNotificationRetry,
   handleOwnerQueue,

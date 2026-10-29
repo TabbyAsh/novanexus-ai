@@ -255,6 +255,37 @@ async function persistInquiry(db, inquiry, notifier, now = new Date()) {
   return { kind: 'created', receiptId: outcome.receiptId, notification: delivery.status };
 }
 
+const RECEIPT_ID = /^NOVA-[0-9]{8}-[A-Z0-9]{4}$/;
+
+async function deleteInquiryByReceipt(db, receiptId) {
+  const client = await db.connect();
+  try {
+    await client.query('BEGIN');
+    await client.query(
+      `DELETE FROM inquiry_notification_outbox
+        WHERE inquiry_id IN (
+          SELECT id FROM public_inquiries WHERE org_id = $1 AND receipt_id = $2
+        )`,
+      [ORG_ID, receiptId],
+    );
+    const inquiries = await client.query(
+      `DELETE FROM public_inquiries WHERE org_id = $1 AND receipt_id = $2`,
+      [ORG_ID, receiptId],
+    );
+    if (!inquiries.rowCount) {
+      await client.query('ROLLBACK');
+      return { deleted: 0 };
+    }
+    await client.query('COMMIT');
+    return { deleted: inquiries.rowCount };
+  } catch (error) {
+    try { await client.query('ROLLBACK'); } catch { /* already aborted */ }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
 async function listInquiries(db) {
   const result = await db.query(LIST_SQL, [ORG_ID]);
   return result.rows;
@@ -302,8 +333,10 @@ async function retryNotifications(db, notifier, limit = 25) {
 
 module.exports = {
   ORG_ID,
+  RECEIPT_ID,
   closePool,
   consumeRateLimit,
+  deleteInquiryByReceipt,
   getPool,
   intakeSalt,
   ipHash,
