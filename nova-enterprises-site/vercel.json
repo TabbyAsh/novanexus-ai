@@ -21,6 +21,8 @@
   ],
   "rewrites": [
     { "source": "/privacy", "destination": "/privacy.html" },
+    { "source": "/sourcing", "destination": "/sourcing.html" },
+    { "source": "/nexus", "destination": "/nexus.html" },
     { "source": "/owner", "destination": "/api/owner/queue" },
     { "source": "/api/owner/export.csv", "destination": "/api/owner/export" }
   ],

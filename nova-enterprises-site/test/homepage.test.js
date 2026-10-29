@@ -102,11 +102,60 @@ test('privacy page keeps the published retention sentence', () => {
   assert.equal(privacy.includes('unless they become an active business record'), false);
 });
 
+test('sourcing page keeps the buyer form and records sourcing-landing', () => {
+  const page = fs.readFileSync(path.join(publicDir, 'sourcing.html'), 'utf8');
+  const start = page.indexOf('<form id="quote-form"');
+  assert.notEqual(start, -1);
+  const form = page.slice(start, page.indexOf('</form>', start));
+  assert.match(form, /action="\/api\/intake"[^>]*method="POST"/);
+  assert.match(form, /name="inquiry_type" value="buyer_sourcing"/);
+  assert.match(form, /name="request_id"/);
+  assert.match(form, /name="company_website"/);
+  assert.match(form, /name="source" value="sourcing-landing"/);
+  assert.match(form, /Your details are stored so Wyatt Kirby can reply to this inquiry\. If this form cannot save the inquiry, the next page will say so and nothing is kept\./);
+  assert.match(form, /<a href="\/privacy">Privacy<\/a>/);
+  for (const name of ['name', 'company', 'email', 'phone', 'country', 'product', 'quantity', 'target_date', 'notes']) {
+    assert.match(form, new RegExp(`name="${name}"`));
+  }
+  assert.match(page, /Now requesting written quotes from sock mills in Turkey\./);
+  assert.match(page, /Industries we can quote for/);
+  const nexus = fs.readFileSync(path.join(publicDir, 'nexus.html'), 'utf8');
+  assert.match(nexus, /data-hero-slot/);
+  assert.match(nexus, /<script src="\/hero.js" defer><\/script>/);
+  assert.equal((nexus.match(/In development/g) || []).length >= 3, true);
+  assert.equal(/AI-powered/i.test(nexus), false);
+  const sitemap = fs.readFileSync(path.join(publicDir, 'sitemap.xml'), 'utf8');
+  assert.match(sitemap, /https:\/\/novanexus-ai\.com\/sourcing/);
+  assert.match(sitemap, /https:\/\/novanexus-ai\.com\/nexus/);
+  assert.match(html, /href="\/sourcing"/);
+  assert.match(html, /href="\/nexus"/);
+});
+
 test('homepage keeps the section anchors', () => {
   for (const id of ['products', 'research', 'software', 'trade', 'suppliers', 'quote', 'about', 'services-inquiry', 'supplier-form']) {
     assert.match(html, new RegExp(`\\bid="${id}"`));
   }
   assert.match(html, /href="#services-form"[^>]*data-service="software_ai"/);
+});
+
+test('hero slot is sized, deferred, and still for reduced motion', () => {
+  assert.match(html, /<div class="hero-visual" data-hero-slot>/);
+  assert.match(html, /class="hero-fallback"/);
+  assert.match(html, /<script src="\/hero.js" defer><\/script>/);
+  const preloads = html.match(/<link rel="preload" href="\/brand\/fonts\/[^"]+\.woff2" as="font"/g) || [];
+  assert.deepEqual(preloads, [
+    '<link rel="preload" href="/brand/fonts/space-grotesk-latin-700-normal.woff2" as="font"',
+    '<link rel="preload" href="/brand/fonts/inter-latin-400-normal.woff2" as="font"',
+  ]);
+  const css = fs.readFileSync(path.join(publicDir, 'styles.css'), 'utf8');
+  assert.match(css, /\.hero-visual\{[^}]*aspect-ratio:16\/9/);
+  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.hero-visual canvas\{display:none\}\}/);
+  const hero = fs.readFileSync(path.join(publicDir, 'hero.js'), 'utf8');
+  assert.match(hero, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
+  assert.match(hero, /IntersectionObserver/);
+  assert.match(hero, /visibilitychange/);
+  assert.match(hero, /Math\.min\(window\.devicePixelRatio \|\| 1, 2\)/);
+  assert.match(hero, /createElement\('canvas'\)/);
 });
 
 test('header color-mix has a solid background fallback first', () => {

@@ -98,7 +98,7 @@ function ownerQueuePage(rows) {
     ? '<p>No inquiries are stored yet.</p>'
     : `<div class="table-wrap"><table class="data-table">
         <thead><tr>
-          <th>Type</th><th>Receipt</th><th>Created (UTC)</th><th>Name</th><th>Company</th><th>Email</th><th>Status</th><th>Product / service</th>
+          <th>Type</th><th>Receipt</th><th>Created (UTC)</th><th>Name</th><th>Company</th><th>Email</th><th>Status</th><th>Product / service</th><th>Source</th>
         </tr></thead>
         <tbody>
           ${rows.map(row => `<tr>
@@ -110,6 +110,7 @@ function ownerQueuePage(rows) {
             <td>${escapeHtml(row.email)}</td>
             <td>${escapeHtml(row.status)}</td>
             <td>${escapeHtml(row.product_or_service)}</td>
+            <td>${escapeHtml(row.source)}</td>
           </tr>`).join('')}
         </tbody>
       </table></div>`;

@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#0B0E13">
+  <title>Textile sourcing | Nova Enterprises LLC</title>
+  <meta name="description" content="Now requesting written quotes from sock mills in Turkey. Written quotes before you commit.">
+  <link rel="canonical" href="https://novanexus-ai.com/sourcing">
+  <link rel="icon" href="/brand/icons/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/brand/icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/brand/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="preload" href="/brand/fonts/space-grotesk-latin-700-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="preload" href="/brand/fonts/inter-latin-400-normal.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/brand/tokens.css">
+  <link rel="stylesheet" href="/styles.css">
+  <script src="/script.js" defer></script>
+</head>
+<body>
+<a class="skip-link" href="#main">Skip to content</a>
+<header class="site-header">
+  <div class="wrap header-inner">
+    <a class="brand" href="/" aria-label="Nova Enterprises LLC home">
+      <svg class="brand-mark" viewBox="0 0 72 72" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="4"><circle cx="36" cy="36" r="24"/><path d="M36 2v14M36 56v14M2 36h14M56 36h14"/></g><circle cx="36" cy="36" r="7" fill="currentColor"/></svg>
+      <span class="brand-text"><strong>NOVA</strong><small>ENTERPRISES LLC</small></span>
+    </a>
+    <nav class="main-nav" id="main-nav" aria-label="Main navigation">
+      <a href="/#divisions">Divisions</a>
+      <a href="/#process">How we work</a>
+      <a href="/#quote">Contact</a>
+      <a class="button button-small" href="#quote-form">Request a quote</a>
+    </nav>
+  </div>
+</header>
+<main id="main">
+  <section class="section" aria-labelledby="sourcing-title">
+    <div class="wrap contact-grid">
+      <div class="contact-intro">
+        <p class="label">Trade and sourcing</p>
+        <h1 id="sourcing-title">Textile sourcing</h1>
+        <p class="lede">Now requesting written quotes from sock mills in Turkey. Written quotes before you commit.</p>
+        <h2>Industries we can quote for</h2>
+        <p>Retailers, wholesalers, uniform and workwear suppliers, promo and merch companies, hospitality, gyms and studios, nonprofits buying in bulk.</p>
+        <div class="contact-card">
+          <span class="label">Your point of contact</span>
+          <p class="contact-name">Wyatt Kirby</p>
+          <p class="muted">Founder, Nova Enterprises LLC</p>
+          <a href="mailto:wkirby592@gmail.com">wkirby592@gmail.com</a>
+          <a href="tel:+18122631586">812-263-1586</a>
+          <p class="muted">Terre Haute, Indiana, USA</p>
+        </div>
+      </div>
+      <form id="quote-form" class="intake-form card" action="/api/intake" method="POST" aria-labelledby="quote-title">
+        <h2 id="quote-title" class="form-title">Sourcing quote <span class="badge badge-current">Current</span></h2>
+        <input type="hidden" name="inquiry_type" value="buyer_sourcing">
+        <input type="hidden" name="request_id" value="">
+        <input type="hidden" name="source" value="sourcing-landing">
+        <div class="honeypot" aria-hidden="true"><label for="quote-website">Leave this field blank</label><input id="quote-website" name="company_website" type="text" tabindex="-1" autocomplete="off"></div>
+        <p class="fine">Fields marked <span aria-hidden="true">*</span> are required.</p>
+        <div class="form-grid">
+          <div class="field"><label for="name">Name <span aria-hidden="true">*</span></label><input id="name" name="name" autocomplete="name" maxlength="120" required></div>
+          <div class="field"><label for="company">Company / organization <span aria-hidden="true">*</span></label><input id="company" name="company" autocomplete="organization" maxlength="160" required></div>
+          <div class="field"><label for="email">Email <span aria-hidden="true">*</span></label><input id="email" name="email" type="email" autocomplete="email" maxlength="254" required></div>
+          <div class="field"><label for="phone">Phone <span class="optional">(optional)</span></label><input id="phone" name="phone" type="tel" autocomplete="tel" maxlength="40"></div>
+          <div class="field field-full"><label for="country">Country <span class="optional">(optional)</span></label><input id="country" name="country" autocomplete="country-name" maxlength="80"></div>
+          <div class="field field-full"><label for="product">Product <span aria-hidden="true">*</span></label><select id="product" name="product" required><option value="" disabled selected>Select a product</option><option>Cotton and athletic socks</option><option>Cotton terry towels</option><option>Microfiber towels</option><option>Multiple product lines</option></select></div>
+          <div class="field"><label for="quantity">Quantity and unit <span aria-hidden="true">*</span></label><input id="quantity" name="quantity" type="text" inputmode="text" maxlength="120" placeholder="e.g. 500 pairs or 200 towels" required></div>
+          <div class="field"><label for="target-date">Target date <span class="optional">(optional)</span></label><input id="target-date" name="target_date" type="date"></div>
+          <div class="field field-full"><label for="notes">Notes / specifications <span class="optional">(optional)</span></label><textarea id="notes" name="notes" rows="4" maxlength="4000" placeholder="Sizes, materials, GSM, colors, custom logos, delivery location, or other requirements."></textarea></div>
+        </div>
+        <p class="fine">Your details are stored so Wyatt Kirby can reply to this inquiry. If this form cannot save the inquiry, the next page will say so and nothing is kept. <a href="/privacy">Privacy</a>.</p>
+        <button class="button" type="submit">Send quote request</button>
+        <p class="form-alternative">Prefer email? <a href="mailto:wkirby592@gmail.com">wkirby592@gmail.com</a></p>
+      </form>
+    </div>
+  </section>
+</main>
+<footer class="site-footer">
+  <div class="wrap footer-grid">
+    <div><strong class="footer-name">Nova Enterprises LLC</strong><p class="muted">Terre Haute, IN, USA</p><p class="muted">Indiana LLC · NAICS 425120 (wholesale trade agents and brokers)</p></div>
+    <div class="footer-links"><a href="mailto:wkirby592@gmail.com">wkirby592@gmail.com</a><a href="tel:+18122631586">812-263-1586</a><a href="/nexus">Nova Core and Atlas</a><a href="/privacy">Privacy</a></div>
+    <div class="footer-bottom"><span>© 2026 Nova Enterprises LLC</span><a href="/">Back to the website</a></div>
+  </div>
+</footer>
+</body>
+</html>

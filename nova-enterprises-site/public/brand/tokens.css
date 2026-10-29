@@ -8,6 +8,7 @@
   --c-text:#ECE6D8; --c-muted:#A3ACB9;
   --c-accent:#F5A524; --c-on-accent:#1A1205;
   --c-current:#6FD394; --c-inquiry:#7CC4FF; --c-dev:#C9A8FF;
+  --c-current-glow:rgba(111,211,148,.15);
   --c-focus:#F5A524;
   --c-grid:rgba(124,196,255,.06);
   /* Type — self-hosted OFL fonts only, with system fallbacks */
@@ -18,8 +19,10 @@
   --fs-xl:clamp(1.5rem,1.2rem + 1.2vw,2rem);
   --fs-2xl:clamp(2rem,1.5rem + 2.2vw,3rem);
   --fs-3xl:clamp(2.5rem,1.6rem + 3.4vw,4rem);
+  --fs-brand:1.25rem; --fs-brand-sub:.625rem; --fs-badge:.75rem;
   --lh-tight:1.05; --lh-snug:1.25; --lh-body:1.6;
-  --tracking-label:.14em;
+  --tracking-label:.14em; --tracking-display:-.01em;
+  --tracking-brand:.24em; --tracking-brand-sub:.22em; --tracking-badge:.06em; --tracking-data:.04em;
   /* Spacing (4px base) */
   --s-1:.25rem; --s-2:.5rem; --s-3:.75rem; --s-4:1rem; --s-5:1.5rem; --s-6:2rem; --s-7:3rem; --s-8:4rem; --s-9:6rem;
   --wrap:72rem; --gutter:clamp(1rem,4vw,2.5rem);
@@ -40,6 +43,7 @@
   --c-text:#12161C; --c-muted:#4A5361;
   --c-accent:#8F5300; --c-on-accent:#FFFFFF;
   --c-current:#1D6F40; --c-inquiry:#1C5A9E; --c-dev:#6237AD;
+  --c-current-glow:rgba(29,111,64,.18);
   --c-focus:#8F5300; --c-grid:rgba(28,90,158,.06);
   --shadow-1:0 1px 2px rgba(18,22,28,.06),0 8px 24px rgba(18,22,28,.06);
   --shadow-2:0 2px 4px rgba(18,22,28,.08),0 20px 48px rgba(18,22,28,.10);
