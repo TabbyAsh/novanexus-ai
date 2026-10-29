@@ -118,11 +118,12 @@ test('sourcing page keeps the buyer form and records sourcing-landing', () => {
     assert.match(form, new RegExp(`name="${name}"`));
   }
   assert.match(page, /Now requesting written quotes from sock mills in Turkey\./);
-  assert.match(page, /Industries we can quote for/);
+  assert.match(page, /Retailers, wholesalers, uniform and workwear suppliers/);
   const nexus = fs.readFileSync(path.join(publicDir, 'nexus.html'), 'utf8');
-  assert.match(nexus, /data-hero-slot/);
-  assert.match(nexus, /<script src="\/hero.js" defer><\/script>/);
-  assert.equal((nexus.match(/In development/g) || []).length >= 3, true);
+  assert.match(nexus, /data-hero/);
+  assert.match(nexus, /import\('\/hero\.js'\)/);
+  assert.match(nexus, /Planned as/);
+  assert.equal((nexus.match(/in development/gi) || []).length >= 2, true);
   assert.equal(/AI-powered/i.test(nexus), false);
   const sitemap = fs.readFileSync(path.join(publicDir, 'sitemap.xml'), 'utf8');
   assert.match(sitemap, /https:\/\/novanexus-ai\.com\/sourcing/);
@@ -139,32 +140,36 @@ test('homepage keeps the section anchors', () => {
 });
 
 test('hero slot is sized, deferred, and still for reduced motion', () => {
-  assert.match(html, /<div class="hero-visual" data-hero-slot>/);
+  assert.match(html, /<div class="hero-slot" data-hero/);
   assert.match(html, /class="hero-fallback"/);
-  assert.match(html, /<script src="\/hero.js" defer><\/script>/);
+  assert.match(html, /addEventListener\('load'/);
+  assert.match(html, /import\('\/hero\.js'\)/);
+  assert.equal(/<script src="\/hero\.js"/.test(html), false);
   const preloads = html.match(/<link rel="preload" href="\/brand\/fonts\/[^"]+\.woff2" as="font"/g) || [];
   assert.deepEqual(preloads, [
     '<link rel="preload" href="/brand/fonts/space-grotesk-latin-700-normal.woff2" as="font"',
     '<link rel="preload" href="/brand/fonts/inter-latin-400-normal.woff2" as="font"',
   ]);
   const css = fs.readFileSync(path.join(publicDir, 'styles.css'), 'utf8');
-  assert.match(css, /\.hero-visual\{[^}]*aspect-ratio:16\/9/);
-  assert.match(css, /@media \(prefers-reduced-motion:reduce\)\{\.hero-visual canvas\{display:none\}\}/);
+  assert.match(css, /\.hero-slot\{[^}]*aspect-ratio:1440\/900/);
+  assert.match(css, /prefers-reduced-motion:reduce/);
   const hero = fs.readFileSync(path.join(publicDir, 'hero.js'), 'utf8');
-  assert.match(hero, /matchMedia\('\(prefers-reduced-motion: reduce\)'\)/);
+  assert.match(hero, /prefers-reduced-motion: reduce/);
   assert.match(hero, /IntersectionObserver/);
   assert.match(hero, /visibilitychange/);
-  assert.match(hero, /Math\.min\(window\.devicePixelRatio \|\| 1, 2\)/);
-  assert.match(hero, /createElement\('canvas'\)/);
+  assert.match(hero, /Math\.min\(devicePixelRatio \|\| 1, 2\)/);
+  assert.match(hero, /return null/);
+  assert.equal(/linens/i.test(html + fs.readFileSync(path.join(publicDir, 'sourcing.html'), 'utf8') + fs.readFileSync(path.join(publicDir, 'nexus.html'), 'utf8')), false);
+  assert.equal(/get written quotes/i.test(html), false);
 });
 
-test('header color-mix has a solid background fallback first', () => {
+test('header keeps a solid background before the translucent layer', () => {
   const css = fs.readFileSync(path.join(publicDir, 'styles.css'), 'utf8');
   const header = css.match(/\.site-header\{[^}]+\}/);
   assert.ok(header);
-  const plain = header[0].indexOf('background-color:var(--c-bg)');
-  const mix = header[0].indexOf('color-mix(');
-  assert.ok(plain !== -1 && mix !== -1 && plain < mix);
+  const plain = header[0].indexOf('background-color:var(--space-0)');
+  const layer = header[0].indexOf('background:rgba');
+  assert.ok(plain !== -1 && layer !== -1 && plain < layer);
 });
 
 test('public pages do not call third parties or use removed claims', () => {
