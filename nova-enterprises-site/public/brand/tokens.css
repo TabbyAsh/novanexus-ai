@@ -1,0 +1,45 @@
+/* Nova Nexus — draft tokens v3 (shared by direction A and B; Atlas should import this). Contrast ratios in rationale.md. */
+@import url("./fonts/fonts.css");
+:root{
+  --space-0:#04060B;      /* page */
+  --space-1:#0A0F1A;      /* surface */
+  --space-2:#111829;      /* raised surface / inputs */
+  --line:#24304A;         /* hairlines (non-text) */
+  --line-strong:#5D7099;  /* input borders (3:1 non-text) */
+  --text:#F2EEE6;         /* body text */
+  --text-muted:#A9B3C7;   /* secondary text */
+  --dawn:#FFD58A;         /* white-gold core: accents, primary button */
+  --dawn-white:#FFF6E3;
+  --nebula:#8FB8FF;       /* cool accent: links, nexus lines */
+  --nebula-violet:#B9A6FF;
+  --status-current:#86E3B6;
+  --status-dev:#B9A6FF;
+  --status-inquiry:#8FB8FF;
+  --on-dawn:#1A1206;      /* text on dawn button */
+  --focus:#FFE7B0;
+  --font-display:"Space Grotesk",system-ui,sans-serif;
+  --font-body:"Inter",system-ui,sans-serif;
+  --font-mono:"IBM Plex Mono",ui-monospace,monospace;
+  --radius:14px; --radius-sm:8px;
+  --wrap:1160px;
+  --ease:cubic-bezier(.2,.7,.2,1);
+}
+
+/* Hybrid palette lock (2026-10-29): hybrid uses the tokens above unchanged; hero adds rgba tints of --dawn/--dawn-white/--nebula only.
+   Atlas mapping: space-0/1/2 surfaces, dawn primary action, nebula links/info, status-* chips, line-strong input borders. */
+
+:root{
+  --c-bg:var(--space-0); --c-surface:var(--space-1); --c-surface-2:var(--space-2);
+  --c-text:var(--text); --c-muted:var(--text-muted); --c-accent:var(--dawn); --c-on-accent:var(--on-dawn);
+  --c-line:var(--line-strong); --c-hairline:var(--line); --c-current:var(--status-current);
+  --c-inquiry:var(--status-inquiry); --c-dev:var(--status-dev); --c-focus:var(--focus);
+  --c-current-glow:rgba(134,227,182,.15); --c-grid:rgba(143,184,255,.06);
+--fs-xs:.78rem; --fs-sm:.92rem; --fs-md:1rem; --fs-lg:1.1rem;
+  --fs-xl:1.5rem; --fs-2xl:2rem; --fs-3xl:2.6rem; --fs-brand:1.25rem; --fs-brand-sub:.625rem; --fs-badge:.72rem;
+  --lh-tight:1.1; --lh-snug:1.25; --lh-body:1.6; --tracking-label:.14em; --tracking-display:-.01em;
+  --tracking-brand:.24em; --tracking-brand-sub:.22em; --tracking-badge:.1em; --tracking-data:.04em;
+  --s-1:.25rem; --s-2:.5rem; --s-3:.75rem; --s-4:1rem; --s-5:1.5rem; --s-6:2rem; --s-7:3rem; --s-8:4rem; --s-9:6rem;
+  --wrap:1160px; --gutter:20px; --r-sm:8px; --r-md:8px; --r-lg:14px; --r-pill:999px;
+  --shadow-1:none; --shadow-2:none; --ease:cubic-bezier(.2,.7,.2,1); --dur-fast:120ms; --dur:220ms;
+  --focus-ring:0 0 0 3px var(--focus);
+}

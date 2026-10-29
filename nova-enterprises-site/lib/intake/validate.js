@@ -48,10 +48,17 @@ function validDate(value) {
   return parsed.getUTCFullYear() === year && parsed.getUTCMonth() === month - 1 && parsed.getUTCDate() === day;
 }
 
-function resolveSource(env) {
-  if (env && env.VERCEL_ENV === 'preview') return 'website-preview';
-  if (env && env.VERCEL_ENV === 'development') return 'website-test';
-  return 'website';
+const PUBLIC_SOURCES = new Set(['website', 'sourcing-landing']);
+
+function resolveSource(env, requested) {
+  const asked = singleLine(typeof requested === 'string' ? requested : '');
+  if (asked && !PUBLIC_SOURCES.has(asked)) {
+    return { error: 'Choose website or sourcing-landing.' };
+  }
+  if (asked === 'sourcing-landing') return { source: 'sourcing-landing' };
+  if (env && env.VERCEL_ENV === 'preview') return { source: 'website-preview' };
+  if (env && env.VERCEL_ENV === 'development') return { source: 'website-test' };
+  return { source: 'website' };
 }
 
 function normalizeInquiry(input, options = {}) {
@@ -63,6 +70,8 @@ function normalizeInquiry(input, options = {}) {
   }
 
   const errors = {};
+  const resolvedSource = resolveSource(options.env, body.source);
+  if (resolvedSource.error) errors.source = resolvedSource.error;
   const inquiryType = singleLine(body.inquiry_type);
   if (!TYPES.has(inquiryType)) errors.inquiry_type = 'Choose a sourcing request, a supplier inquiry, or a services inquiry.';
 
@@ -159,7 +168,7 @@ function normalizeInquiry(input, options = {}) {
       quantityText: quantity || null,
       targetDate: targetDate || null,
       notes: composedNotes || null,
-      source: resolveSource(options.env),
+      source: resolvedSource.source,
     },
   };
 }

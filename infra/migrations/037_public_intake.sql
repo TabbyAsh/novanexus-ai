@@ -30,7 +30,7 @@ CREATE TABLE IF NOT EXISTS public_inquiries (
   CONSTRAINT public_inquiries_hash_check CHECK (payload_hash ~ '^[a-f0-9]{64}$'),
   CONSTRAINT public_inquiries_type_check CHECK (inquiry_type IN ('buyer_sourcing', 'supplier', 'services')),
   CONSTRAINT public_inquiries_status_check CHECK (status IN ('new', 'reviewing', 'qualified', 'quoted', 'won', 'lost', 'spam', 'archived')),
-  CONSTRAINT public_inquiries_source_check CHECK (source IN ('website', 'website-preview', 'website-test')),
+  CONSTRAINT public_inquiries_source_check CHECK (source IN ('website', 'website-preview', 'website-test', 'sourcing-landing')),
   CONSTRAINT public_inquiries_notes_check CHECK (notes IS NULL OR char_length(notes) <= 5000),
   CONSTRAINT public_inquiries_version_check CHECK (version >= 1)
 );
@@ -41,6 +41,11 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_public_inquiries_org_request
   ON public_inquiries (org_id, request_id);
 CREATE INDEX IF NOT EXISTS idx_public_inquiries_created
   ON public_inquiries (org_id, created_at DESC);
+
+-- Existing databases already created this table. Widen the check in place.
+ALTER TABLE public_inquiries DROP CONSTRAINT IF EXISTS public_inquiries_source_check;
+ALTER TABLE public_inquiries ADD CONSTRAINT public_inquiries_source_check
+  CHECK (source IN ('website', 'website-preview', 'website-test', 'sourcing-landing'));
 
 CREATE TABLE IF NOT EXISTS inquiry_notification_outbox (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
