@@ -309,7 +309,7 @@ describe('public intake', { concurrency: 1 }, () => {
   });
 
   test('returns a visible fallback when DATABASE_URL or INTAKE_IP_SALT is missing', async () => {
-    const fallback = "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.";
+    const fallback = "We couldn't save your request. Please email wkirby592@gmail.com.";
     const previousUrl = process.env.DATABASE_URL;
     const previousSalt = process.env.INTAKE_IP_SALT;
     try {
@@ -342,8 +342,8 @@ describe('public intake', { concurrency: 1 }, () => {
       assert.equal(form.statusCode, 503);
       assert.match(form.body, /We couldn't save your request\. Please email/);
       assert.match(form.body, /href="mailto:wkirby592@gmail.com"/);
-      assert.match(form.body, /href="tel:\+18122631586"/);
-      assert.match(form.body, /812-263-1586/);
+      assert.equal(form.body.includes('812-263-1586'), false);
+      assert.equal(form.body.includes('tel:+18122631586'), false);
       assert.equal(form.body.includes('NOVA-'), false);
     } finally {
       process.env.DATABASE_URL = previousUrl;
@@ -369,7 +369,8 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(response.statusCode, 503);
     assert.match(response.body, /We couldn't save your request\. Please email/);
     assert.match(response.body, /href="mailto:wkirby592@gmail.com"/);
-    assert.match(response.body, /href="tel:\+18122631586"/);
+    assert.equal(response.body.includes('812-263-1586'), false);
+    assert.equal(response.body.includes('tel:+18122631586'), false);
     assert.equal(response.body.includes('NOVA-'), false);
     const json = await invoke(handleIntake, {
       method: 'POST',
@@ -380,7 +381,7 @@ describe('public intake', { concurrency: 1 }, () => {
       },
     });
     assert.equal(json.statusCode, 503);
-    assert.equal(json.json.message, "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.");
+    assert.equal(json.json.message, "We couldn't save your request. Please email wkirby592@gmail.com.");
     const stored = await getPool(DATABASE_URL).query(
       `SELECT COUNT(*)::int AS n FROM public_inquiries WHERE email IN ('insert-fail@example.com', 'insert-fail-json@example.com')`,
     );
@@ -517,7 +518,53 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.match(line, /'-2 towels/);
     assert.match(line, /2026-11-15/);
     assert.match(line, /,new$/);
+    assert.match(line, /,website,new$/);
     assert.match(line, /buyer_sourcing/);
+  });
+
+  test('stores sourcing-landing and shows that source in the owner queue and CSV', async () => {
+    const headers = { 'content-type': 'application/json', accept: 'application/json', 'x-forwarded-for': '203.0.113.55' };
+    const saved = await invoke(handleIntake, {
+      method: 'POST',
+      headers,
+      body: buyer({
+        email: 'landing@example.com',
+        request_id: 'req-sourcing-landing1',
+        source: 'sourcing-landing',
+      }),
+    });
+    assert.equal(saved.statusCode, 200);
+    const stored = await getPool(DATABASE_URL).query(
+      `SELECT source FROM public_inquiries WHERE email = 'landing@example.com'`,
+    );
+    assert.equal(stored.rows[0].source, 'sourcing-landing');
+    const basic = Buffer.from(`owner:${OWNER_SECRET}`).toString('base64');
+    const queue = await invoke(handleOwnerQueue, {
+      method: 'GET',
+      headers: { accept: 'text/html', authorization: `Basic ${basic}` },
+    });
+    assert.match(queue.body, /<th>Source<\/th>/);
+    assert.match(queue.body, /sourcing-landing/);
+    const exported = await invoke(handleOwnerExport, {
+      method: 'GET',
+      headers: { accept: 'text/csv', authorization: `Bearer ${OWNER_SECRET}` },
+    });
+    assert.match(exported.body, /sourcing-landing/);
+    const rejected = await invoke(handleIntake, {
+      method: 'POST',
+      headers,
+      body: buyer({
+        email: 'bad-source@example.com',
+        request_id: 'req-sourcing-bad0001',
+        source: 'newsletter',
+      }),
+    });
+    assert.equal(rejected.statusCode, 400);
+    assert.match(rejected.json.fields.source, /sourcing-landing/);
+    const absent = await getPool(DATABASE_URL).query(
+      `SELECT COUNT(*)::int AS n FROM public_inquiries WHERE email = 'bad-source@example.com'`,
+    );
+    assert.equal(absent.rows[0].n, 0);
   });
 
   test('health reports the intake service without secrets', async () => {

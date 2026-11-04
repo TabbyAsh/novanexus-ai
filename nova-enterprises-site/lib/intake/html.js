@@ -1,4 +1,4 @@
-const { OWNER_EMAIL, OWNER_PHONE_DISPLAY, OWNER_PHONE_TEL } = require('./constants');
+const { OWNER_EMAIL } = require('./constants');
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -17,14 +17,18 @@ function layout({ title, heading, main, robots = 'noindex' }) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta name="robots" content="${escapeHtml(robots)}">
-  <meta name="theme-color" content="#142b45">
+  <meta name="theme-color" content="#0B0E13">
   <title>${escapeHtml(title)}</title>
-  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/brand/icons/favicon.ico" sizes="48x48">
+  <link rel="icon" href="/brand/icons/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/brand/icons/apple-touch-icon.png">
+  <link rel="manifest" href="/site.webmanifest">
+  <link rel="stylesheet" href="/brand/tokens.css">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <a class="skip-link" href="#main">Skip to content</a>
-  <header class="site-header"><div class="wrap header-inner"><a class="brand" href="/" aria-label="Nova Enterprises LLC home"><span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span><span><strong>NOVA</strong><small>ENTERPRISES LLC</small></span></a></div></header>
+  <header class="site-header"><div class="wrap header-inner"><a class="brand" href="/" aria-label="Nova Enterprises LLC home"><svg class="brand-mark" viewBox="0 0 72 72" aria-hidden="true"><g fill="none" stroke="currentColor" stroke-width="4"><circle cx="36" cy="36" r="24"/><path d="M36 2v14M36 56v14M2 36h14M56 36h14"/></g><circle cx="36" cy="36" r="7" fill="currentColor"/></svg><span class="brand-text"><strong>NOVA</strong><small>ENTERPRISES LLC</small></span></a></div></header>
   <main id="main" class="wrap message-page">
     <p class="eyebrow">Nova Enterprises LLC</p>
     <h1>${heading}</h1>
@@ -36,7 +40,7 @@ function layout({ title, heading, main, robots = 'noindex' }) {
 }
 
 function contactLinks() {
-  return `<p><a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a><br><a href="tel:${OWNER_PHONE_TEL}">${OWNER_PHONE_DISPLAY}</a></p>`;
+  return `<p><a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a></p>`;
 }
 
 function thankYouPage(receiptId, replay) {
@@ -54,7 +58,7 @@ function fallbackPage() {
   return layout({
     title: 'Inquiry not saved | Nova Enterprises LLC',
     heading: "We couldn't save your request.",
-    main: `<p>We couldn't save your request. Please email <a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a> or call <a href="tel:${OWNER_PHONE_TEL}">${OWNER_PHONE_DISPLAY}</a>.</p>
+    main: `<p>We couldn't save your request. Please email <a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a>.</p>
       <p><a class="button" href="/">Back to the website <span aria-hidden="true">↗</span></a></p>`,
   });
 }
@@ -94,7 +98,7 @@ function ownerQueuePage(rows) {
     ? '<p>No inquiries are stored yet.</p>'
     : `<div class="table-wrap"><table class="data-table">
         <thead><tr>
-          <th>Type</th><th>Receipt</th><th>Created (UTC)</th><th>Name</th><th>Company</th><th>Email</th><th>Status</th><th>Product / service</th>
+          <th>Type</th><th>Receipt</th><th>Created (UTC)</th><th>Name</th><th>Company</th><th>Email</th><th>Status</th><th>Product / service</th><th>Source</th>
         </tr></thead>
         <tbody>
           ${rows.map(row => `<tr>
@@ -106,6 +110,7 @@ function ownerQueuePage(rows) {
             <td>${escapeHtml(row.email)}</td>
             <td>${escapeHtml(row.status)}</td>
             <td>${escapeHtml(row.product_or_service)}</td>
+            <td>${escapeHtml(row.source)}</td>
           </tr>`).join('')}
         </tbody>
       </table></div>`;

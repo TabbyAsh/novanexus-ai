@@ -6,6 +6,10 @@ Vercel project: `nova-enterprises`. Team recorded in `docs/web/PUBLIC-OFFICE.md`
 
 Preview locally: `python -m http.server 8765 --bind 127.0.0.1 --directory public`. That preview serves the pages only. Intake needs the functions and `DATABASE_URL`.
 
+## Reskin and the hero slot
+
+Colors and type live in `public/brand/tokens.css`. A later visual reskin should change that file and the hero, not the page structure. The homepage and `/nexus` reserve `<div class="hero-slot" data-hero>` with a static SVG. `public/hero.js` is an ES module. A module script imports it after `load` so it does not block the first paint, and it mounts a canvas only when the visitor has not asked for reduced motion. The canvas pauses when the tab is hidden or the slot is off screen, and it caps `devicePixelRatio` at 2. Only Space Grotesk 700 and Inter 400 are preloaded.
+
 ## What the functions do
 
 | Route | Access | Behavior |
@@ -28,7 +32,7 @@ Set these on the Vercel project (Preview, and later Production). Do not commit t
 
 | Variable | Required | Purpose |
 |---|---|---|
-| `DATABASE_URL` | To store inquiries | Neon (or any Postgres) connection string. The owner creates this. If it is unset, the form shows “We couldn't save your request” with `mailto:wkirby592@gmail.com` and `tel:+18122631586`, and stores nothing. |
+| `DATABASE_URL` | To store inquiries | Neon (or any Postgres) connection string. The owner creates this. If it is unset, the form shows “We couldn't save your request” with `mailto:wkirby592@gmail.com`, and stores nothing. |
 | `INTAKE_IP_SALT` | To store inquiries | Required secret mixed into the rate-limit hash. There is no default. If it is unset, intake fails the same way as a missing database and does not hash the address. The raw address is not stored. Hashes older than 90 days are deleted on the next submission. |
 | `OWNER_ACCESS_SECRET` | To open `/owner` | Single shared secret, 16+ characters. |
 | `INTAKE_EMAIL_ENABLED` | No | Leave unset or `false`. `true` does **not** send email. No provider is implemented. See the proposal in `docs/stage0/owner-alert-proposal.md`. |
@@ -102,4 +106,4 @@ DATABASE_URL=postgresql://nova:nova_ci_password@127.0.0.1:5432/nova \
 
 ## Contact
 
-Wyatt Kirby, `wkirby592@gmail.com`, `812-263-1586`, Terre Haute, Indiana. Public phone and email are business contact details, not an email-sending credential.
+Wyatt Kirby, `wkirby592@gmail.com`, Terre Haute, Indiana. Email and the intake form are the public contact. The phone number `812-263-1586` is shown only in the homepage contact section (`/#quote`, which `/contact` redirects to). It is a business contact detail, not an email-sending credential.
