@@ -229,6 +229,14 @@ test('header keeps a solid background before the translucent layer', () => {
   assert.ok(plain !== -1 && layer !== -1 && plain < layer);
 });
 
+test('extensionless thanks path rewrites to the thanks page', () => {
+  const config = JSON.parse(fs.readFileSync(path.join(root, 'vercel.json'), 'utf8'));
+  const rewrite = (config.rewrites || []).find(rule => rule.source === '/thanks');
+  assert.ok(rewrite, 'missing /thanks rewrite');
+  assert.equal(rewrite.destination, '/thanks.html');
+  assert.equal(fs.existsSync(path.join(publicDir, 'thanks.html')), true);
+});
+
 test('public pages do not call third parties or use removed claims', () => {
   const textExt = new Set(['.html', '.css', '.js', '.svg', '.json', '.webmanifest', '.txt', '.md', '.xml']);
   const banned = [/pakistan/i, /verified/i, /vetted/i, /ready stock/i, /low minimum/i, /trusted by/i, /fonts\.googleapis/i, /fonts\.gstatic/i];
