@@ -117,7 +117,7 @@ test('sourcing page keeps the buyer form and records sourcing-landing', () => {
   for (const name of ['name', 'company', 'email', 'phone', 'country', 'product', 'quantity', 'target_date', 'notes']) {
     assert.match(form, new RegExp(`name="${name}"`));
   }
-  assert.match(page, /Now requesting written quotes from sock mills in Turkey\./);
+  assert.match(page, /Now requesting written quotes from sock and towel mills in Turkey\./);
   assert.match(page, /Retailers, wholesalers, uniform and workwear suppliers/);
   const nexus = fs.readFileSync(path.join(publicDir, 'nexus.html'), 'utf8');
   assert.match(nexus, /data-hero/);
@@ -130,6 +130,63 @@ test('sourcing page keeps the buyer form and records sourcing-landing', () => {
   assert.match(sitemap, /https:\/\/novanexus-ai\.com\/nexus/);
   assert.match(html, /href="\/sourcing"/);
   assert.match(html, /href="\/nexus"/);
+});
+
+test('home title and meta stay company-first, and the phone stays in the contact section', () => {
+  const head = html.slice(0, html.indexOf('</head>'));
+  const title = head.match(/<title>([^<]*)<\/title>/);
+  assert.ok(title, 'missing home title');
+  const descriptions = [...head.matchAll(/<meta\s+(?:name="description"|property="og:description"|name="twitter:description")\s+content="([^"]*)"/g)].map(match => match[1]);
+  assert.equal(descriptions.length, 3, 'home needs a meta description plus Open Graph and Twitter descriptions');
+  for (const text of [title[1], ...descriptions]) {
+    assert.equal(/socks and towels/i.test(text), false, text);
+    assert.equal(/sourcing and trade company/i.test(text), false, text);
+  }
+
+  const contactStart = html.indexOf('<section id="quote"');
+  const contactEnd = html.indexOf('</section>', contactStart);
+  assert.notEqual(contactStart, -1);
+  assert.notEqual(contactEnd, -1);
+  const contact = html.slice(contactStart, contactEnd);
+  assert.match(contact, /812-263-1586/);
+  const outsideContact = html.slice(0, contactStart) + html.slice(contactEnd);
+  assert.equal(outsideContact.includes('812-263-1586'), false);
+  assert.equal(outsideContact.includes('+18122631586'), false);
+
+  const textExt = new Set(['.html', '.js']);
+  const files = [];
+  const walk = dir => {
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (textExt.has(path.extname(entry.name).toLowerCase()) && path.basename(full) !== 'index.html') files.push(full);
+    }
+  };
+  walk(publicDir);
+  for (const file of files) {
+    const text = fs.readFileSync(file, 'utf8');
+    assert.equal(text.includes('812-263-1586'), false, file);
+    assert.equal(text.includes('+18122631586'), false, file);
+  }
+
+  const sourcing = fs.readFileSync(path.join(publicDir, 'sourcing.html'), 'utf8');
+  const nexus = fs.readFileSync(path.join(publicDir, 'nexus.html'), 'utf8');
+  const sourcingDescription = sourcing.match(/<meta name="description" content="([^"]*)"/)[1];
+  const nexusDescription = nexus.match(/<meta name="description" content="([^"]*)"/)[1];
+  assert.match(sourcingDescription, /socks and towels/);
+  assert.equal(/socks|towels/i.test(nexusDescription), false);
+  assert.match(sourcing, /property="og:description" content="[^"]*socks and towels/);
+  assert.match(nexus, /property="og:description"/);
+  assert.notEqual(descriptions[0], sourcingDescription);
+  assert.notEqual(descriptions[0], nexusDescription);
+  const turkey = 'Now requesting written quotes from sock and towel mills in Turkey.';
+  assert.equal(html.includes(turkey), true);
+  assert.equal(sourcing.includes(turkey), true);
+  assert.equal(nexus.includes(turkey), true);
+  for (const page of [html, sourcing, nexus]) {
+    assert.equal(page.includes('from sock mills in Turkey'), false);
+    assert.equal(page.includes('socks and towels from mills in Turkey'), false);
+  }
 });
 
 test('homepage keeps the section anchors', () => {

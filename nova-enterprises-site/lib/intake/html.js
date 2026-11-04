@@ -1,4 +1,4 @@
-const { OWNER_EMAIL, OWNER_PHONE_DISPLAY, OWNER_PHONE_TEL } = require('./constants');
+const { OWNER_EMAIL } = require('./constants');
 
 function escapeHtml(value) {
   return String(value ?? '').replace(/[&<>"']/g, character => ({
@@ -40,7 +40,7 @@ function layout({ title, heading, main, robots = 'noindex' }) {
 }
 
 function contactLinks() {
-  return `<p><a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a><br><a href="tel:${OWNER_PHONE_TEL}">${OWNER_PHONE_DISPLAY}</a></p>`;
+  return `<p><a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a></p>`;
 }
 
 function thankYouPage(receiptId, replay) {
@@ -58,7 +58,7 @@ function fallbackPage() {
   return layout({
     title: 'Inquiry not saved | Nova Enterprises LLC',
     heading: "We couldn't save your request.",
-    main: `<p>We couldn't save your request. Please email <a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a> or call <a href="tel:${OWNER_PHONE_TEL}">${OWNER_PHONE_DISPLAY}</a>.</p>
+    main: `<p>We couldn't save your request. Please email <a href="mailto:${OWNER_EMAIL}">${OWNER_EMAIL}</a>.</p>
       <p><a class="button" href="/">Back to the website <span aria-hidden="true">↗</span></a></p>`,
   });
 }

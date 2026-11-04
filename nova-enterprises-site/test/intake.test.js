@@ -309,7 +309,7 @@ describe('public intake', { concurrency: 1 }, () => {
   });
 
   test('returns a visible fallback when DATABASE_URL or INTAKE_IP_SALT is missing', async () => {
-    const fallback = "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.";
+    const fallback = "We couldn't save your request. Please email wkirby592@gmail.com.";
     const previousUrl = process.env.DATABASE_URL;
     const previousSalt = process.env.INTAKE_IP_SALT;
     try {
@@ -342,8 +342,8 @@ describe('public intake', { concurrency: 1 }, () => {
       assert.equal(form.statusCode, 503);
       assert.match(form.body, /We couldn't save your request\. Please email/);
       assert.match(form.body, /href="mailto:wkirby592@gmail.com"/);
-      assert.match(form.body, /href="tel:\+18122631586"/);
-      assert.match(form.body, /812-263-1586/);
+      assert.equal(form.body.includes('812-263-1586'), false);
+      assert.equal(form.body.includes('tel:+18122631586'), false);
       assert.equal(form.body.includes('NOVA-'), false);
     } finally {
       process.env.DATABASE_URL = previousUrl;
@@ -369,7 +369,8 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(response.statusCode, 503);
     assert.match(response.body, /We couldn't save your request\. Please email/);
     assert.match(response.body, /href="mailto:wkirby592@gmail.com"/);
-    assert.match(response.body, /href="tel:\+18122631586"/);
+    assert.equal(response.body.includes('812-263-1586'), false);
+    assert.equal(response.body.includes('tel:+18122631586'), false);
     assert.equal(response.body.includes('NOVA-'), false);
     const json = await invoke(handleIntake, {
       method: 'POST',
@@ -380,7 +381,7 @@ describe('public intake', { concurrency: 1 }, () => {
       },
     });
     assert.equal(json.statusCode, 503);
-    assert.equal(json.json.message, "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.");
+    assert.equal(json.json.message, "We couldn't save your request. Please email wkirby592@gmail.com.");
     const stored = await getPool(DATABASE_URL).query(
       `SELECT COUNT(*)::int AS n FROM public_inquiries WHERE email IN ('insert-fail@example.com', 'insert-fail-json@example.com')`,
     );

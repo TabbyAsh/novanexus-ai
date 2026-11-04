@@ -1,6 +1,6 @@
 /* All core content and native form submission work without JavaScript.
    JavaScript adds request ids, product and service preselect, JSON submit
-   with an on-page receipt, and the save-failed mailto/tel fallback. */
+   with an on-page receipt, and the save-failed mailto fallback. */
 (() => {
   'use strict';
   document.documentElement.classList.add('js');
@@ -34,9 +34,7 @@
   const product = document.querySelector('#product');
   const service = document.querySelector('#service-line');
   const OWNER_EMAIL = 'wkirby592@gmail.com';
-  const OWNER_PHONE_TEL = '+18122631586';
-  const OWNER_PHONE_DISPLAY = '812-263-1586';
-  const SAVE_FAILED_MESSAGE = "We couldn't save your request. Please email wkirby592@gmail.com or call 812-263-1586.";
+  const SAVE_FAILED_MESSAGE = "We couldn't save your request. Please email wkirby592@gmail.com.";
 
   const requestId = () => {
     if (window.crypto && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
@@ -76,8 +74,6 @@
     paragraph.append(
       "We couldn't save your request. Please email ",
       link(`mailto:${OWNER_EMAIL}`, OWNER_EMAIL),
-      ' or call ',
-      link(`tel:${OWNER_PHONE_TEL}`, OWNER_PHONE_DISPLAY),
       '.',
     );
     status.append(paragraph);
