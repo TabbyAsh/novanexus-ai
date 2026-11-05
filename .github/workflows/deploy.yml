@@ -1,5 +1,9 @@
 name: Production Smoke
 
+# Read-only checks against the public site. This file must not deploy,
+# promote a Vercel build, or call Railway. GitHub runs the schedule from
+# the default branch (master). Updating it here does not change that
+# schedule until the file is on master, which this preview does not do.
 on:
   workflow_dispatch:
   schedule:
@@ -19,40 +23,46 @@ jobs:
     timeout-minutes: 5
 
     steps:
-      - name: Verify canonical site, offer, and backend
+      - name: Verify canonical site, copy, and intake health
         shell: bash
         run: |
           set -euo pipefail
 
-          root_status="$(curl --fail-with-body --silent --show-error --output /dev/null --write-out '%{http_code}' https://novanexus-ai.com/)"
-          test "$root_status" = "200"
+          root_html="$(curl --fail --silent --show-error https://novanexus-ai.com/)"
+          grep --fixed-strings --quiet 'Nova Enterprises LLC' <<<"$root_html"
+          grep --fixed-strings --quiet 'Now requesting written quotes from sock mills in Turkey.' <<<"$root_html"
+          if grep --ignore-case --quiet 'pakistan' <<<"$root_html"; then
+            echo 'Homepage still mentions Pakistan'
+            exit 1
+          fi
+          grep --fixed-strings --quiet 'Written quotes before you commit.' <<<"$root_html"
+          grep --fixed-strings --quiet 'In development' <<<"$root_html"
+          grep --fixed-strings --quiet 'wkirby592@gmail.com' <<<"$root_html"
+          grep --fixed-strings --quiet '812-263-1586' <<<"$root_html"
+          if grep --fixed-strings --quiet 'direct from vetted mills' <<<"$root_html"; then
+            echo 'Homepage still contains a removed claim: direct from vetted mills'
+            exit 1
+          fi
+          if grep --fixed-strings --quiet 'Low minimums' <<<"$root_html"; then
+            echo 'Homepage still contains a removed claim: Low minimums'
+            exit 1
+          fi
 
-          www_result="$(curl --silent --show-error --output /dev/null --write-out '%{http_code} %{redirect_url}' 'https://www.novanexus-ai.com/services/workflow-setup?source=smoke')"
-          test "$www_result" = "308 https://novanexus-ai.com/services/workflow-setup?source=smoke"
+          privacy_status="$(curl --silent --show-error --output /tmp/privacy.html --write-out '%{http_code}' https://novanexus-ai.com/privacy)"
+          test "$privacy_status" = "200"
+          grep --fixed-strings --quiet 'wkirby592@gmail.com' /tmp/privacy.html
 
-          pilot_html="$(curl --fail --silent --show-error https://novanexus-ai.com/services/workflow-setup)"
-          grep --fixed-strings --quiet 'Workflow Setup Pilot' <<<"$pilot_html"
-          grep --fixed-strings --quiet 'Record my pilot inquiry' <<<"$pilot_html"
-          grep --fixed-strings --quiet '$150' <<<"$pilot_html"
-
-          health_json="$(curl --fail --silent --show-error https://novanexus-ai.com/api/proxy/health)"
-          jq --exit-status '.status == "healthy" and .service == "gateway"' <<<"$health_json" >/dev/null
-
-          version_json="$(curl --fail --silent --show-error "https://novanexus-ai.com/api/version?smoke=${GITHUB_RUN_ID}")"
-          jq --exit-status '.environment == "production" and .vercelEnv == "production" and (.gitSha | type == "string" and length >= 7 and . != "dev")' <<<"$version_json" >/dev/null
+          health_json="$(curl --fail --silent --show-error https://novanexus-ai.com/api/intake/health)"
+          jq --exit-status '.ok == true and .service == "intake" and (.database | type == "string") and (.email | type == "string")' <<<"$health_json" >/dev/null
 
           robots="$(curl --fail --silent --show-error https://novanexus-ai.com/robots.txt)"
           grep --fixed-strings --quiet 'Sitemap: https://novanexus-ai.com/sitemap.xml' <<<"$robots"
+          grep --fixed-strings --quiet 'Disallow: /owner' <<<"$robots"
 
-          sitemap="$(curl --fail --silent --show-error https://novanexus-ai.com/sitemap.xml)"
-          grep --fixed-strings --quiet '<loc>https://novanexus-ai.com/services/workflow-setup</loc>' <<<"$sitemap"
-
-          deployed_sha="$(jq --raw-output '.gitSha' <<<"$version_json")"
           {
             echo '## Production smoke passed'
             echo
-            echo "- Canonical site: HTTP ${root_status}"
-            echo '- Revenue offer: present'
-            echo '- Railway gateway: healthy through same-origin proxy'
-            echo "- Deployed source: ${deployed_sha}"
+            echo '- Homepage: HTTP 200 with current company copy'
+            echo '- Privacy page: HTTP 200'
+            echo '- Intake health: '"$(jq --compact-output '{ok,service,database,email}' <<<"$health_json")"
           } >>"$GITHUB_STEP_SUMMARY"
