@@ -15,14 +15,14 @@ Colors and type live in `public/brand/tokens.css`. A later visual reskin should 
 | Route | Access | Behavior |
 |---|---|---|
 | `POST /api/intake` | Public | Validates a buyer/sourcing, supplier, or services inquiry. Writes Postgres first, then attempts owner notification. Returns receipt `NOVA-YYYYMMDD-XXXX` or a visible error. |
-| `GET /api/intake/health` | Public | `{ ok, service: "intake", database, email }`. No secrets and no inquiry rows. |
+| `GET /api/intake/health` | Public | `{ ok, service: "intake", database, email, tables, persistence, lastPurgeAt, lastPurgeStatus }`. `lastPurgeAt` is an ISO-8601 UTC timestamp or `null`. `lastPurgeStatus` is `success`, `failed`, or `null` when no purge has been recorded. No secrets, no inquiry rows, and no purge error text. |
 | `GET /owner` | Owner secret | HTML queue. Also `GET /api/owner/queue`. |
 | `GET /api/owner/inquiries` | Owner secret | JSON queue. |
 | `GET /api/owner/export.csv` | Owner secret | Ledger-shaped CSV. |
 | `POST /api/owner/notifications/retry` | Owner secret | Retries outbox rows in `pending` or `failed`. |
 | `POST /api/owner/migrate` | Owner secret | Applies `037_public_intake.sql` and records version `037`. Safe to repeat. `GET` returns 405. |
 | `POST /api/owner/inquiries/delete` | Owner secret | Deletes one inquiry by `receipt_id`, and its notification rows, in one transaction. |
-| `GET /api/cron/purge` | `CRON_SECRET` or owner secret | Deletes inquiries older than 24 months (and their notification rows) and rate-limit hashes older than 90 days. Vercel calls it daily at 12:00 UTC. |
+| `GET /api/cron/purge` | `CRON_SECRET` or owner secret | Deletes inquiries older than 24 months (and their notification rows) and rate-limit hashes older than 90 days. On success or failure it upserts one row in `intake_purge_runs`. Vercel calls it daily at 12:00 UTC. |
 
 Owner auth is required on every owner route. Send `Authorization: Bearer <OWNER_ACCESS_SECRET>` or HTTP Basic with any username and that secret as the password. The secret is rejected when it is missing or shorter than 16 characters. A hidden page is not the control.
 
@@ -45,6 +45,8 @@ Owner email is off. Check /owner (or the CSV export) at least daily for new inqu
 
 Inquiries are deleted automatically 24 months after they are received. Network-address hashes are deleted after 90 days. The daily purge does that, and a submission also deletes hashes older than 90 days.
 
+The purge stores its last run in Postgres table `intake_purge_runs` (one row, `id` 1). A successful commit writes `last_purge_status = success` in the same transaction as the deletes. A failed run writes `failed` on a new connection after the deletes roll back. `GET /api/intake/health` reads that row as `lastPurgeAt` and `lastPurgeStatus`. Both fields are `null` until the first recorded run, or when the database is not configured. The public body never includes the error text. Migration 037 creates the table, and the purge route creates it if it is missing, so a cron run can record itself on a database that already applied an older 037.
+
 ## Run migration 037
 
 Vercel does not run migrations on deploy, and a Sensitive `DATABASE_URL` cannot be read by `psql` from the dashboard. After `DATABASE_URL` and `OWNER_ACCESS_SECRET` are set on the deployment, migrate from inside Vercel:
@@ -55,7 +57,7 @@ curl -sS -X POST "https://<deployment>/api/owner/migrate" \
   -H "Accept: application/json"
 ```
 
-A successful response is `{ "ok": true, "tables": ["inquiry_notification_outbox", "intake_rate_events", "public_inquiries"] }`. The route applies the same SQL as `infra/migrations/037_public_intake.sql`, inlined in the function so Vercel does not need extra files, then inserts version `037` into `schema_migrations`. Repeat calls are safe. `GET` returns 405. A wrong or missing owner secret returns 401. Failures return a generic 500 and do not include the connection string.
+A successful response is `{ "ok": true, "tables": ["inquiry_notification_outbox", "intake_purge_runs", "intake_rate_events", "public_inquiries"] }`. The route applies the same SQL as `infra/migrations/037_public_intake.sql`, inlined in the function so Vercel does not need extra files, then inserts version `037` into `schema_migrations`. Repeat calls are safe. `GET` returns 405. A wrong or missing owner secret returns 401. Failures return a generic 500 and do not include the connection string.
 
 If a shell can see `DATABASE_URL`, the same file can be applied directly.
 

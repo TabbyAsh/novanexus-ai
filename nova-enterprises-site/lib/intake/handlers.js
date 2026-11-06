@@ -1,7 +1,7 @@
 const { createNotifier } = require('./notify');
 const { cronOrOwnerAccepted, ownerAccepted, ownerAuthorized } = require('./auth');
 const { applyPublicIntakeMigration, redactSecrets } = require('./migrate');
-const { purgeExpired } = require('./purge');
+const { purgeExpired, readLastPurgeRun, recordPurgeFailure } = require('./purge');
 const { normalizeInquiry } = require('./validate');
 const { toCsv } = require('./csv');
 const {
@@ -233,10 +233,13 @@ async function handleHealth(req, res, deps = {}) {
   let database = 'not_configured';
   let tables = null;
   let persistence = null;
+  let lastPurgeAt = null;
+  let lastPurgeStatus = null;
   const connectionString = databaseUrl(env);
   if (connectionString) {
     try {
-      const found = await getPool(connectionString).query(
+      const pool = getPool(connectionString);
+      const found = await pool.query(
         `SELECT to_regclass('public.public_inquiries') AS relation`,
       );
       database = 'reachable';
@@ -247,6 +250,16 @@ async function handleHealth(req, res, deps = {}) {
       } else {
         tables = 'missing';
         persistence = null;
+      }
+      try {
+        const marker = await readLastPurgeRun(pool);
+        lastPurgeAt = marker.lastPurgeAt;
+        lastPurgeStatus = marker.lastPurgeStatus;
+      } catch (error) {
+        console.error(JSON.stringify({
+          event: 'intake_health_purge_marker',
+          message: redactSecrets(error.message),
+        }));
       }
     } catch (error) {
       console.error(JSON.stringify({ event: 'intake_health_db', message: redactSecrets(error.message) }));
@@ -260,7 +273,16 @@ async function handleHealth(req, res, deps = {}) {
     send(res, 200, '', { 'Content-Type': 'application/json; charset=utf-8' });
     return;
   }
-  sendJson(res, 200, { ok: true, service: 'intake', database, email, tables, persistence });
+  sendJson(res, 200, {
+    ok: true,
+    service: 'intake',
+    database,
+    email,
+    tables,
+    persistence,
+    lastPurgeAt,
+    lastPurgeStatus,
+  });
 }
 
 async function handleOwnerQueue(req, res, deps = {}) {
@@ -463,6 +485,14 @@ async function handlePurge(req, res, deps = {}) {
       event: 'intake_purge_failed',
       message: redactSecrets(error && error.message),
     }));
+    try {
+      await recordPurgeFailure(getPool(connectionString));
+    } catch (markerError) {
+      console.error(JSON.stringify({
+        event: 'intake_purge_marker_failed',
+        message: redactSecrets(markerError && markerError.message),
+      }));
+    }
     sendJson(res, 500, { ok: false, error: 'purge_failed' });
   }
 }

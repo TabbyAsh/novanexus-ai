@@ -2,6 +2,7 @@ const MIGRATION_037_SQL = require('./migration-037');
 
 const REQUIRED_TABLES = [
   'inquiry_notification_outbox',
+  'intake_purge_runs',
   'intake_rate_events',
   'public_inquiries',
 ];
