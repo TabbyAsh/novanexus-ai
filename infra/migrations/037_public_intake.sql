@@ -75,4 +75,13 @@ CREATE TABLE IF NOT EXISTS intake_rate_events (
 CREATE INDEX IF NOT EXISTS idx_intake_rate_events_ip_time
   ON intake_rate_events (ip_hash, created_at DESC);
 
+-- One row (id = 1) recording the last /api/cron/purge run for /api/intake/health.
+CREATE TABLE IF NOT EXISTS intake_purge_runs (
+  id SMALLINT PRIMARY KEY,
+  last_purge_at TIMESTAMPTZ NOT NULL,
+  last_purge_status TEXT NOT NULL,
+  CONSTRAINT intake_purge_runs_id_check CHECK (id = 1),
+  CONSTRAINT intake_purge_runs_status_check CHECK (last_purge_status IN ('success', 'failed'))
+);
+
 COMMIT;
