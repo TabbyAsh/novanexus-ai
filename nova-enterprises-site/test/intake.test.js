@@ -15,6 +15,7 @@ const {
   handlePurge,
 } = require('../lib/intake/handlers');
 const { applyPublicIntakeMigration, loadMigrationSql } = require('../lib/intake/migrate');
+const { PURGE_MARKER_DDL } = require('../lib/intake/purge');
 const { closePool, getPool } = require('../lib/intake/store');
 
 const DATABASE_URL = process.env.DATABASE_URL || 'postgresql://nova:nova_ci_password@127.0.0.1:5432/nova';
@@ -84,7 +85,7 @@ describe('public intake', { concurrency: 1 }, () => {
     process.env.OWNER_ACCESS_SECRET = OWNER_SECRET;
     process.env.INTAKE_IP_SALT = 'test-intake-ip-salt';
     process.env.INTAKE_RATE_LIMIT_PER_HOUR = '30';
-    await getPool(DATABASE_URL).query('TRUNCATE public_inquiries, intake_rate_events RESTART IDENTITY CASCADE');
+    await getPool(DATABASE_URL).query('TRUNCATE public_inquiries, intake_rate_events, intake_purge_runs RESTART IDENTITY CASCADE');
   });
 
   after(async () => {
@@ -576,6 +577,18 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(healthy.json.tables, 'present');
     assert.equal(healthy.json.persistence, 'public_inquiries');
     assert.equal(healthy.json.email, 'disabled');
+    assert.equal(healthy.json.lastPurgeAt, null);
+    assert.equal(healthy.json.lastPurgeStatus, null);
+    assert.deepEqual(Object.keys(healthy.json).sort(), [
+      'database',
+      'email',
+      'lastPurgeAt',
+      'lastPurgeStatus',
+      'ok',
+      'persistence',
+      'service',
+      'tables',
+    ]);
     assert.equal(JSON.stringify(healthy.json).includes(DATABASE_URL), false);
     assert.equal(JSON.stringify(healthy.json).includes('"postgres"'), false);
     const unconfigured = await invoke(handleHealth, {
@@ -585,6 +598,8 @@ describe('public intake', { concurrency: 1 }, () => {
     assert.equal(unconfigured.json.database, 'not_configured');
     assert.equal(unconfigured.json.email, 'flag_set_provider_missing');
     assert.equal(unconfigured.json.ok, true);
+    assert.equal(unconfigured.json.lastPurgeAt, null);
+    assert.equal(unconfigured.json.lastPurgeStatus, null);
   });
 
   test('owner migration rejects missing or wrong secrets and GET', async () => {
@@ -615,19 +630,23 @@ describe('public intake', { concurrency: 1 }, () => {
     const bundled = loadMigrationSql();
     const source = fs.readFileSync(path.join(__dirname, '../../infra/migrations/037_public_intake.sql'), 'utf8');
     assert.equal(bundled, source);
+    assert.equal(source.includes(PURGE_MARKER_DDL), true);
     const db = getPool(DATABASE_URL);
-    await db.query('DROP TABLE IF EXISTS inquiry_notification_outbox, public_inquiries, intake_rate_events, schema_migrations CASCADE');
+    await db.query('DROP TABLE IF EXISTS inquiry_notification_outbox, public_inquiries, intake_rate_events, intake_purge_runs, schema_migrations CASCADE');
     try {
       const missingTable = await invoke(handleHealth, { method: 'GET' });
       assert.equal(missingTable.json.database, 'reachable');
       assert.equal(missingTable.json.tables, 'missing');
       assert.equal(missingTable.json.persistence, null);
+      assert.equal(missingTable.json.lastPurgeAt, null);
+      assert.equal(missingTable.json.lastPurgeStatus, null);
       const auth = { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` };
       const first = await invoke(handleOwnerMigrate, { method: 'POST', headers: auth });
       assert.equal(first.statusCode, 200);
       assert.equal(first.json.ok, true);
       assert.deepEqual(first.json.tables, [
         'inquiry_notification_outbox',
+        'intake_purge_runs',
         'intake_rate_events',
         'public_inquiries',
       ]);
@@ -720,6 +739,96 @@ describe('public intake', { concurrency: 1 }, () => {
       ['c'.repeat(64), 'd'.repeat(64)],
     );
     assert.deepEqual(hashes.rows.map(row => row.ip_hash), ['d'.repeat(64)]);
+    const health = await invoke(handleHealth, { method: 'GET' });
+    assert.equal(health.json.lastPurgeStatus, 'success');
+    assert.match(health.json.lastPurgeAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.equal(JSON.stringify(health.json).includes('kept-purge@example.com'), false);
+    assert.equal(JSON.stringify(health.json).includes('old-purge@example.com'), false);
+  });
+
+  test('health reports the last purge run after success and failure', async () => {
+    const db = getPool(DATABASE_URL);
+    const before = await invoke(handleHealth, { method: 'GET' });
+    assert.equal(before.json.lastPurgeAt, null);
+    assert.equal(before.json.lastPurgeStatus, null);
+    await db.query('DROP TABLE IF EXISTS intake_purge_runs');
+    const missingMarker = await invoke(handleHealth, { method: 'GET' });
+    assert.equal(missingMarker.json.database, 'reachable');
+    assert.equal(missingMarker.json.lastPurgeAt, null);
+    assert.equal(missingMarker.json.lastPurgeStatus, null);
+
+    await db.query(
+      `INSERT INTO public_inquiries
+         (receipt_id, request_id, payload_hash, inquiry_type, name, email, source)
+       VALUES ('NOVA-20261106-KEEP', 'purge-marker-request01', $1, 'buyer_sourcing', 'Kept',
+               'marker-kept@example.com', 'website')`,
+      ['e'.repeat(64)],
+    );
+    const ran = await invoke(handlePurge, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` },
+    });
+    assert.equal(ran.statusCode, 200);
+    assert.equal(ran.json.ok, true);
+    const success = await invoke(handleHealth, { method: 'GET' });
+    assert.equal(success.statusCode, 200);
+    assert.equal(success.json.service, 'intake');
+    assert.equal(success.json.lastPurgeStatus, 'success');
+    assert.match(success.json.lastPurgeAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+    assert.equal(JSON.stringify(success.json).includes(DATABASE_URL), false);
+    assert.equal(JSON.stringify(success.json).includes('marker-kept@example.com'), false);
+
+    const unconfigured = await invoke(handlePurge, {
+      method: 'GET',
+      headers: { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` },
+      env: { ...process.env, DATABASE_URL: '   ' },
+    });
+    assert.equal(unconfigured.statusCode, 500);
+    assert.equal(unconfigured.json.error, 'purge_failed');
+    const stillSuccess = await invoke(handleHealth, { method: 'GET' });
+    assert.equal(stillSuccess.json.lastPurgeStatus, 'success');
+    assert.equal(stillSuccess.json.lastPurgeAt, success.json.lastPurgeAt);
+
+    await db.query(
+      `INSERT INTO public_inquiries
+         (receipt_id, request_id, payload_hash, inquiry_type, name, email, source, created_at)
+       VALUES ('NOVA-20240101-OLD2', 'purge-marker-oldreq001', $1, 'buyer_sourcing', 'Old',
+               'marker-old@example.com', 'website', NOW() - INTERVAL '25 months')`,
+      ['f'.repeat(64)],
+    );
+    await db.query('DROP TABLE IF EXISTS intake_purge_runs');
+    await db.query('DROP TABLE intake_rate_events');
+    try {
+      const failed = await invoke(handlePurge, {
+        method: 'GET',
+        headers: { accept: 'application/json', authorization: `Bearer ${OWNER_SECRET}` },
+      });
+      assert.equal(failed.statusCode, 500);
+      assert.equal(failed.json.ok, false);
+      assert.equal(failed.json.error, 'purge_failed');
+      assert.equal(failed.body.includes('intake_rate_events'), false);
+      assert.equal(failed.body.includes(DATABASE_URL), false);
+      const marked = await invoke(handleHealth, { method: 'GET' });
+      assert.equal(marked.json.lastPurgeStatus, 'failed');
+      assert.match(marked.json.lastPurgeAt, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+      assert.equal(Date.parse(marked.json.lastPurgeAt) >= Date.parse(success.json.lastPurgeAt), true);
+      assert.equal(JSON.stringify(marked.json).includes('intake_rate_events'), false);
+      const kept = await db.query(
+        `SELECT email FROM public_inquiries
+          WHERE email IN ('marker-kept@example.com', 'marker-old@example.com')
+          ORDER BY email`,
+      );
+      assert.deepEqual(kept.rows.map(row => row.email), [
+        'marker-kept@example.com',
+        'marker-old@example.com',
+      ]);
+      const stored = await db.query(
+        `SELECT last_purge_status FROM intake_purge_runs WHERE id = 1`,
+      );
+      assert.equal(stored.rows[0].last_purge_status, 'failed');
+    } finally {
+      await applyPublicIntakeMigration(db);
+    }
   });
 
   test('owner can delete one inquiry and its notification rows', async () => {
