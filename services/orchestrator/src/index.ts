@@ -1,3 +1,4 @@
+import { recordTaskCompletion } from './task-completion';
 import express, { Request, Response, NextFunction } from 'express';
 import { createLogger } from '@nova/telemetry';
 import {
@@ -1153,14 +1154,21 @@ app.post('/v1/tasks/:id/progress', async (req: Request, res: Response) => {
 
     // Update task with progress (store in output_json for now)
     const progressData = { progress, message, updatedAt: new Date().toISOString() };
-    await query(
+    const updated = await query(
       `UPDATE tasks SET 
        output_json = jsonb_set(COALESCE(output_json::jsonb, '{}'::jsonb), '{progress}', $1::jsonb),
        status = CASE WHEN status = 'QUEUED' THEN 'RUNNING' ELSE status END,
        updated_at = NOW()
-       WHERE id = $2`,
+       WHERE id = $2 AND status NOT IN ('DONE', 'FAILED')`,
       [JSON.stringify(progressData), req.params.id]
     );
+
+    if (!updated.rowCount) {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        error: { code: 'TASK_TERMINAL', message: 'A finished task cannot accept progress' },
+      });
+    }
 
     res.json({ success: true, data: { taskId: req.params.id, progress } });
   } catch (error) {
@@ -1177,34 +1185,38 @@ app.post('/v1/tasks/:id/complete', async (req: Request, res: Response) => {
   try {
     const { status, output, error: errorMsg, metrics } = req.body;
 
-    const task = await queryOne<any>('SELECT * FROM tasks WHERE id = $1', [req.params.id]);
-    if (!task) {
+    if (status !== 'DONE' && status !== 'FAILED') {
+      return res.status(HTTP_STATUS.BAD_REQUEST).json({
+        success: false,
+        error: { code: ERROR_CODES.INVALID_INPUT, message: 'Expected DONE or FAILED' },
+      });
+    }
+
+    const outputJson = JSON.stringify({ result: output, error: errorMsg, metrics });
+    const result = await transaction(client =>
+      recordTaskCompletion(client, req.params.id, status, outputJson, req.get('x-bot-id'))
+    );
+    if (result === 'missing') {
       return res.status(HTTP_STATUS.NOT_FOUND).json({
         success: false,
         error: { code: ERROR_CODES.NOT_FOUND, message: 'Task not found' },
       });
     }
-
-    const finalStatus = status === 'DONE' ? 'DONE' : 'FAILED';
-    const outputJson = JSON.stringify({ result: output, error: errorMsg, metrics });
-
-    await query(
-      `UPDATE tasks SET status = $1, output_json = $2, updated_at = NOW() WHERE id = $3`,
-      [finalStatus, outputJson, req.params.id]
-    );
-
-    // Record task run in task_runs table if bot is specified
-    const botId = req.headers['x-bot-id'];
-    if (botId) {
-      await query(
-        `INSERT INTO task_runs (task_id, bot_id, started_at, completed_at, status, result_json)
-         VALUES ($1, $2, $3, NOW(), $4, $5)`,
-        [req.params.id, botId, task.created_at, finalStatus, outputJson]
-      );
+    if (result === 'unverified') {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        error: { code: 'RUN_RECEIPT_UNVERIFIED', message: 'No matching run receipt verifies this worker report' },
+      });
+    }
+    if (result === 'conflict') {
+      return res.status(HTTP_STATUS.CONFLICT).json({
+        success: false,
+        error: { code: 'RESULT_CONFLICT', message: 'Task already has a different terminal result' },
+      });
     }
 
-    logger.info('Task completed', { taskId: req.params.id, status: finalStatus });
-    res.json({ success: true, data: { taskId: req.params.id, status: finalStatus } });
+    logger.info('Task result acknowledged', { taskId: req.params.id, status, result });
+    res.json({ success: true, data: { taskId: req.params.id, status } });
   } catch (error) {
     logger.error('Failed to complete task', error as Error);
     res.status(HTTP_STATUS.INTERNAL_SERVER_ERROR).json({
