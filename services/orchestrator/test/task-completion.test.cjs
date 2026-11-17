@@ -48,6 +48,29 @@ test('bot completions preserve a single durable task result', {
     const runs = await client.query('SELECT status, result_json, started_at FROM task_runs WHERE task_id = $1', [id]);
     assert.deepEqual(runs.rows, [{ status: 'COMPLETED', result_json: { a: 1, b: 2 }, started_at: null }]);
 
+    const otherBot = randomUUID();
+    await client.query('INSERT INTO registered_bots VALUES ($1)', [otherBot]);
+    assert.equal(await report(id, 'DONE', { a: 1, b: 2 }, otherBot), 'unverified');
+
+    // Reproduce a terminal task left behind by older non-atomic writes.
+    const legacyId = await createTask();
+    await client.query("UPDATE tasks SET status = 'DONE', output_json = $2, updated_at = NOW() WHERE id = $1",
+      [legacyId, JSON.stringify({ ok: true })]);
+    assert.equal(await report(legacyId, 'DONE', { ok: true }), 'unverified');
+    assert.equal(await report(legacyId, 'DONE', { ok: true }, null), 'replayed');
+    const legacyRuns = await client.query('SELECT id FROM task_runs WHERE task_id = $1', [legacyId]);
+    assert.equal(legacyRuns.rowCount, 0);
+    const legacyTask = await client.query('SELECT status, output_json FROM tasks WHERE id = $1', [legacyId]);
+    assert.deepEqual(legacyTask.rows, [{ status: 'DONE', output_json: { ok: true } }]);
+
+    // A matching receipt from an earlier attempt does not verify this terminal transition.
+    await client.query(
+      `INSERT INTO task_runs (task_id, bot_id, status, result_json, completed_at)
+       VALUES ($1, $2, 'COMPLETED', $3, NOW() - INTERVAL '1 day')`,
+      [legacyId, botId, JSON.stringify({ ok: true })]
+    );
+    assert.equal(await report(legacyId, 'DONE', { ok: true }), 'unverified');
+
     const failedId = await createTask();
     assert.equal(await report(failedId, 'FAILED', { error: 'fixture' }), 'recorded');
     const failedRun = await client.query('SELECT status FROM task_runs WHERE task_id = $1', [failedId]);

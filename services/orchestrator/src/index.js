@@ -968,6 +968,12 @@ app.post('/v1/tasks/:id/complete', async (req, res) => {
                 error: { code: shared_1.ERROR_CODES.NOT_FOUND, message: 'Task not found' },
             });
         }
+        if (result === 'unverified') {
+            return res.status(shared_1.HTTP_STATUS.CONFLICT).json({
+                success: false,
+                error: { code: 'RUN_RECEIPT_UNVERIFIED', message: 'No matching run receipt verifies this worker report' },
+            });
+        }
         if (result === 'conflict') {
             return res.status(shared_1.HTTP_STATUS.CONFLICT).json({
                 success: false,

@@ -9,14 +9,25 @@ async function recordTaskCompletion(client, taskId, status, outputJson, botId) {
     const task = result.rows[0];
     if (!task)
         return 'missing';
+    const runStatus = status === 'DONE' ? 'COMPLETED' : 'FAILED';
     if (task.status === 'DONE' || task.status === 'FAILED') {
-        return task.status === status && task.same_output ? 'replayed' : 'conflict';
+        if (task.status !== status || !task.same_output)
+            return 'conflict';
+        if (!botId)
+            return 'replayed';
+        // A pre-transaction completion may have updated only the task. A matching
+        // payload cannot establish which worker ran it or when that run occurred.
+        const receipt = await client.query(`SELECT 1 FROM task_runs r JOIN tasks t ON t.id = r.task_id
+       WHERE r.task_id = $1 AND r.bot_id = $2 AND r.status = $3
+         AND r.result_json = $4::jsonb AND r.completed_at >= t.updated_at
+       LIMIT 1`, [taskId, botId, runStatus, outputJson]);
+        return receipt.rows.length ? 'replayed' : 'unverified';
     }
     await client.query('UPDATE tasks SET status = $1, output_json = $2, updated_at = NOW() WHERE id = $3', [status, outputJson, taskId]);
     if (botId) {
         // The execution start is unknown. Task creation may precede execution by hours.
         await client.query(`INSERT INTO task_runs (task_id, bot_id, started_at, completed_at, status, result_json)
-       VALUES ($1, $2, NULL, NOW(), $3, $4)`, [taskId, botId, status === 'DONE' ? 'COMPLETED' : 'FAILED', outputJson]);
+       VALUES ($1, $2, NULL, NOW(), $3, $4)`, [taskId, botId, runStatus, outputJson]);
     }
     return 'recorded';
 }
