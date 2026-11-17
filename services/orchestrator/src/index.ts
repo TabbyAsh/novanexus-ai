@@ -1,4 +1,5 @@
 import express, { Request, Response, NextFunction } from 'express';
+import { goalExecutionQuery, formatGoalExecution, type ExecutionRow } from './goal-execution';
 import { createLogger } from '@nova/telemetry';
 import {
   SERVICE_PORTS,
@@ -214,6 +215,21 @@ app.post('/v1/goals', async (req: Request, res: Response) => {
       success: false,
       error: { code: 'GOAL_CREATE_FAILED', message: 'Failed to create goal' },
     });
+  }
+});
+
+app.get('/v1/goals/:id/execution', async (req: Request, res: Response) => {
+  const auth = extractAuth(req);
+  if (!auth) return res.status(401).json({ success: false, error: { code: 'UNAUTHORIZED', message: 'Unauthorized' } });
+  res.set('Cache-Control', 'private, no-store');
+  try {
+    const rows = await query<ExecutionRow>(goalExecutionQuery, [req.params.id, auth.orgId]);
+    const execution = formatGoalExecution(rows.rows);
+    if (!execution) return res.status(404).json({ success: false, error: { code: 'NOT_FOUND', message: 'Goal not found' } });
+    return res.json({ success: true, data: execution });
+  } catch (error) {
+    logger.error('Failed to read goal execution', error as Error);
+    return res.status(500).json({ success: false, error: { code: 'QUERY_FAILED', message: 'Execution history could not be read' } });
   }
 });
 

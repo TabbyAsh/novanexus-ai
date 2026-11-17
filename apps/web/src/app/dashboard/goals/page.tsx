@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/api';
+import GoalExecutionPanel from './GoalExecutionPanel';
 import { Target, Plus, Clock, CheckCircle, AlertCircle, XCircle, X } from 'lucide-react';
 
 interface Goal {
@@ -162,6 +163,7 @@ export default function GoalsPage() {
                     </select>
                   </div>
                 </div>
+                <GoalExecutionPanel goalId={goal.id} />
               </div>
             );
           })}
