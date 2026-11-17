@@ -51,7 +51,8 @@ test('reads only the matching organization and the latest run for each task', {
       ('foreign','org2','work','hidden','DONE','2025-02-04');
     INSERT INTO task_runs VALUES
       ('runA','t1','FAILED','2025-02-01','2025-02-01','{"summary":"older"}'),
-      ('runB','t1','COMPLETED','2025-02-02','2025-02-03','{"result":{"summary":"source read back"},"other":"private metadata"}'),
+      ('runB','t1','FAILED','2025-02-01','2025-02-02','{"summary":"older retry"}'),
+      ('run0','t1','COMPLETED',NULL,'2025-02-03','{"result":{"summary":"source read back"},"other":"private metadata"}'),
       ('runC','foreign','COMPLETED','2025-02-03','2025-02-03','{"summary":"wrong organization"}');
   `;
   if (!sqlite) await db.connect();
@@ -62,7 +63,8 @@ test('reads only the matching organization and the latest run for each task', {
     assert.equal((await read('empty', 'org1')).tasks.length, 0);
     const result = await read('work', 'org1');
     assert.deepEqual(result.tasks.map(row => row.id), ['t1', 't2']);
-    assert.equal(result.tasks[0].latestRun.id, 'runB');
+    assert.equal(result.tasks[0].latestRun.id, 'run0');
+    assert.equal(result.tasks[0].latestRun.startedAt, null);
     assert.equal(result.tasks[0].latestRun.reportedSummary, 'source read back');
     assert.equal(result.tasks[1].latestRun, null);
     assert.equal(JSON.stringify(result).includes('private metadata'), false);

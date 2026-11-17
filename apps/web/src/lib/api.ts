@@ -29,11 +29,12 @@ export interface GoalExecution {
   tasks: Array<{
     id: string;
     type: string;
-    status: string;
-    updatedAt: string;
+    status: string | null;
+    updatedAt: string | null;
     latestRun: {
       id: string;
-      status: string;
+      status: string | null;
+      startedAt: string | null;
       completedAt: string | null;
       reportedSummary: string | null;
     } | null;

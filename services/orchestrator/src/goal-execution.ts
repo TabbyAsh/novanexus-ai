@@ -3,7 +3,7 @@
 export const goalExecutionQuery = `
   SELECT g.id AS goal_id, t.id AS task_id, t.type AS task_type,
          t.status AS task_status, t.updated_at AS task_updated_at,
-         r.id AS run_id, r.status AS run_status, r.completed_at,
+         r.id AS run_id, r.status AS run_status, r.started_at, r.completed_at,
          SUBSTR(COALESCE(r.result_json->'result'->>'summary',
                          r.result_json->>'summary'), 1, 500) AS reported_summary
   FROM goals g
@@ -11,7 +11,8 @@ export const goalExecutionQuery = `
   LEFT JOIN task_runs r ON r.id = (
     SELECT candidate.id FROM task_runs candidate
     WHERE candidate.task_id = t.id
-    ORDER BY candidate.started_at DESC NULLS LAST, candidate.id DESC
+    ORDER BY COALESCE(candidate.completed_at, candidate.started_at) DESC NULLS LAST,
+             candidate.id DESC
     LIMIT 1
   )
   WHERE g.id = $1 AND g.org_id = $2
@@ -27,6 +28,7 @@ export interface ExecutionRow {
   task_updated_at: Date | null;
   run_id: string | null;
   run_status: string | null;
+  started_at: Date | null;
   completed_at: Date | null;
   reported_summary: string | null;
 }
@@ -44,6 +46,7 @@ export function formatGoalExecution(rows: ExecutionRow[]) {
       latestRun: row.run_id === null ? null : {
         id: row.run_id,
         status: row.run_status,
+        startedAt: row.started_at,
         completedAt: row.completed_at,
         reportedSummary: row.reported_summary,
       },

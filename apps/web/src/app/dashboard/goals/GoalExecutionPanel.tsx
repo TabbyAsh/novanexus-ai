@@ -45,12 +45,18 @@ export default function GoalExecutionPanel({ goalId }: { goalId: string }) {
               {execution.hasMore && <p>Showing the 20 most recently updated tasks.</p>}
               {execution.tasks.map(task => (
                 <article key={task.id} className="rounded-lg bg-gray-950 p-3">
-                  <p className="font-medium text-white">{task.type} · {task.status}</p>
-                  <p className="text-xs text-gray-400">Task updated {new Date(task.updatedAt).toLocaleString()}</p>
+                  <p className="font-medium text-white">{task.type} · {task.status ?? 'Status unavailable'}</p>
+                  <p className="text-xs text-gray-400">{task.updatedAt
+                    ? 'Task updated ' + new Date(task.updatedAt).toLocaleString()
+                    : 'Task update time unavailable'}</p>
                   {task.latestRun ? (
                     <>
-                      <p className="mt-2">Latest worker run · {task.latestRun.status}
-                        {task.latestRun.completedAt && ' · ' + new Date(task.latestRun.completedAt).toLocaleString()}</p>
+                      <p className="mt-2">Latest recorded worker activity · {task.latestRun.status ?? 'Status unavailable'}</p>
+                      {task.latestRun.completedAt ? (
+                        <p>Finished {new Date(task.latestRun.completedAt).toLocaleString()}</p>
+                      ) : task.latestRun.startedAt && (
+                        <p>Started {new Date(task.latestRun.startedAt).toLocaleString()}</p>
+                      )}
                       {task.latestRun.reportedSummary && <p className="mt-1 whitespace-pre-wrap break-words">{task.latestRun.reportedSummary}</p>}
                       <p className="mt-1 break-all text-xs text-gray-400">Run receipt {task.latestRun.id}</p>
                     </>
