@@ -23,6 +23,23 @@ function getApiBase(): string {
 }
 
 
+export interface GoalExecution {
+  goalId: string;
+  hasMore: boolean;
+  tasks: Array<{
+    id: string;
+    type: string;
+    status: string;
+    updatedAt: string;
+    latestRun: {
+      id: string;
+      status: string;
+      completedAt: string | null;
+      reportedSummary: string | null;
+    } | null;
+  }>;
+}
+
 interface ApiResponse<T> {
   success: boolean;
   data?: T;
@@ -356,6 +373,10 @@ class ApiClient {
         updatedAt: string;
       }>;
     }>('GET', `/v1/goals${query}`);
+  }
+
+  async getGoalExecution(goalId: string) {
+    return this.request<GoalExecution>('GET', `/v1/goals/${encodeURIComponent(goalId)}/execution`);
   }
 
   async createGoal(title: string, intent: string, constraints?: Record<string, unknown>) {

@@ -7,7 +7,8 @@
     "build": "tsc",
     "dev": "ts-node-dev --respawn src/index.ts",
     "start": "node dist/index.js",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsc && node --test tests/goal-execution.test.cjs"
   },
   "dependencies": {
     "@nova/shared": "*",
